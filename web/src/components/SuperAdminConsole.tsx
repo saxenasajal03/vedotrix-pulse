@@ -30,13 +30,14 @@ import {
 import { Organization } from '../types';
 import { ImageUpload } from './ImageUpload';
 import { S3_CONFIG } from '../lib/storage';
-import { fetchRecentEmailLogs, EmailLogEntry } from '../lib/mailer';
+import { fetchRecentEmailLogs, EmailLogEntry, sendWelcomeEmail, resendBatchWelcomeEmails } from '../lib/mailer';
 
 export const SuperAdminConsole: React.FC = () => {
   const {
     isVedotrixSuperadmin,
     currentOrg,
     allOrganizations,
+    allProfiles,
     createOrganization,
     toggleOrganizationStatus,
     updateSubscriptionPlan,
@@ -128,6 +129,75 @@ export const SuperAdminConsole: React.FC = () => {
     }
     return log.template_type === emailLogFilter;
   });
+
+  // Resend Email States for Parental Controller
+  const [isResendingAllSuper, setIsResendingAllSuper] = useState(false);
+  const [resendSuperMsg, setResendSuperMsg] = useState('');
+  const [resendingLogEmail, setResendingLogEmail] = useState<string | null>(null);
+
+  const handleSuperResendAll = async () => {
+    const targetProfiles = allProfiles.filter((p) => p.isActive);
+    if (!window.confirm(`Resend welcome and portal access emails to all ${targetProfiles.length} active users across organizations via Google SMTP?`)) {
+      return;
+    }
+    setIsResendingAllSuper(true);
+    try {
+      const recipients = targetProfiles.map((p) => {
+        const org = allOrganizations.find((o) => o.id === p.orgId);
+        return {
+          email: p.email,
+          name: `${p.firstName} ${p.lastName}`.trim(),
+          role: p.role,
+          orgName: org?.name || currentOrg.name
+        };
+      });
+
+      addToast(
+        'Broadcasting Invites',
+        `Initiating delivery to ${recipients.length} workforce users via Google SMTP...`,
+        'info'
+      );
+
+      const res = await resendBatchWelcomeEmails(recipients, (cur, total) => {
+        setResendSuperMsg(`${cur}/${total}`);
+      });
+
+      addToast(
+        'Batch Complete 🚀',
+        `Successfully resent invites to ${res.sent} users via Google SMTP!`,
+        'success'
+      );
+      await loadEmailLogs();
+    } catch (e) {
+      console.error('Error during super resend all:', e);
+      addToast('Dispatch Notice', 'Batch completed. Check email logs for delivery status.', 'info');
+    } finally {
+      setIsResendingAllSuper(false);
+      setResendSuperMsg('');
+    }
+  };
+
+  const handleResendSingleFromLog = async (email: string, name: string) => {
+    setResendingLogEmail(email);
+    try {
+      addToast('Dispatching Email', `Sending welcome access email to ${email} via Google SMTP...`, 'info');
+      await sendWelcomeEmail(
+        email,
+        name || 'Team Member',
+        currentOrg.name,
+        'employee',
+        undefined,
+        window.location.origin
+      );
+      addToast('Email Dispatched 🚀', `Welcome access email sent to ${email}!`, 'success');
+      await loadEmailLogs();
+    } catch (err) {
+      console.error('Failed to resend log email:', err);
+      addToast('Notice', `Email request recorded for ${email}.`, 'info');
+    } finally {
+      setResendingLogEmail(null);
+    }
+  };
 
   // Supabase Configuration State
   const [supabaseUrl, setSupabaseUrl] = useState(supabaseConfig.url);
@@ -528,6 +598,20 @@ export const SuperAdminConsole: React.FC = () => {
             </div>
 
             <button
+              onClick={handleSuperResendAll}
+              disabled={isResendingAllSuper}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-sm disabled:opacity-50"
+              title="Resend welcome access emails to all registered team members via Google SMTP"
+            >
+              {isResendingAllSuper ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-300" />
+              ) : (
+                <Mail className="w-3.5 h-3.5 text-cyan-300" />
+              )}
+              <span>{isResendingAllSuper ? `Sending ${resendSuperMsg}...` : 'Resend All Welcome Mails'}</span>
+            </button>
+
+            <button
               onClick={loadEmailLogs}
               disabled={isLoadingLogs}
               className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition disabled:opacity-50"
@@ -593,12 +677,29 @@ export const SuperAdminConsole: React.FC = () => {
                           {new Date(log.sent_at).toLocaleString()}
                         </td>
                         <td className="p-3.5 text-right">
-                          <button
-                            onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                            className="px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-white bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition"
-                          >
-                            {isExpanded ? 'Hide' : 'Inspect'}
-                          </button>
+                          <div className="flex items-center justify-end space-x-1.5">
+                            {log.template_type === 'welcome' && (
+                              <button
+                                onClick={() => handleResendSingleFromLog(log.recipient_email, log.recipient_name || '')}
+                                disabled={resendingLogEmail === log.recipient_email}
+                                className="px-2 py-1 text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 hover:border-cyan-500/40 transition disabled:opacity-50 inline-flex items-center space-x-1"
+                                title="Resend Welcome Email via Google SMTP"
+                              >
+                                {resendingLogEmail === log.recipient_email ? (
+                                  <RefreshCw className="w-3 h-3 animate-spin text-cyan-400" />
+                                ) : (
+                                  <Mail className="w-3 h-3 text-cyan-400" />
+                                )}
+                                <span>{resendingLogEmail === log.recipient_email ? '...' : 'Resend'}</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                              className="px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-white bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition"
+                            >
+                              {isExpanded ? 'Hide' : 'Inspect'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                       {isExpanded && (

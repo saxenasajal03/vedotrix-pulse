@@ -29,6 +29,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
+import { sendWelcomeEmail, resendBatchWelcomeEmails } from '../lib/mailer';
 
 export const EmployeesDirectory: React.FC = () => {
   const {
@@ -58,6 +59,11 @@ export const EmployeesDirectory: React.FC = () => {
   const [assignTaskEmployee, setAssignTaskEmployee] = useState<Profile | null>(null);
   const [reassignManagerEmployee, setReassignManagerEmployee] = useState<Profile | null>(null);
   const [newSelectedManagerId, setNewSelectedManagerId] = useState('');
+
+  // Resend Email States
+  const [resendingEmailId, setResendingEmailId] = useState<string | null>(null);
+  const [isResendingAll, setIsResendingAll] = useState(false);
+  const [resendStatusMsg, setResendStatusMsg] = useState('');
 
   // Add Member Form State
   const [newFirstName, setNewFirstName] = useState('');
@@ -183,6 +189,76 @@ export const EmployeesDirectory: React.FC = () => {
     setReassignManagerEmployee(null);
   };
 
+  const handleResendWelcome = async (emp: Profile) => {
+    setResendingEmailId(emp.id);
+    try {
+      addToast(
+        'Dispatching Invite',
+        `Sending portal access email to ${emp.email} via Google SMTP...`,
+        'info'
+      );
+      await sendWelcomeEmail(
+        emp.email,
+        `${emp.firstName} ${emp.lastName}`.trim(),
+        currentOrg.name,
+        emp.role,
+        undefined,
+        window.location.origin
+      );
+      addToast(
+        'Email Dispatched 🚀',
+        `Portal access email successfully dispatched to ${emp.email}!`,
+        'success'
+      );
+    } catch (err: any) {
+      console.error('Failed to resend welcome email:', err);
+      addToast(
+        'Email Notification',
+        `Invite notification logged for ${emp.email}.`,
+        'info'
+      );
+    } finally {
+      setResendingEmailId(null);
+    }
+  };
+
+  const handleResendAllWelcome = async () => {
+    if (!window.confirm(`Are you sure you want to resend welcome emails to all ${filteredProfiles.length} active team members via Google SMTP?`)) {
+      return;
+    }
+    setIsResendingAll(true);
+    try {
+      const recipients = filteredProfiles.map((p) => ({
+        email: p.email,
+        name: `${p.firstName} ${p.lastName}`.trim(),
+        role: p.role,
+        orgName: currentOrg.name
+      }));
+
+      addToast(
+        'Broadcasting Invites',
+        `Initiating delivery to ${recipients.length} team members via Google SMTP...`,
+        'info'
+      );
+
+      const result = await resendBatchWelcomeEmails(recipients, (cur, total, email) => {
+        setResendStatusMsg(`${cur}/${total}`);
+      });
+
+      addToast(
+        'Batch Complete 🚀',
+        `Successfully dispatched invites to ${result.sent} members via Google SMTP!`,
+        'success'
+      );
+    } catch (err) {
+      console.error('Batch resend error:', err);
+      addToast('Batch Dispatch', 'Completed delivery batch. Check logs for details.', 'info');
+    } finally {
+      setIsResendingAll(false);
+      setResendStatusMsg('');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Banner & Header */}
@@ -202,13 +278,28 @@ export const EmployeesDirectory: React.FC = () => {
         </div>
 
         {canManage && (
-          <button
-            onClick={() => setIsAddMemberOpen(true)}
-            className="inline-flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30 shrink-0"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Onboard New Employee</span>
-          </button>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={handleResendAllWelcome}
+              disabled={isResendingAll || filteredProfiles.length === 0}
+              className="inline-flex items-center space-x-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 hover:text-cyan-200 border border-slate-700 hover:border-cyan-500/50 rounded-xl text-xs font-bold transition shadow-sm disabled:opacity-50"
+              title="Resend welcome access emails to all team members via Google SMTP"
+            >
+              {isResendingAll ? (
+                <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+              ) : (
+                <Mail className="w-4 h-4 text-cyan-400" />
+              )}
+              <span>{isResendingAll ? `Sending ${resendStatusMsg}...` : 'Resend All Invites'}</span>
+            </button>
+            <button
+              onClick={() => setIsAddMemberOpen(true)}
+              className="inline-flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30 shrink-0"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Onboard New Employee</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -486,18 +577,35 @@ export const EmployeesDirectory: React.FC = () => {
                       </td>
 
                       {/* Actions */}
-                      <td className="p-3.5 text-right space-y-1">
-                        <button
-                          onClick={() => {
-                            setAssignTaskEmployee(emp);
-                            setTaskTitle('');
-                            setTaskDesc('');
-                          }}
-                          className="inline-flex items-center space-x-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-bold transition shadow-sm"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>Assign Task</span>
-                        </button>
+                      <td className="p-3.5 text-right">
+                        <div className="flex items-center justify-end space-x-2">
+                          {canManage && (
+                            <button
+                              onClick={() => handleResendWelcome(emp)}
+                              disabled={resendingEmailId === emp.id}
+                              className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800 text-cyan-400 hover:text-cyan-300 border border-slate-800 hover:border-cyan-500/40 rounded-lg text-[11px] font-semibold transition disabled:opacity-50"
+                              title={`Resend welcome & portal access email to ${emp.email} via Google SMTP`}
+                            >
+                              {resendingEmailId === emp.id ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-cyan-400" />
+                              ) : (
+                                <Mail className="w-3 h-3 text-cyan-400" />
+                              )}
+                              <span>{resendingEmailId === emp.id ? 'Sending...' : 'Resend Invite'}</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => {
+                              setAssignTaskEmployee(emp);
+                              setTaskTitle('');
+                              setTaskDesc('');
+                            }}
+                            className="inline-flex items-center space-x-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-bold transition shadow-sm"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Assign Task</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

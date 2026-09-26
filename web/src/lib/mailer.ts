@@ -141,11 +141,11 @@ export async function sendWelcomeEmail(
     </html>
   `;
 
-  // 1. Supabase Free Automatic Mailer Trigger via supabase.auth.signUp
+  // 1. Supabase Free Automatic Mailer Trigger via Google SMTP
   try {
     const supabase = getSupabaseClient();
     if (initialPassword && initialPassword.length >= 6) {
-      await supabase.auth.signUp({
+      const { error: signUpError } = await supabase.auth.signUp({
         email: recipientEmail,
         password: initialPassword,
         options: {
@@ -156,10 +156,29 @@ export async function sendWelcomeEmail(
           }
         }
       });
-      console.log(`🔐 [SUPABASE AUTH MAILER] Free automatic signup/mailer trigger dispatched for ${recipientEmail}`);
+
+      // If user is already registered in auth.users, dispatch password reset / access email via Google SMTP
+      if (signUpError && (signUpError.message.toLowerCase().includes('already') || signUpError.message.toLowerCase().includes('registered'))) {
+        await supabase.auth.resetPasswordForEmail(recipientEmail, {
+          redirectTo: loginUrl
+        });
+        console.log(`🔑 [GOOGLE SMTP MAILER] Dispatched login access email for existing user ${recipientEmail}`);
+      } else {
+        console.log(`🔐 [GOOGLE SMTP MAILER] Dispatched signup onboarding email for ${recipientEmail}`);
+      }
+    } else {
+      // Direct welcome/access invite email for existing confirmed users
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(recipientEmail, {
+        redirectTo: loginUrl
+      });
+      if (resetErr) {
+        console.warn(`[GOOGLE SMTP MAILER] Notice sending recovery email to ${recipientEmail}:`, resetErr.message);
+      } else {
+        console.log(`🔑 [GOOGLE SMTP MAILER] Dispatched login access email to ${recipientEmail}`);
+      }
     }
   } catch (authErr) {
-    console.warn('Supabase auth signup trigger notice:', authErr);
+    console.warn('Supabase auth mailer trigger notice:', authErr);
   }
 
   // 2. Log to Supabase PostgreSQL email_logs
@@ -341,3 +360,35 @@ export async function fetchRecentEmailLogs(limit: number = 20): Promise<EmailLog
     return [];
   }
 }
+
+/**
+ * Resends welcome emails in sequence with throttle to prevent SMTP flooding
+ */
+export async function resendBatchWelcomeEmails(
+  recipients: Array<{ email: string; name: string; role: string; orgName: string; initialPassword?: string }>,
+  onProgress?: (current: number, total: number, email: string) => void
+): Promise<{ sent: number; failed: number; total: number }> {
+  let sent = 0;
+  let failed = 0;
+
+  for (let i = 0; i < recipients.length; i++) {
+    const item = recipients[i];
+    if (onProgress) {
+      onProgress(i + 1, recipients.length, item.email);
+    }
+    try {
+      await sendWelcomeEmail(item.email, item.name, item.orgName, item.role, item.initialPassword);
+      sent++;
+      // Safe delay between SMTP dispatches
+      if (i < recipients.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+    } catch (e) {
+      console.error(`Failed to send email to ${item.email}:`, e);
+      failed++;
+    }
+  }
+
+  return { sent, failed, total: recipients.length };
+}
+
