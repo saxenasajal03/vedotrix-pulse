@@ -980,12 +980,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createProfile = async (profileData: Omit<Profile, 'id'>): Promise<Profile> => {
     const newId = generateUUID();
     const managerIdUuid = profileData.managerId && profileData.managerId.length === 36 ? profileData.managerId : null;
+    const initialPassword = (profileData.passwordHash || 'Vedotrix@2026').trim();
     
     const newProfile: Profile = {
       ...profileData,
       id: newId,
       managerId: managerIdUuid || undefined,
-      passwordHash: profileData.passwordHash || 'Vedotrix@2026',
+      passwordHash: initialPassword,
       modulesAccess: profileData.modulesAccess || ['attendance', 'tasks', 'standups', 'leaves']
     };
     setProfiles((prev) => [...prev, newProfile]);
@@ -998,6 +999,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         email: newProfile.email,
         first_name: newProfile.firstName,
         last_name: newProfile.lastName,
+        phone: newProfile.phone || '',
         role: newProfile.role,
         designation: newProfile.designation,
         department: newProfile.department,
@@ -1006,7 +1008,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         avatar_url: newProfile.avatarUrl || '/vedotrix-logo.png',
         is_active: newProfile.isActive,
         manager_id: managerIdUuid,
-        password_hash: newProfile.passwordHash,
+        password_hash: initialPassword,
         modules_access: newProfile.modulesAccess
       });
       if (profErr) {
@@ -1014,28 +1016,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const org = organizations.find((o) => o.id === newProfile.orgId);
-      sendWelcomeEmail(
+      await sendWelcomeEmail(
         newProfile.email,
-        `${newProfile.firstName} ${newProfile.lastName}`,
+        `${newProfile.firstName} ${newProfile.lastName}`.trim(),
         org?.name || 'Vedotrix Organization',
-        newProfile.role
+        newProfile.role,
+        initialPassword,
+        'https://vedotrix-pulse.netlify.app'
       );
 
       if (newProfile.role === 'superadmin' || newProfile.role === 'owner') {
-        sendParentalSuperadminAlert(
+        await sendParentalSuperadminAlert(
           org?.name || 'Client Organization',
           org?.orgCode || 'ORG',
           newProfile.email,
-          `${newProfile.firstName} ${newProfile.lastName}`,
-          org?.industry || 'Tech'
+          `${newProfile.firstName} ${newProfile.lastName}`.trim(),
+          org?.industry || 'Tech',
+          'Enterprise',
+          { role: newProfile.role, designation: newProfile.designation, initialPassword }
         );
       }
     } catch (err) {
       console.warn('Profile Supabase cloud sync error:', err);
     }
 
-    addToast('Staff Member Created 🚀', `${newProfile.firstName} ${newProfile.lastName} registered in Supabase DB!`, 'success');
-    addNotification('New Team Member', `${newProfile.firstName} added as ${newProfile.designation}.`, 'system', 'hr');
+    addToast('Employee Onboarded 🚀', `${newProfile.firstName} ${newProfile.lastName} registered! Login credentials dispatched to ${newProfile.email}`, 'success');
+    addNotification('New Team Member', `${newProfile.firstName} added as ${newProfile.designation}. Credentials email dispatched.`, 'system', 'hr');
     return newProfile;
   };
 

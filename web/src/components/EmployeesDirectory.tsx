@@ -22,7 +22,11 @@ import {
   X,
   Send,
   Building,
-  ArrowRight
+  ArrowRight,
+  Key,
+  Eye,
+  EyeOff,
+  RefreshCw
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
 
@@ -59,12 +63,25 @@ export const EmployeesDirectory: React.FC = () => {
   const [newFirstName, setNewFirstName] = useState('');
   const [newLastName, setNewLastName] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [newPhone, setNewPhone] = useState('+91 ');
   const [newRole, setNewRole] = useState<UserRole>('employee');
   const [newDesignation, setNewDesignation] = useState('');
   const [newDepartment, setNewDepartment] = useState(isTech ? 'Engineering' : 'Growth & Performance Marketing');
   const [newJoiningDate, setNewJoiningDate] = useState('2026-10-01');
   const [newBaseSalary, setNewBaseSalary] = useState(85000);
   const [newManagerId, setNewManagerId] = useState('');
+
+  const generateNewPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+    let pwd = '';
+    for (let i = 0; i < 10; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewPassword(pwd);
+    setShowNewPassword(true);
+  };
 
   // Quick Task Form State
   const [taskTitle, setTaskTitle] = useState('');
@@ -113,6 +130,7 @@ export const EmployeesDirectory: React.FC = () => {
       email: newEmail.trim().toLowerCase(),
       firstName: newFirstName.trim(),
       lastName: newLastName.trim(),
+      phone: newPhone.trim(),
       role: newRole,
       designation: newDesignation.trim(),
       department: newDepartment,
@@ -120,6 +138,7 @@ export const EmployeesDirectory: React.FC = () => {
       baseSalary: newBaseSalary,
       isActive: true,
       managerId: newManagerId || undefined,
+      passwordHash: newPassword.trim() || undefined,
       modulesAccess: ['attendance', 'tasks', 'standups']
     });
 
@@ -127,6 +146,8 @@ export const EmployeesDirectory: React.FC = () => {
     setNewFirstName('');
     setNewLastName('');
     setNewEmail('');
+    setNewPassword('');
+    setNewPhone('+91 ');
     setNewDesignation('');
   };
 
@@ -762,6 +783,58 @@ export const EmployeesDirectory: React.FC = () => {
                   placeholder="e.g. rohan.verma@company.com"
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Initial Login Password *</span>
+                    <button
+                      type="button"
+                      onClick={generateNewPassword}
+                      className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium flex items-center space-x-1"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>Generate</span>
+                    </button>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="e.g. Employee@2026"
+                      className="w-full pl-8 pr-9 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-cyan-300 focus:outline-none focus:border-indigo-500"
+                    />
+                    <Key className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                    >
+                      {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Contact Phone</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full pl-8 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-indigo-300">
+                ⚡ Login credentials will be encrypted with bcrypt in Supabase and an automated Welcome Email with access link dispatched.
               </div>
 
               <div className="grid grid-cols-2 gap-3">

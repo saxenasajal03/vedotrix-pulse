@@ -16,7 +16,12 @@ import {
   Plus,
   Mail,
   CheckCircle2,
-  Calendar
+  Calendar,
+  Key,
+  Eye,
+  EyeOff,
+  Phone,
+  RefreshCw
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
 
@@ -42,12 +47,25 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [phone, setPhone] = useState('+91 ');
   const [role, setRole] = useState<'employee' | 'manager' | 'hr'>('employee');
   const [designation, setDesignation] = useState('');
   const [department, setDepartment] = useState('Engineering');
   const [baseSalary, setBaseSalary] = useState('65000');
   const [assignedManagerId, setAssignedManagerId] = useState('');
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
+
+  const generatePassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+    let pwd = '';
+    for (let i = 0; i < 10; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setPassword(pwd);
+    setShowPassword(true);
+  };
 
   const isTech = currentOrg.industry === 'Tech';
   const todayStr = new Date().toISOString().split('T')[0];
@@ -66,6 +84,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       email: email.trim().toLowerCase(),
       firstName: firstName.trim(),
       lastName: lastName.trim() || 'Team',
+      phone: phone.trim(),
       role,
       designation: designation.trim() || (role === 'hr' ? 'HR Specialist' : 'Team Member'),
       department: department.trim() || 'Operations',
@@ -73,7 +92,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       baseSalary: Number(baseSalary) || 50000,
       avatarUrl: '/vedotrix-logo.png',
       isActive: true,
-      managerId: assignedManagerId || undefined
+      managerId: assignedManagerId || undefined,
+      passwordHash: password.trim() || undefined
     });
 
     setIsSubmittingStaff(false);
@@ -81,6 +101,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     setFirstName('');
     setLastName('');
     setEmail('');
+    setPassword('');
+    setPhone('+91 ');
     setDesignation('');
     setAssignedManagerId('');
   };
@@ -330,9 +352,58 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   placeholder="e.g. john.doe@company.com"
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
                 />
-                <span className="text-[10px] text-cyan-400 mt-1 block">
-                  ⚡ Automatic Welcome Email will be sent & logged to Supabase
-                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Initial Login Password *</span>
+                    <button
+                      type="button"
+                      onClick={generatePassword}
+                      className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium flex items-center space-x-1"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>Generate</span>
+                    </button>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="e.g. Pass@2026"
+                      className="w-full pl-8 pr-9 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-cyan-300 focus:outline-none focus:border-indigo-500"
+                    />
+                    <Key className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Contact Phone</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full pl-8 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-indigo-300">
+                ⚡ Login credentials will be encrypted with bcrypt in Supabase and an automated Welcome Email with access link dispatched.
               </div>
 
               <div className="grid grid-cols-2 gap-3">
