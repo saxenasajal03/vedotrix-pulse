@@ -1483,7 +1483,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addNotification(
           'Presence Approval Needed 📍',
           `${currentProfile.firstName} ${currentProfile.lastName} punched in from outside office / WFH. Approval needed.`,
-          'alert',
+          'attendance',
           'attendance'
         );
       } else {
@@ -1613,8 +1613,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...taskData,
       id: newId,
       orgId: currentOrg.id,
-      assignedTo: assignedToUuid || undefined,
-      createdBy: createdByUuid || undefined,
+      assignedTo: assignedToUuid || taskData.assignedTo || currentProfile.id,
+      createdBy: createdByUuid || currentProfile.id,
       createdAt: new Date().toISOString()
     };
     setTasks((prev) => [newTask, ...prev]);

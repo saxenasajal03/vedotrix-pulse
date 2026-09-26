@@ -15,7 +15,8 @@ import {
   UserPlus,
   Plus,
   Mail,
-  CheckCircle2
+  CheckCircle2,
+  Calendar
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
 
