@@ -12,7 +12,8 @@ import {
   ThemeMode,
   InAppNotification,
   SystemBroadcast,
-  AccessRequest
+  AccessRequest,
+  RegularizationStatus
 } from '../types';
 import {
   INITIAL_ORGS,
@@ -26,7 +27,7 @@ import {
   INITIAL_NOTIFICATIONS,
   INITIAL_BROADCASTS
 } from '../lib/mockData';
-import { generateOfferSerialNumber, generateVerificationToken } from '../lib/serialUtils';
+import { generateVerificationToken, generateUUID } from '../lib/serialUtils';
 import {
   getStoredSupabaseConfig,
   saveSupabaseConfig,
@@ -37,7 +38,6 @@ import {
 import {
   sendWelcomeEmail,
   sendOfferLetterEmail,
-  sendRegularizationAlertEmail,
   sendParentalSuperadminAlert
 } from '../lib/mailer';
 
@@ -140,17 +140,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem('vdx_auth_token') !== null;
   });
 
-  // Clean stale demo localStorage cache if present
+  // Clean stale local storage caches to make sure live Supabase DB is the absolute single source of truth
+  const DB_CACHE_VERSION = 'vdx_db_v4_live_clean';
   useEffect(() => {
-    const cachedOrgs = localStorage.getItem('vdx_organizations');
-    if (cachedOrgs && cachedOrgs.includes('Nexora')) {
-      console.log('Purging legacy demo client cache to ensure clean production slate...');
+    if (localStorage.getItem('vdx_db_version') !== DB_CACHE_VERSION) {
+      console.log('Upgrading local cache to direct live Supabase DB single source of truth...');
       localStorage.removeItem('vdx_organizations');
+      localStorage.removeItem('vdx_profiles');
+      localStorage.removeItem('vdx_office_locations');
       localStorage.removeItem('vdx_offers');
       localStorage.removeItem('vdx_attendance');
       localStorage.removeItem('vdx_tasks');
       localStorage.removeItem('vdx_standups');
       localStorage.removeItem('vdx_payroll');
+      localStorage.removeItem('vdx_access_requests');
+      localStorage.setItem('vdx_db_version', DB_CACHE_VERSION);
     }
   }, []);
 
@@ -195,6 +199,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [profiles, setProfiles] = useState<Profile[]>(() => {
     const saved = localStorage.getItem('vdx_profiles');
     return saved ? JSON.parse(saved) : INITIAL_PROFILES;
+  });
+
+  const [officeLocationsList, setOfficeLocationsList] = useState<OfficeLocation[]>(() => {
+    const saved = localStorage.getItem('vdx_office_locations');
+    return saved ? JSON.parse(saved) : INITIAL_OFFICES;
   });
 
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>(() => {
@@ -249,6 +258,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [profiles]);
 
   useEffect(() => {
+    localStorage.setItem('vdx_office_locations', JSON.stringify(officeLocationsList));
+  }, [officeLocationsList]);
+
+  useEffect(() => {
     localStorage.setItem('vdx_current_org_id', currentOrgId);
   }, [currentOrgId]);
 
@@ -288,120 +301,236 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('vdx_broadcasts', JSON.stringify(broadcasts));
   }, [broadcasts]);
 
-  // LIVE SUPABASE CLOUD SYNC ON MOUNT
+  // LIVE SUPABASE CLOUD SYNC ON MOUNT - Loads directly from connected Supabase PostgreSQL
   useEffect(() => {
     async function syncFromLiveSupabase() {
       try {
         const client = getSupabaseClient();
-        const { data: cloudOrgs } = await client.from('organizations').select('*');
+        const [
+          { data: cloudOrgs, error: errOrgs },
+          { data: cloudProfiles, error: errProf },
+          { data: cloudOffices, error: errOff },
+          { data: cloudOffers, error: errOffers },
+          { data: cloudAttendance, error: errAtt },
+          { data: cloudTasks, error: errTasks },
+          { data: cloudStandups, error: errStandups },
+          { data: cloudRequests, error: errReqs },
+          { data: cloudPayroll, error: errPay }
+        ] = await Promise.all([
+          client.from('organizations').select('*'),
+          client.from('profiles').select('*'),
+          client.from('office_locations').select('*'),
+          client.from('offer_letters').select('*'),
+          client.from('attendance').select('*'),
+          client.from('tasks').select('*'),
+          client.from('daily_standups').select('*'),
+          client.from('access_requests').select('*'),
+          client.from('payroll_records').select('*')
+        ]);
+
+        if (errOrgs) console.warn('Supabase orgs fetch error:', errOrgs);
+        if (errProf) console.warn('Supabase profiles fetch error:', errProf);
+        if (errOff) console.warn('Supabase offices fetch error:', errOff);
+        if (errOffers) console.warn('Supabase offers fetch error:', errOffers);
+        if (errAtt) console.warn('Supabase attendance fetch error:', errAtt);
+        if (errTasks) console.warn('Supabase tasks fetch error:', errTasks);
+        if (errStandups) console.warn('Supabase standups fetch error:', errStandups);
+        if (errReqs) console.warn('Supabase requests fetch error:', errReqs);
+        if (errPay) console.warn('Supabase payroll fetch error:', errPay);
+
         if (cloudOrgs && cloudOrgs.length > 0) {
-          setOrganizations((prev) => {
-            const map = new Map(prev.map((o) => [o.id, o]));
-            cloudOrgs.forEach((o: any) => {
-              map.set(o.id, {
-                id: o.id,
-                name: o.name,
-                slug: o.slug,
-                orgCode: o.org_code,
-                industry: o.industry || 'Tech',
-                website: o.website || 'https://vedotrix.com',
-                address: o.address || '',
-                phone: o.phone || '',
-                logoUrl: o.logo_url || '/vedotrix-logo.png',
-                settings: o.settings || {
-                  workHoursPerDay: 8,
-                  gracePeriodMins: 15,
-                  wfhAllowed: true,
-                  halfDayThresholdHours: 4.5
-                }
-              });
-            });
-            return Array.from(map.values());
-          });
+          const mappedOrgs: Organization[] = cloudOrgs.map((o: any) => ({
+            id: o.id,
+            name: o.name,
+            slug: o.slug,
+            orgCode: o.org_code,
+            industry: o.industry || 'Tech',
+            website: o.website || 'https://vedotrix.com',
+            address: o.address || '',
+            phone: o.phone || '',
+            logoUrl: o.logo_url || '/vedotrix-logo.png',
+            settings: o.settings || {
+              workHoursPerDay: 8,
+              gracePeriodMins: 15,
+              wfhAllowed: true,
+              halfDayThresholdHours: 4.5
+            }
+          }));
+          setOrganizations(mappedOrgs);
         }
 
-        const { data: cloudProfiles } = await client.from('profiles').select('*');
         if (cloudProfiles && cloudProfiles.length > 0) {
-          setProfiles((prev) => {
-            const map = new Map(prev.map((p) => [p.id, p]));
-            cloudProfiles.forEach((p: any) => {
-              map.set(p.id, {
-                id: p.id,
-                orgId: p.org_id,
-                email: p.email,
-                firstName: p.first_name,
-                lastName: p.last_name || '',
-                role: p.role,
-                designation: p.designation || 'Team Member',
-                department: p.department || 'Operations',
-                joiningDate: p.joining_date || new Date().toISOString().split('T')[0],
-                baseSalary: Number(p.base_salary) || 50000,
-                avatarUrl: p.avatar_url || '/vedotrix-logo.png',
-                isActive: p.is_active ?? true,
-                managerId: p.manager_id,
-                passwordHash: p.password_hash || 'Vedotrix@2026',
-                modulesAccess: p.modules_access || ['attendance', 'tasks', 'standups']
-              });
-            });
-            return Array.from(map.values());
-          });
+          const mappedProfiles: Profile[] = cloudProfiles.map((p: any) => ({
+            id: p.id,
+            orgId: p.org_id,
+            email: p.email,
+            firstName: p.first_name,
+            lastName: p.last_name || '',
+            role: p.role,
+            designation: p.designation || 'Team Member',
+            department: p.department || 'Operations',
+            joiningDate: p.joining_date || new Date().toISOString().split('T')[0],
+            baseSalary: Number(p.base_salary) || 50000,
+            avatarUrl: p.avatar_url || '/vedotrix-logo.png',
+            isActive: p.is_active ?? true,
+            managerId: p.manager_id || undefined,
+            passwordHash: p.password_hash || 'Vedotrix@2026',
+            modulesAccess: p.modules_access || ['attendance', 'tasks', 'standups']
+          }));
+          setProfiles(mappedProfiles);
         }
 
-        const { data: cloudRequests } = await client.from('access_requests').select('*');
-        if (cloudRequests && cloudRequests.length > 0) {
-          setAccessRequests((prev) => {
-            const map = new Map(prev.map((r) => [r.id, r]));
-            cloudRequests.forEach((r: any) => {
-              map.set(r.id, {
-                id: r.id,
-                orgId: r.org_id,
-                requesterId: r.requester_id,
-                requestType: r.request_type,
-                targetModule: r.target_module,
-                justification: r.justification,
-                status: r.status,
-                assignedApproverId: r.assigned_approver_id,
-                approverDecisionNotes: r.approver_decision_notes,
-                approvedAt: r.approved_at,
-                createdAt: r.created_at
-              });
-            });
-            return Array.from(map.values());
-          });
+        if (cloudOffices && cloudOffices.length > 0) {
+          const mappedOffices: OfficeLocation[] = cloudOffices.map((l: any) => ({
+            id: l.id,
+            orgId: l.org_id,
+            name: l.name,
+            latitude: Number(l.latitude),
+            longitude: Number(l.longitude),
+            radiusMeters: Number(l.radius_meters) || 150,
+            address: l.address || '',
+            isActive: l.is_active ?? true
+          }));
+          setOfficeLocationsList(mappedOffices);
         }
 
-        const { data: cloudOffers } = await client.from('offer_letters').select('*');
         if (cloudOffers && cloudOffers.length > 0) {
-          setOfferLetters((prev) => {
-            const map = new Map(prev.map((off) => [off.id, off]));
-            cloudOffers.forEach((o: any) => {
-              map.set(o.id, {
-                id: o.id,
-                orgId: o.org_id,
-                serialNumber: o.serial_number,
-                candidateName: o.candidate_name,
-                candidateEmail: o.candidate_email,
-                candidatePhone: o.candidate_phone || '',
-                designation: o.designation,
-                department: o.department,
-                joiningDate: o.joining_date,
-                annualCtc: Number(o.annual_ctc) || 1200000,
-                basicMonthly: Number(o.basic_monthly) || 50000,
-                hraMonthly: Number(o.hra_monthly) || 25000,
-                specialAllowance: Number(o.special_allowance) || 25000,
-                status: o.status,
-                verificationToken: o.verification_token,
-                issuedBy: o.issued_by || 'hr',
-                hrVerifiedAt: o.hr_verified_at,
-                candidateAcceptedAt: o.candidate_accepted_at,
-                createdAt: o.created_at
-              });
-            });
-            return Array.from(map.values());
-          });
+          const mappedOffers: OfferLetter[] = cloudOffers.map((o: any) => ({
+            id: o.id,
+            orgId: o.org_id,
+            serialNumber: o.serial_number,
+            candidateName: o.candidate_name,
+            candidateEmail: o.candidate_email,
+            candidatePhone: o.candidate_phone || '',
+            designation: o.designation,
+            department: o.department,
+            joiningDate: o.joining_date,
+            annualCtc: Number(o.annual_ctc) || 1200000,
+            basicMonthly: Number(o.basic_monthly) || 50000,
+            hraMonthly: Number(o.hra_monthly) || 25000,
+            specialAllowance: Number(o.special_allowance) || 25000,
+            status: o.status,
+            verificationToken: o.verification_token,
+            pdfUrl: o.pdf_url,
+            securityCode: o.security_code,
+            hrDepartment: o.hr_department,
+            managerId: o.manager_id || undefined,
+            issuedBy: o.issued_by || '00000000-0000-0000-0000-000000000003',
+            hrVerifiedAt: o.hr_verified_at,
+            candidateAcceptedAt: o.candidate_accepted_at,
+            createdAt: o.created_at
+          }));
+          setOfferLetters(mappedOffers);
+        }
+
+        if (cloudAttendance && cloudAttendance.length > 0) {
+          const mappedAtt: AttendanceRecord[] = cloudAttendance.map((a: any) => ({
+            id: a.id,
+            orgId: a.org_id,
+            employeeId: a.employee_id,
+            date: a.date,
+            checkInTime: a.check_in_time,
+            checkOutTime: a.check_out_time,
+            checkInLat: a.check_in_lat ? Number(a.check_in_lat) : undefined,
+            checkInLong: a.check_in_long ? Number(a.check_in_long) : undefined,
+            checkOutLat: a.check_out_lat ? Number(a.check_out_lat) : undefined,
+            checkOutLong: a.check_out_long ? Number(a.check_out_long) : undefined,
+            distanceMeters: a.distance_meters ? Number(a.distance_meters) : 0,
+            officeAddress: a.office_address || '',
+            status: a.status || 'present',
+            isRemote: a.is_remote ?? false,
+            approvalStatus: a.approval_status || 'approved',
+            regularizationStatus: a.regularization_status || 'none',
+            regularizationReason: a.regularization_reason,
+            regularizedBy: a.regularized_by,
+            regularizationNotes: a.regularization_notes,
+            totalHours: a.total_hours ? Number(a.total_hours) : 0
+          }));
+          setAttendanceRecords(mappedAtt);
+        }
+
+        if (cloudTasks && cloudTasks.length > 0) {
+          const mappedTasks: TaskItem[] = cloudTasks.map((t: any) => ({
+            id: t.id,
+            orgId: t.org_id,
+            title: t.title,
+            description: t.description || '',
+            assignedTo: t.assigned_to,
+            createdBy: t.created_by,
+            category: t.category || 'tech',
+            status: t.status || 'todo',
+            priority: t.priority || 'medium',
+            dueDate: t.due_date,
+            gitBranch: t.git_branch,
+            prLink: t.pr_link,
+            sprintName: t.sprint_name,
+            campaignName: t.campaign_name,
+            clientName: t.client_name,
+            adSpendTarget: t.ad_spend_target ? Number(t.ad_spend_target) : undefined,
+            targetKpi: t.target_kpi,
+            createdAt: t.created_at
+          }));
+          setTasks(mappedTasks);
+        }
+
+        if (cloudStandups && cloudStandups.length > 0) {
+          const mappedStandups: DailyStandup[] = cloudStandups.map((s: any) => ({
+            id: s.id,
+            orgId: s.org_id,
+            employeeId: s.employee_id,
+            date: s.date,
+            completedToday: s.completed_today,
+            plannedTomorrow: s.planned_tomorrow,
+            blockers: s.blockers,
+            hoursLogged: s.hours_logged ? Number(s.hours_logged) : 8,
+            createdAt: s.created_at
+          }));
+          setStandups(mappedStandups);
+        }
+
+        if (cloudRequests && cloudRequests.length > 0) {
+          const mappedRequests: AccessRequest[] = cloudRequests.map((r: any) => ({
+            id: r.id,
+            orgId: r.org_id,
+            requesterId: r.requester_id,
+            requestType: r.request_type,
+            targetModule: r.target_module,
+            justification: r.justification,
+            status: r.status,
+            assignedApproverId: r.assigned_approver_id,
+            approverDecisionNotes: r.approver_decision_notes,
+            approvedAt: r.approved_at,
+            createdAt: r.created_at
+          }));
+          setAccessRequests(mappedRequests);
+        }
+
+        if (cloudPayroll && cloudPayroll.length > 0) {
+          const mappedPayroll: PayrollRecord[] = cloudPayroll.map((p: any) => ({
+            id: p.id,
+            orgId: p.org_id,
+            employeeId: p.employee_id,
+            month: p.month,
+            year: p.year,
+            workingDays: p.working_days,
+            presentDays: Number(p.present_days),
+            lossOfPayDays: Number(p.loss_of_pay_days || 0),
+            basicPay: Number(p.basic_pay),
+            hra: Number(p.hra),
+            allowances: Number(p.allowances || 0),
+            deductions: Number(p.deductions || 0),
+            lopDeduction: Number(p.lop_deduction || 0),
+            netSalary: Number(p.net_salary),
+            payoutStatus: p.payout_status || 'pending',
+            payoutDate: p.payout_date,
+            paymentMode: p.payment_mode || 'NEFT',
+            paymentReference: p.payment_reference,
+            createdAt: p.created_at
+          }));
+          setPayrollRecords(mappedPayroll);
         }
       } catch (err) {
-        console.log('Live cloud sync note:', err);
+        console.warn('Live cloud sync note:', err);
       }
     }
     syncFromLiveSupabase();
@@ -437,7 +566,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setCurrentProfileId(verifiedUser.user_id);
           setIsAuthenticated(true);
 
-          // If the organization is not yet loaded in state, fetch it from Supabase
+          // If the organization is not yet loaded in state, fetch it directly from Supabase
           if (!organizations.some((o) => o.id === verifiedUser.org_id)) {
             client.from('organizations').select('*').eq('id', verifiedUser.org_id).maybeSingle()
               .then(({ data: orgData }) => {
@@ -514,11 +643,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return { success: true, message: 'Authenticated successfully.' };
         } else {
-          // Explicit password mismatch returned from PostgreSQL bcrypt verification
           return { success: false, message: 'Invalid work email or password. Access denied.' };
         }
       } else if (!rpcError && (!rpcData || rpcData.length === 0)) {
-        // User email does not exist in database
         return { success: false, message: 'Invalid work email or password. Access denied.' };
       }
     } catch (rpcErr) {
@@ -574,7 +701,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Notification Dispatcher
   const addNotification = (title: string, message: string, category: InAppNotification['category'], linkTab?: string) => {
     const newNotif: InAppNotification = {
-      id: `notif-${Date.now()}`,
+      id: generateUUID(),
       title,
       message,
       category,
@@ -598,7 +725,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const currentOrg = organizations.find((o) => o.id === currentOrgId) || organizations[0];
   const orgProfiles = profiles.filter((p) => p.orgId === currentOrgId);
   const currentProfile = orgProfiles.find((p) => p.id === currentProfileId) || profiles.find((p) => p.id === currentProfileId) || orgProfiles[0] || profiles[0];
-  const officeLocations = INITIAL_OFFICES.filter((o) => o.orgId === currentOrgId);
+  
+  // Office locations strictly for active tenant with fallback
+  const officeLocations = officeLocationsList.filter((o) => o.orgId === currentOrgId);
+  const effectiveOfficeLocations: OfficeLocation[] = officeLocations.length > 0 ? officeLocations : [
+    {
+      id: '00000000-0000-0000-0000-000000000002',
+      orgId: currentOrgId,
+      name: `${currentOrg.name} Head Office`,
+      latitude: 12.9352,
+      longitude: 77.6946,
+      radiusMeters: 200,
+      address: currentOrg.address || 'Corporate Headquarters',
+      isActive: true
+    }
+  ];
 
   // Strictly identify Vedotrix Root Superadmin
   const isVedotrixSuperadmin =
@@ -644,7 +785,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- SUPERADMIN / SUPER CONTROLLER ACTIONS ---
   const createOrganization = (orgData: Omit<Organization, 'id' | 'settings'>): Organization => {
-    const newOrgId = `org-${Date.now()}`;
+    const newOrgId = generateUUID();
+    const ownerProfileId = generateUUID();
+    const officeId = generateUUID();
+
     const newOrg: Organization = {
       ...orgData,
       id: newOrgId,
@@ -661,7 +805,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Create default tenant owner profile
     const ownerEmail = newOrg.website?.includes('@') ? newOrg.website : `admin@${newOrg.slug || 'company'}.com`;
     const ownerProfile: Profile = {
-      id: `profile-${Date.now()}`,
+      id: ownerProfileId,
       orgId: newOrgId,
       email: ownerEmail,
       firstName: newOrg.name.split(' ')[0] || 'Admin',
@@ -672,27 +816,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       joiningDate: new Date().toISOString().split('T')[0],
       baseSalary: 150000,
       avatarUrl: newOrg.logoUrl || '/vedotrix-logo.png',
-      isActive: true
+      isActive: true,
+      modulesAccess: ['all', 'attendance', 'tasks', 'standups', 'offers', 'payroll', 'access_requests']
     };
     setProfiles((prev) => [...prev, ownerProfile]);
 
+    const defaultOffice: OfficeLocation = {
+      id: officeId,
+      orgId: newOrgId,
+      name: `${newOrg.name} Head Office`,
+      latitude: 12.9716,
+      longitude: 77.5946,
+      radiusMeters: 200,
+      address: newOrg.address || 'Corporate Headquarters',
+      isActive: true
+    };
+    setOfficeLocationsList((prev) => [...prev, defaultOffice]);
+
     // Also persist directly to live Supabase DB
-    try {
-      const client = getSupabaseClient();
-      client.from('organizations').insert({
-        id: newOrg.id,
-        name: newOrg.name,
-        slug: newOrg.slug,
-        org_code: newOrg.orgCode,
-        industry: newOrg.industry,
-        website: newOrg.website,
-        address: newOrg.address,
-        phone: newOrg.phone,
-        logo_url: newOrg.logoUrl
-      }).then(() => {
-        console.log('Saved new organization to live Supabase cloud!');
-        // Also persist owner profile
-        client.from('profiles').insert({
+    (async () => {
+      try {
+        const client = getSupabaseClient();
+        const { error: orgErr } = await client.from('organizations').insert({
+          id: newOrg.id,
+          name: newOrg.name,
+          slug: newOrg.slug,
+          org_code: newOrg.orgCode,
+          industry: newOrg.industry || 'Tech',
+          website: newOrg.website || '',
+          address: newOrg.address || '',
+          phone: newOrg.phone || '',
+          logo_url: newOrg.logoUrl || '/vedotrix-logo.png',
+          settings: newOrg.settings
+        });
+        if (orgErr) console.error('Supabase organization insert error:', orgErr);
+
+        const { error: profErr } = await client.from('profiles').insert({
           id: ownerProfile.id,
           org_id: newOrg.id,
           email: ownerProfile.email,
@@ -704,39 +863,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           joining_date: ownerProfile.joiningDate,
           base_salary: ownerProfile.baseSalary,
           avatar_url: ownerProfile.avatarUrl,
+          is_active: true,
+          modules_access: ownerProfile.modulesAccess
+        });
+        if (profErr) console.error('Supabase owner profile insert error:', profErr);
+
+        const { error: offErr } = await client.from('office_locations').insert({
+          id: defaultOffice.id,
+          org_id: newOrg.id,
+          name: defaultOffice.name,
+          latitude: defaultOffice.latitude,
+          longitude: defaultOffice.longitude,
+          radius_meters: defaultOffice.radiusMeters,
+          address: defaultOffice.address,
           is_active: true
-        }).then(() => console.log('Saved owner profile to Supabase!'));
-      });
+        });
+        if (offErr) console.error('Supabase default office insert error:', offErr);
 
-      // Dispatch automated Welcome Email via Supabase Mailer & CC Parental Super Controller
-      sendWelcomeEmail(
-        ownerEmail,
-        `${ownerProfile.firstName} ${ownerProfile.lastName}`,
-        newOrg.name,
-        'Organization Administrator'
-      );
-      sendParentalSuperadminAlert(
-        newOrg.name,
-        newOrg.orgCode,
-        ownerEmail,
-        `${ownerProfile.firstName} ${ownerProfile.lastName}`,
-        newOrg.industry,
-        newOrg.subscriptionPlan || 'Enterprise'
-      );
-    } catch (e) {
-      console.log('Cloud sync error', e);
-    }
+        // Dispatch automated Welcome Email via Supabase Mailer & CC Parental Super Controller
+        sendWelcomeEmail(
+          ownerEmail,
+          `${ownerProfile.firstName} ${ownerProfile.lastName}`,
+          newOrg.name,
+          'Organization Administrator'
+        );
+        sendParentalSuperadminAlert(
+          newOrg.name,
+          newOrg.orgCode,
+          ownerEmail,
+          `${ownerProfile.firstName} ${ownerProfile.lastName}`,
+          newOrg.industry || 'Tech',
+          newOrg.subscriptionPlan || 'Enterprise'
+        );
+      } catch (e) {
+        console.error('Supabase tenant cloud sync error:', e);
+      }
+    })();
 
-    addToast('Tenant Created 🎉', `Organization "${newOrg.name}" (${newOrg.orgCode}) registered & Welcome Email dispatched!`, 'success');
+    addToast('Tenant Created 🎉', `Organization "${newOrg.name}" (${newOrg.orgCode}) registered in Supabase DB!`, 'success');
     addNotification('New Organization Onboarded', `Tenant "${newOrg.name}" registered & Welcome Email dispatched.`, 'system', 'superadmin');
     return newOrg;
   };
 
   const createProfile = async (profileData: Omit<Profile, 'id'>): Promise<Profile> => {
-    const newId = `profile-${Date.now()}`;
+    const newId = generateUUID();
+    const managerIdUuid = profileData.managerId && profileData.managerId.length === 36 ? profileData.managerId : null;
+    
     const newProfile: Profile = {
       ...profileData,
       id: newId,
+      managerId: managerIdUuid || undefined,
       passwordHash: profileData.passwordHash || 'Vedotrix@2026',
       modulesAccess: profileData.modulesAccess || ['attendance', 'tasks', 'standups']
     };
@@ -744,7 +920,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      await client.from('profiles').insert({
+      const { error: profErr } = await client.from('profiles').insert({
         id: newId,
         org_id: newProfile.orgId,
         email: newProfile.email,
@@ -757,14 +933,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         base_salary: newProfile.baseSalary,
         avatar_url: newProfile.avatarUrl || '/vedotrix-logo.png',
         is_active: newProfile.isActive,
-        manager_id: newProfile.managerId,
+        manager_id: managerIdUuid,
         password_hash: newProfile.passwordHash,
         modules_access: newProfile.modulesAccess
       });
+      if (profErr) {
+        console.error('Supabase profile insert error:', profErr);
+      }
 
       const org = organizations.find((o) => o.id === newProfile.orgId);
       // Dispatch automated Welcome Email via Supabase Mailer
-      await sendWelcomeEmail(
+      sendWelcomeEmail(
         newProfile.email,
         `${newProfile.firstName} ${newProfile.lastName}`,
         org?.name || 'Vedotrix Organization',
@@ -772,7 +951,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
 
       if (newProfile.role === 'superadmin' || newProfile.role === 'owner') {
-        await sendParentalSuperadminAlert(
+        sendParentalSuperadminAlert(
           org?.name || 'Client Organization',
           org?.orgCode || 'ORG',
           newProfile.email,
@@ -784,7 +963,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Profile Supabase cloud sync error:', err);
     }
 
-    addToast('Staff Member Created 🚀', `${newProfile.firstName} ${newProfile.lastName} registered & Welcome Email sent!`, 'success');
+    addToast('Staff Member Created 🚀', `${newProfile.firstName} ${newProfile.lastName} registered in Supabase DB!`, 'success');
     addNotification('New Team Member', `${newProfile.firstName} added as ${newProfile.designation}.`, 'system', 'hr');
     return newProfile;
   };
@@ -795,14 +974,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     justification: string,
     requestType: AccessRequest['requestType'] = 'module_access'
   ): Promise<AccessRequest> => {
-    const newId = `req-${Date.now()}`;
+    const newId = generateUUID();
     
     // Designated Approver Routing:
-    // If requester has a designated reporting manager, route to that manager!
-    // If requester is a manager or has no reporting manager, route to the Organization Owner.
-    // If requester is the Organization Owner or requesting tenant-level feature, route to Superadmin.
     let assignedApproverId: string | undefined = currentProfile.managerId;
-    
     if (!assignedApproverId || assignedApproverId === currentProfile.id) {
       if (requestType === 'org_feature' || currentProfile.role === 'owner') {
         assignedApproverId = '00000000-0000-0000-0000-000000000003'; // Root Superadmin
@@ -812,6 +987,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    const assignedApproverUuid = assignedApproverId && assignedApproverId.length === 36 ? assignedApproverId : null;
+
     const newRequest: AccessRequest = {
       id: newId,
       orgId: currentOrg.id,
@@ -820,7 +997,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       targetModule,
       justification,
       status: 'pending',
-      assignedApproverId,
+      assignedApproverId: assignedApproverUuid || undefined,
       createdAt: new Date().toISOString()
     };
 
@@ -828,7 +1005,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      await client.from('access_requests').insert({
+      const { error } = await client.from('access_requests').insert({
         id: newId,
         org_id: currentOrg.id,
         requester_id: currentProfile.id,
@@ -836,13 +1013,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         target_module: targetModule,
         justification,
         status: 'pending',
-        assigned_approver_id: assignedApproverId
+        assigned_approver_id: assignedApproverUuid
       });
+      if (error) console.error('Supabase access_requests insert error:', error);
     } catch (err) {
       console.warn('Supabase access_requests insert warning:', err);
     }
 
-    const approver = profiles.find((p) => p.id === assignedApproverId);
+    const approver = profiles.find((p) => p.id === assignedApproverUuid);
     addToast(
       'Access Request Submitted 📨',
       `Requested "${targetModule.toUpperCase()}" access. Routed to designated approver: ${approver ? `${approver.firstName} ${approver.lastName}` : 'Management'}.`,
@@ -865,8 +1043,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetReq = accessRequests.find((r) => r.id === requestId);
     if (!targetReq) return;
 
-    // Strict Multi-Hierarchy Check:
-    // Only the designated reporting manager, organization owner, or root superadmin can approve!
     const isDesignatedApprover = targetReq.assignedApproverId === currentProfile.id;
     const isOrgOwner = currentProfile.role === 'owner' && currentProfile.orgId === targetReq.orgId;
     const isSuper = currentProfile.role === 'superadmin';
@@ -929,21 +1105,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateEmployeeManager = async (employeeId: string, managerId: string | null): Promise<void> => {
+    const managerUuid = managerId && managerId.length === 36 ? managerId : null;
     setProfiles((prev) =>
-      prev.map((p) => (p.id === employeeId ? { ...p, managerId: managerId || undefined } : p))
+      prev.map((p) => (p.id === employeeId ? { ...p, managerId: managerUuid || undefined } : p))
     );
 
     try {
       const client = getSupabaseClient();
       await client.from('profiles').update({
-        manager_id: managerId
+        manager_id: managerUuid
       }).eq('id', employeeId);
     } catch (err) {
       console.warn('Supabase manager update error:', err);
     }
 
     const emp = profiles.find((p) => p.id === employeeId);
-    const mgr = profiles.find((p) => p.id === managerId);
+    const mgr = profiles.find((p) => p.id === managerUuid);
     addToast('Hierarchy Updated 👥', `${emp?.firstName} now reports to ${mgr ? `${mgr.firstName} ${mgr.lastName}` : 'Management directly'}.`, 'info');
   };
 
@@ -974,7 +1151,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const createBroadcast = (title: string, message: string, priority: SystemBroadcast['priority']) => {
     const newBroadcast: SystemBroadcast = {
-      id: `bc-${Date.now()}`,
+      id: generateUUID(),
       title,
       message,
       priority,
@@ -983,7 +1160,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       targetOrgs: 'all'
     };
     setBroadcasts((prev) => [newBroadcast, ...prev]);
-    addToast('Global Broadcast Sent 📢', `Alert published to all organizations and mobile apps.`, 'success');
+    addToast('Global Broadcast Sent 📢', `Alert published to all organizations.`, 'success');
     addNotification(title, message, 'broadcast', 'dashboard');
   };
 
@@ -999,7 +1176,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastChecked: new Date().toISOString()
       });
       addToast('Supabase Connected ⚡', result.message, 'success');
-      addNotification('Database Connected', 'Live Supabase Free Tier DB active & operational.', 'system', 'superadmin');
+      addNotification('Database Connected', 'Live Supabase DB active & operational.', 'system', 'superadmin');
     } else {
       saveSupabaseConfig(url, key, false);
       setSupabaseConfig({
@@ -1017,10 +1194,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createOfferLetter = (offerData: Omit<OfferLetter, 'id' | 'orgId' | 'verificationToken' | 'status' | 'createdAt'>): OfferLetter => {
     const serialNumber = offerData.serialNumber?.trim().toUpperCase() || `VDX-${currentOrg.orgCode}-${Date.now().toString(16).toUpperCase()}`;
     const verificationToken = generateVerificationToken(serialNumber, offerData.candidateEmail);
+    const newId = generateUUID();
     
+    const issuedByUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : '00000000-0000-0000-0000-000000000003';
+    const managerIdUuid = offerData.managerId && offerData.managerId.length === 36 ? offerData.managerId : null;
+
     const newOffer: OfferLetter = {
       ...offerData,
-      id: `off-${Date.now()}`,
+      id: newId,
       orgId: currentOrg.id,
       serialNumber,
       verificationToken,
@@ -1028,43 +1209,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       pdfUrl: offerData.pdfUrl,
       securityCode: offerData.securityCode,
       hrDepartment: offerData.hrDepartment,
-      managerId: offerData.managerId,
+      managerId: managerIdUuid || undefined,
       managerName: offerData.managerName,
-      issuedBy: currentProfile.id,
+      issuedBy: issuedByUuid,
       hrVerifiedAt: new Date().toISOString(),
       createdAt: new Date().toISOString()
     };
 
     setOfferLetters((prev) => [newOffer, ...prev]);
 
-    // Push to live Supabase DB
+    // Push directly to live Supabase DB
     try {
       const client = getSupabaseClient();
       client.from('offer_letters').insert({
+        id: newId,
         org_id: currentOrg.id,
         serial_number: newOffer.serialNumber,
         candidate_name: newOffer.candidateName,
         candidate_email: newOffer.candidateEmail,
-        candidate_phone: newOffer.candidatePhone,
+        candidate_phone: newOffer.candidatePhone || null,
         designation: newOffer.designation,
         department: newOffer.department,
         joining_date: newOffer.joiningDate,
         annual_ctc: newOffer.annualCtc,
         basic_monthly: newOffer.basicMonthly,
         hra_monthly: newOffer.hraMonthly,
-        special_allowance: newOffer.specialAllowance,
+        special_allowance: newOffer.specialAllowance || 0,
         status: newOffer.status,
         verification_token: newOffer.verificationToken,
-        pdf_url: newOffer.pdfUrl,
-        security_code: newOffer.securityCode,
-        hr_department: newOffer.hrDepartment,
-        manager_id: newOffer.managerId,
-        issued_by: newOffer.issuedBy
-      }).then(() => {
-        console.log('Offer letter saved to live Supabase cloud!');
+        pdf_url: newOffer.pdfUrl || null,
+        security_code: newOffer.securityCode || null,
+        hr_department: newOffer.hrDepartment || null,
+        manager_id: managerIdUuid,
+        issued_by: issuedByUuid
+      }).then(({ error }) => {
+        if (error) console.error('Supabase offer letter insert error:', error);
+        else console.log('Offer letter persisted to live Supabase cloud!');
       });
 
-      // Dispatch automated Offer Letter & Verification loop email via Supabase Mailer
+      // Dispatch automated Offer Letter & Verification email
       sendOfferLetterEmail(
         newOffer.candidateEmail,
         newOffer.candidateName,
@@ -1162,7 +1345,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const existing = getTodayAttendance();
     const resolvedAddress = officeAddress || currentOrg.address || 'Corporate Headquarters';
 
-    // If Work From Home or distance outside office radius (> 150m), presence approval is required from assigned Manager or HR!
+    // If Work From Home or distance outside office radius (> 150m), presence approval is required
     const requiresApproval = isRemote || distanceMeters > 150;
     const regularizationStatus: RegularizationStatus = requiresApproval ? 'pending' : 'none';
     const approvalStatus: 'approved' | 'pending_manager_approval' | 'rejected' = requiresApproval
@@ -1174,8 +1357,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (!existing) {
       // Check In
+      const newId = generateUUID();
       const newRecord: AttendanceRecord = {
-        id: `att-${Date.now()}`,
+        id: newId,
         orgId: currentOrg.id,
         employeeId: currentProfile.id,
         date: todayStr,
@@ -1194,10 +1378,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setAttendanceRecords((prev) => [newRecord, ...prev]);
 
-      // Push to Supabase
+      // Push to Supabase PostgreSQL
       try {
         const client = getSupabaseClient();
         client.from('attendance').insert({
+          id: newId,
           org_id: currentOrg.id,
           employee_id: currentProfile.id,
           date: newRecord.date,
@@ -1210,9 +1395,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           is_remote: isRemote,
           approval_status: approvalStatus,
           regularization_status: regularizationStatus,
-          regularization_reason: regularizationReason
+          regularization_reason: regularizationReason || null
+        }).then(({ error }) => {
+          if (error) console.error('Supabase attendance check-in error:', error);
+          else console.log('Attendance check-in saved to Supabase!');
         });
-      } catch (e) {}
+      } catch (e) {
+        console.error('Attendance insert error:', e);
+      }
 
       if (requiresApproval) {
         addToast(
@@ -1239,18 +1429,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const checkInDate = new Date(existing.checkInTime!).getTime();
       const now = Date.now();
       const hours = Math.round(((now - checkInDate) / (1000 * 60 * 60)) * 100) / 100;
+      const totalHours = Math.max(hours, 0.5);
+      const newStatus = hours >= (currentOrg.settings?.halfDayThresholdHours || 4.5) ? 'present' : 'half_day';
 
       const updatedRecord: AttendanceRecord = {
         ...existing,
         checkOutTime: new Date().toISOString(),
         checkOutLat: lat,
         checkOutLong: long,
-        totalHours: Math.max(hours, 0.5),
-        status: hours >= currentOrg.settings.halfDayThresholdHours ? 'present' : 'half_day'
+        totalHours,
+        status: newStatus
       };
 
       setAttendanceRecords((prev) => prev.map((a) => (a.id === existing.id ? updatedRecord : a)));
-      addToast('Check-Out Recorded 🏁', `Checked out. Duration: ${Math.max(hours, 0.5)} hrs. Remember your EOD Standup!`, 'info');
+
+      // Update in Supabase
+      try {
+        const client = getSupabaseClient();
+        client.from('attendance').update({
+          check_out_time: updatedRecord.checkOutTime,
+          check_out_lat: lat,
+          check_out_long: long,
+          total_hours: totalHours,
+          status: newStatus
+        }).eq('id', existing.id).then(({ error }) => {
+          if (error) console.error('Supabase attendance check-out error:', error);
+          else console.log('Attendance check-out updated in Supabase!');
+        });
+      } catch (e) {
+        console.error('Attendance check-out error:', e);
+      }
+
+      addToast('Check-Out Recorded 🏁', `Checked out. Duration: ${totalHours} hrs. Remember your EOD Standup!`, 'info');
       addNotification('Attendance Check-Out 🏁', `Checked out. Remember to log your daily standup!`, 'attendance', 'standups');
       return { success: true, message: 'Checked out successfully', record: updatedRecord };
     } else {
@@ -1272,11 +1482,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return a;
       })
     );
+
+    try {
+      const client = getSupabaseClient();
+      client.from('attendance').update({
+        regularization_reason: reason,
+        regularization_status: 'pending',
+        approval_status: 'pending_manager_approval'
+      }).eq('id', attendanceId);
+    } catch (e) {}
+
     addToast('Presence Regularization Submitted', 'Sent to assigned Manager / HR for approval.', 'info');
     addNotification('Regularization Submitted', 'Your punch regularization request is pending review.', 'attendance', 'attendance');
   };
 
   const resolveRegularization = (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => {
+    const approverUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
+
     setAttendanceRecords((prev) =>
       prev.map((a) => {
         if (a.id === attendanceId) {
@@ -1301,10 +1523,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         regularization_status: status,
         approval_status: status === 'approved' ? 'approved' : 'rejected',
         status: status === 'approved' ? 'present' : 'absent',
-        regularized_by: currentProfile.id,
-        approved_by: currentProfile.id,
-        approval_notes: notes
-      }).eq('id', attendanceId);
+        regularized_by: approverUuid,
+        approved_by: approverUuid,
+        approval_notes: notes || null
+      }).eq('id', attendanceId).then(({ error }) => {
+        if (error) console.error('Supabase attendance regularization resolve error:', error);
+      });
     } catch (e) {}
 
     addToast(
@@ -1316,10 +1540,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- TASKS & STANDUP ---
   const createTask = (taskData: Omit<TaskItem, 'id' | 'orgId' | 'createdAt'>) => {
+    const newId = generateUUID();
+    const assignedToUuid = taskData.assignedTo && taskData.assignedTo.length === 36 ? taskData.assignedTo : null;
+    const createdByUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
+
     const newTask: TaskItem = {
       ...taskData,
-      id: `tsk-${Date.now()}`,
+      id: newId,
       orgId: currentOrg.id,
+      assignedTo: assignedToUuid || undefined,
+      createdBy: createdByUuid || undefined,
       createdAt: new Date().toISOString()
     };
     setTasks((prev) => [newTask, ...prev]);
@@ -1327,36 +1557,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const client = getSupabaseClient();
       client.from('tasks').insert({
+        id: newId,
         org_id: currentOrg.id,
         title: newTask.title,
-        description: newTask.description,
-        assigned_to: newTask.assignedTo,
-        created_by: newTask.createdBy,
-        category: newTask.category,
-        status: newTask.status,
-        priority: newTask.priority,
-        git_branch: newTask.gitBranch,
-        pr_link: newTask.prLink,
-        sprint_name: newTask.sprintName,
-        campaign_name: newTask.campaignName,
-        client_name: newTask.clientName,
-        ad_spend_target: newTask.adSpendTarget,
-        target_kpi: newTask.targetKpi
+        description: newTask.description || null,
+        assigned_to: assignedToUuid,
+        created_by: createdByUuid,
+        category: newTask.category || 'tech',
+        status: newTask.status || 'todo',
+        priority: newTask.priority || 'medium',
+        due_date: newTask.dueDate || null,
+        git_branch: newTask.gitBranch || null,
+        pr_link: newTask.prLink || null,
+        sprint_name: newTask.sprintName || null,
+        campaign_name: newTask.campaignName || null,
+        client_name: newTask.clientName || null,
+        ad_spend_target: newTask.adSpendTarget || null,
+        target_kpi: newTask.targetKpi || null
+      }).then(({ error }) => {
+        if (error) console.error('Supabase task insert error:', error);
+        else console.log('Task saved to Supabase!');
       });
-    } catch (e) {}
+    } catch (e) {
+      console.error('Task insert error:', e);
+    }
 
     addToast('Task Created', `"${newTask.title}" added to ${newTask.category.toUpperCase()} board.`, 'success');
   };
 
   const updateTaskStatus = (taskId: string, status: TaskItem['status']) => {
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status } : t)));
+    try {
+      const client = getSupabaseClient();
+      client.from('tasks').update({ status }).eq('id', taskId).then(({ error }) => {
+        if (error) console.error('Supabase task status update error:', error);
+      });
+    } catch (e) {}
     addToast('Task Status Updated', `Task moved to ${status.replace('_', ' ').toUpperCase()}`, 'info');
   };
 
   const submitStandup = (completedToday: string, plannedTomorrow: string, blockers?: string, hours: number = 8) => {
     const todayStr = new Date().toISOString().split('T')[0];
+    const newId = generateUUID();
     const newStandup: DailyStandup = {
-      id: `std-${Date.now()}`,
+      id: newId,
       orgId: currentOrg.id,
       employeeId: currentProfile.id,
       date: todayStr,
@@ -1371,13 +1615,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const client = getSupabaseClient();
       client.from('daily_standups').insert({
+        id: newId,
+        org_id: currentOrg.id,
+        employee_id: currentProfile.id,
         date: todayStr,
         completed_today: completedToday,
         planned_tomorrow: plannedTomorrow,
-        blockers: blockers,
+        blockers: blockers || null,
         hours_logged: hours
+      }).then(({ error }) => {
+        if (error) console.error('Supabase standup insert error:', error);
+        else console.log('Daily standup saved to Supabase!');
       });
-    } catch (e) {}
+    } catch (e) {
+      console.error('Standup insert error:', e);
+    }
 
     addToast('EOD Standup Submitted', 'Daily work log synced with attendance and team dashboard.', 'success');
     addNotification('Daily Standup Logged', 'EOD work log submitted successfully.', 'task', 'standups');
@@ -1409,7 +1661,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const netSalary = Math.max(0, baseSalary - deductions - lopDeduction);
 
       newRecords.push({
-        id: `pay-${emp.id}-${month}-${year}`,
+        id: generateUUID(),
         orgId: currentOrg.id,
         employeeId: emp.id,
         month,
@@ -1436,6 +1688,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...prev.filter((p) => !(p.orgId === currentOrg.id && p.month === month && p.year === year))
     ]);
 
+    // Push to Supabase PostgreSQL
+    try {
+      const client = getSupabaseClient();
+      client.from('payroll_records').insert(newRecords.map(r => ({
+        id: r.id,
+        org_id: r.orgId,
+        employee_id: r.employeeId,
+        month: r.month,
+        year: r.year,
+        working_days: r.workingDays,
+        present_days: r.presentDays,
+        loss_of_pay_days: r.lossOfPayDays,
+        basic_pay: r.basicPay,
+        hra: r.hra,
+        allowances: r.allowances,
+        deductions: r.deductions,
+        lop_deduction: r.lopDeduction,
+        net_salary: r.netSalary,
+        payout_status: r.payoutStatus,
+        payment_mode: r.paymentMode
+      }))).then(({ error }) => {
+        if (error) console.error('Supabase payroll insert error:', error);
+      });
+    } catch (e) {}
+
     addToast('Payroll Generated', `Monthly payroll computed for ${targetEmployees.length} employees based on attendance & LOP.`, 'success');
   };
 
@@ -1453,6 +1730,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return p;
       })
     );
+
+    try {
+      const client = getSupabaseClient();
+      client.from('payroll_records').update({
+        payout_status: 'paid',
+        payout_date: new Date().toISOString(),
+        payment_reference: reference
+      }).eq('id', recordId).then(({ error }) => {
+        if (error) console.error('Supabase payroll paid update error:', error);
+      });
+    } catch (e) {}
+
     addToast('Payout Disbursed', `Payment reference ${reference} recorded. Payslip is now ready.`, 'success');
     addNotification('Salary Disbursed 💰', `Monthly payout processed with reference ${reference}.`, 'payroll', 'payroll');
   };
@@ -1503,7 +1792,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSubscriptionPlan,
         broadcasts,
         createBroadcast,
-        officeLocations,
+        officeLocations: effectiveOfficeLocations,
         offerLetters: offerLetters.filter((o) => o.orgId === currentOrg.id),
         allOfferLetters: isVedotrixSuperadmin ? offerLetters : offerLetters.filter((o) => o.orgId === currentOrg.id),
         attendanceRecords: attendanceRecords.filter((a) => a.orgId === currentOrg.id),

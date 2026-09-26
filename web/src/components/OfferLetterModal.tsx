@@ -25,7 +25,7 @@ interface OfferLetterModalProps {
 }
 
 export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onClose }) => {
-  const { currentOrg, createOfferLetter, orgProfiles, addToast } = useApp();
+  const { currentOrg, currentProfile, createOfferLetter, orgProfiles, addToast } = useApp();
 
   const [serialNumber, setSerialNumber] = useState('');
   const [securityCode, setSecurityCode] = useState('');
@@ -106,7 +106,7 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
       hrDepartment: hrDepartment.trim() || undefined,
       managerId: managerId || undefined,
       managerName: selectedManager ? `${selectedManager.firstName} ${selectedManager.lastName}` : undefined,
-      issuedBy: 'active_hr_user'
+      issuedBy: currentProfile.id
     });
 
     onClose();
