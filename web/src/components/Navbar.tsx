@@ -46,6 +46,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     (currentProfile.orgId === '00000000-0000-0000-0000-000000000001' ||
      currentProfile.email.toLowerCase() === 'admin@vedotrix.com' ||
      currentProfile.email.toLowerCase() === 'sajalsaxenagola@gmail.com');
+  const isSuperadmin = isVedotrixSuperadmin;
 
   return (
     <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 transition-colors">
