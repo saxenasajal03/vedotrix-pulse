@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Default: Cyber Dark Theme (Signature Vedotrix) */
+  :root, .theme-cyber-dark {
+    --bg-page: #07090e;
+    --bg-card: #0d121d;
+    --bg-card-subtle: #111827;
+    --border-color: #1e293b;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent-glow: #0ea5e9;
+  }
+
+  /* Theme 2: Midnight Enterprise */
+  .theme-midnight {
+    --bg-page: #0a0f1d;
+    --bg-card: #131c31;
+    --bg-card-subtle: #1a2640;
+    --border-color: #243452;
+    --text-primary: #f1f5f9;
+    --text-secondary: #8899b5;
+    --accent-glow: #6366f1;
+  }
+
+  /* Theme 3: Corporate Light Theme */
+  .theme-corporate-light {
+    --bg-page: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-card-subtle: #f1f5f9;
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --accent-glow: #0284c7;
+  }
+
+  body {
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+/* Light Mode Overrides for Slate Components */
+.theme-corporate-light .bg-slate-900 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.theme-corporate-light .bg-slate-950 {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.theme-corporate-light .border-slate-800,
+.theme-corporate-light .border-slate-700 {
+  border-color: #e2e8f0 !important;
+}
+
+.theme-corporate-light .text-slate-400,
+.theme-corporate-light .text-slate-300 {
+  color: #475569 !important;
+}
+
+.theme-corporate-light .text-white {
+  color: #0f172a !important;
+}
+
+.theme-corporate-light aside {
+  background-color: #ffffff !important;
+  border-right-color: #e2e8f0 !important;
+}
+
+.theme-corporate-light header {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+  border-bottom-color: #e2e8f0 !important;
+}
+
+/* Print specific styles for offer letters and payslips */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  header, aside, .print\:hidden {
+    display: none !important;
+  }
+}

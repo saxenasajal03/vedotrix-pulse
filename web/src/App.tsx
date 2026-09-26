@@ -1,0 +1,181 @@
+import React, { useState } from 'react';
+import { AppProvider, useApp } from './context/AppContext';
+import { Navbar } from './components/Navbar';
+import { Sidebar } from './components/Sidebar';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { DashboardOverview } from './components/DashboardOverview';
+import { SuperAdminConsole } from './components/SuperAdminConsole';
+import { OfferLettersList } from './components/OfferLettersList';
+import { TaskBoard } from './components/TaskBoard';
+import { StandupsView } from './components/StandupsView';
+import { PayrollManager } from './components/PayrollManager';
+import { GeoAttendanceCard } from './components/GeoAttendanceCard';
+import { RegularizationApprovalQueue } from './components/RegularizationApprovalQueue';
+import { PublicVerifyModal } from './components/PublicVerifyModal';
+import { OfferLetterModal } from './components/OfferLetterModal';
+import { OfferLetterViewerModal } from './components/OfferLetterViewerModal';
+import { RegularizationModal } from './components/RegularizationModal';
+import { DailyStandupModal } from './components/DailyStandupModal';
+import { ToastContainer } from './components/ToastContainer';
+import { LoginScreen } from './components/LoginScreen';
+import { AccessRequestsView } from './components/AccessRequestsView';
+import { OfferLetter } from './types';
+
+const MainLayout: React.FC = () => {
+  const { isAuthenticated, currentProfile } = useApp();
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    return currentProfile.role === 'superadmin' ? 'superadmin' : 'dashboard';
+  });
+
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Security Guard: Prevent non-superadmins from ever seeing superadmin tab
+  React.useEffect(() => {
+    if (activeTab === 'superadmin' && currentProfile.role !== 'superadmin') {
+      setActiveTab('dashboard');
+    }
+  }, [currentProfile.role, activeTab]);
+
+  // Modal States
+  const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
+  const [verifyInitialSerial, setVerifyInitialSerial] = useState('');
+  
+  const [isCreateOfferOpen, setIsCreateOfferOpen] = useState(false);
+  const [viewingOffer, setViewingOffer] = useState<OfferLetter | null>(null);
+
+  const [regularizeAttendanceId, setRegularizeAttendanceId] = useState<string | null>(null);
+  const [isStandupOpen, setIsStandupOpen] = useState(false);
+
+  const handleOpenVerify = (serial?: string) => {
+    if (serial) setVerifyInitialSerial(serial);
+    setIsVerifyModalOpen(true);
+  };
+
+  // If not authenticated, display the high-security Login Screen
+  if (!isAuthenticated) {
+    return (
+      <>
+        <LoginScreen />
+        <ToastContainer />
+      </>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] transition-colors">
+      {/* Navbar with Hamburger Menu, Tenant Switcher & Logout */}
+      <Navbar
+        onOpenVerifyModal={() => handleOpenVerify()}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onToggleMobileMenu={() => setMobileMenuOpen((prev) => !prev)}
+        mobileOpen={mobileMenuOpen}
+      />
+
+      <div className="flex-1 flex max-w-7xl w-full mx-auto relative">
+        {/* Responsive Sidebar (Desktop Fixed + Mobile Off-Canvas Drawer) */}
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          onOpenVerifyModal={() => handleOpenVerify()}
+          mobileOpen={mobileMenuOpen}
+          onCloseMobile={() => setMobileMenuOpen(false)}
+        />
+
+        {/* Main Content Area with Bottom Padding on Mobile for Fixed Bottom Bar */}
+        <main className="flex-1 p-3.5 sm:p-6 lg:p-8 overflow-y-auto pb-24 md:pb-8 min-w-0">
+          {activeTab === 'superadmin' && currentProfile.role === 'superadmin' && <SuperAdminConsole />}
+
+          {activeTab === 'dashboard' && (
+            <DashboardOverview
+              onOpenCreateOffer={() => setIsCreateOfferOpen(true)}
+              onRequestRegularization={(id) => setRegularizeAttendanceId(id)}
+              onOpenStandup={() => setIsStandupOpen(true)}
+              onOpenVerify={(serial) => handleOpenVerify(serial)}
+              setActiveTab={setActiveTab}
+            />
+          )}
+
+          {activeTab === 'offers' && (
+            <OfferLettersList
+              onOpenCreate={() => setIsCreateOfferOpen(true)}
+              onViewOffer={(offer) => setViewingOffer(offer)}
+              onOpenVerify={(serial) => handleOpenVerify(serial)}
+            />
+          )}
+
+          {activeTab === 'attendance' && (
+            <div className="space-y-6">
+              <GeoAttendanceCard
+                onRequestRegularization={(id) => setRegularizeAttendanceId(id)}
+                onOpenStandup={() => setIsStandupOpen(true)}
+              />
+              <RegularizationApprovalQueue />
+            </div>
+          )}
+
+          {activeTab === 'tasks' && <TaskBoard />}
+
+          {activeTab === 'standups' && (
+            <StandupsView onOpenSubmitModal={() => setIsStandupOpen(true)} />
+          )}
+
+          {activeTab === 'payroll' && <PayrollManager />}
+
+          {activeTab === 'access_requests' && <AccessRequestsView />}
+        </main>
+      </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onOpenMobileMenu={() => setMobileMenuOpen(true)}
+      />
+
+      {/* Global Modals */}
+      <PublicVerifyModal
+        isOpen={isVerifyModalOpen}
+        onClose={() => setIsVerifyModalOpen(false)}
+        initialSerial={verifyInitialSerial}
+      />
+
+      <OfferLetterModal
+        isOpen={isCreateOfferOpen}
+        onClose={() => setIsCreateOfferOpen(false)}
+      />
+
+      <OfferLetterViewerModal
+        offer={viewingOffer}
+        onClose={() => setViewingOffer(null)}
+        onOpenVerify={(serial) => {
+          setViewingOffer(null);
+          handleOpenVerify(serial);
+        }}
+      />
+
+      <RegularizationModal
+        attendanceId={regularizeAttendanceId}
+        onClose={() => setRegularizeAttendanceId(null)}
+      />
+
+      <DailyStandupModal
+        isOpen={isStandupOpen}
+        onClose={() => setIsStandupOpen(false)}
+      />
+
+      {/* Reactive Toasts */}
+      <ToastContainer />
+    </div>
+  );
+};
+
+export function App() {
+  return (
+    <AppProvider>
+      <MainLayout />
+    </AppProvider>
+  );
+}
+
+export default App;

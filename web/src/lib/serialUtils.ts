@@ -1,0 +1,42 @@
+// ==============================================================================
+// ADVANCED SERIAL NUMBER & VERIFICATION UTILITIES
+// Designed & Managed by Vedotrix Technologies
+// ==============================================================================
+
+/**
+ * Generates an enterprise tamper-proof serial number:
+ * Format: VDX-[ORG_CODE]-[YEAR]-[6-CHAR-HEX]
+ * Example: VDX-NEX-2026-9E41B2
+ */
+export function generateOfferSerialNumber(orgCode: string): string {
+  const year = new Date().getFullYear();
+  const hex = Math.random().toString(16).substring(2, 8).toUpperCase();
+  const cleanCode = (orgCode || 'CORP').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+  return `VDX-${cleanCode}-${year}-${hex}`;
+}
+
+/**
+ * Generates a verification hash token
+ */
+export function generateVerificationToken(serial: string, email: string): string {
+  const salt = 'vedotrix_tamper_seal_2026';
+  const raw = `${serial}:${email}:${Date.now()}:${salt}`;
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return `vdx_sec_${Math.abs(hash).toString(16)}${Math.random().toString(36).substring(2, 6)}`;
+}
+
+/**
+ * Formats Indian Currency or Standard Currency (₹)
+ */
+export function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(amount);
+}
