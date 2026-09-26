@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   ShieldCheck,
@@ -30,6 +30,7 @@ import {
 import { Organization } from '../types';
 import { ImageUpload } from './ImageUpload';
 import { S3_CONFIG } from '../lib/storage';
+import { fetchRecentEmailLogs, EmailLogEntry } from '../lib/mailer';
 
 export const SuperAdminConsole: React.FC = () => {
   const {
@@ -97,6 +98,36 @@ export const SuperAdminConsole: React.FC = () => {
     setAdminPassword(pwd);
     setShowAdminPassword(true);
   };
+
+  // Automatic Mailer Logs State
+  const [emailLogs, setEmailLogs] = useState<EmailLogEntry[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [emailLogFilter, setEmailLogFilter] = useState<'all' | 'welcome' | 'security' | 'offer_letter'>('all');
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  const loadEmailLogs = async () => {
+    setIsLoadingLogs(true);
+    try {
+      const logs = await fetchRecentEmailLogs(50);
+      setEmailLogs(logs);
+    } catch (e) {
+      console.warn('Failed to load email logs:', e);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    loadEmailLogs();
+  }, []);
+
+  const filteredEmailLogs = emailLogs.filter((log) => {
+    if (emailLogFilter === 'all') return true;
+    if (emailLogFilter === 'security') {
+      return log.template_type === 'security' || log.recipient_email.includes('sajal') || log.recipient_email.includes('chiefhead');
+    }
+    return log.template_type === emailLogFilter;
+  });
 
   // Supabase Configuration State
   const [supabaseUrl, setSupabaseUrl] = useState(supabaseConfig.url);
@@ -456,6 +487,141 @@ export const SuperAdminConsole: React.FC = () => {
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Live Automatic Mailer & Delivery Registry */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+        <div className="p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+              <Mail className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h2 className="text-sm font-bold text-white">Live Automatic Mailer & Delivery Registry</h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  {emailLogs.length} Logged Dispatches
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Real-time delivery audit trail from Supabase PostgreSQL <code className="text-cyan-300 font-mono">email_logs</code> table.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+              {(['all', 'welcome', 'security', 'offer_letter'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setEmailLogFilter(filter)}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition capitalize ${
+                    emailLogFilter === filter
+                      ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {filter === 'all' ? 'All' : filter === 'security' ? 'Parental Alerts' : filter.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={loadEmailLogs}
+              disabled={isLoadingLogs}
+              className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition disabled:opacity-50"
+              title="Refresh Mailer Logs from Supabase"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingLogs ? 'animate-spin text-cyan-400' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Logs Table / List */}
+        <div className="overflow-x-auto">
+          {filteredEmailLogs.length === 0 ? (
+            <div className="p-8 text-center text-slate-500 text-xs">
+              No email dispatch logs found for this filter.
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-[11px] font-semibold">
+                  <th className="p-3.5">Recipient</th>
+                  <th className="p-3.5">Subject</th>
+                  <th className="p-3.5">Template</th>
+                  <th className="p-3.5">Status</th>
+                  <th className="p-3.5">Dispatched At</th>
+                  <th className="p-3.5 text-right">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                {filteredEmailLogs.map((log) => {
+                  const isExpanded = expandedLogId === log.id;
+                  const isParental = log.template_type === 'security' || log.recipient_email.includes('sajal') || log.recipient_email.includes('chiefhead');
+                  return (
+                    <React.Fragment key={log.id}>
+                      <tr className="hover:bg-slate-800/40 transition">
+                        <td className="p-3.5">
+                          <div className="font-semibold text-white">{log.recipient_name || 'System Recipient'}</div>
+                          <div className="text-[11px] font-mono text-cyan-400">{log.recipient_email}</div>
+                        </td>
+                        <td className="p-3.5 max-w-xs truncate font-medium text-slate-200">
+                          {log.subject}
+                        </td>
+                        <td className="p-3.5">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                              isParental
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : log.template_type === 'welcome'
+                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}
+                          >
+                            {isParental ? 'Parental Alert' : log.template_type.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td className="p-3.5">
+                          <span className="inline-flex items-center space-x-1 text-[10px] font-bold px-2 py-0.5 rounded uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span>{log.status}</span>
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-slate-400 font-mono text-[11px]">
+                          {new Date(log.sent_at).toLocaleString()}
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                            className="px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-white bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition"
+                          >
+                            {isExpanded ? 'Hide' : 'Inspect'}
+                          </button>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-slate-950/80 border-b border-slate-800">
+                          <td colSpan={6} className="p-4">
+                            <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-2 text-xs">
+                              <div className="flex items-center justify-between text-slate-400 text-[11px] pb-1 border-b border-slate-800 font-mono">
+                                <span>Payload ID: {log.id}</span>
+                                <span>Sent via Supabase Transactional Engine</span>
+                              </div>
+                              <pre className="text-[11px] font-mono text-cyan-300 bg-slate-950 p-3 rounded-lg overflow-x-auto">
+                                {JSON.stringify(log.metadata || {}, null, 2)}
+                              </pre>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
