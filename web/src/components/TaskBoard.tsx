@@ -42,6 +42,17 @@ export const TaskBoard: React.FC = () => {
 
   const isTech = currentOrg.industry === 'Tech';
 
+  const [taskFilter, setTaskFilter] = useState<'all' | 'my' | 'team'>('all');
+  const directReportIds = new Set(
+    orgProfiles.filter((p) => p.managerId === currentProfile.id).map((p) => p.id)
+  );
+
+  const visibleTasks = tasks.filter((t) => {
+    if (taskFilter === 'my') return t.assignedTo === currentProfile.id;
+    if (taskFilter === 'team') return directReportIds.has(t.assignedTo) || t.assignedTo === currentProfile.id;
+    return true;
+  });
+
   const columns: { id: TaskStatus; title: string; color: string }[] = [
     { id: 'todo', title: 'To Do / Backlog', color: 'border-slate-700 bg-slate-900/50' },
     { id: 'in_progress', title: 'In Progress', color: 'border-indigo-500/40 bg-indigo-950/20' },
@@ -107,6 +118,49 @@ export const TaskBoard: React.FC = () => {
         </button>
       </div>
 
+      {/* Filter Tabs for HR / Managers and Individual Assignees */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setTaskFilter('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              taskFilter === 'all'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            All Tasks ({tasks.length})
+          </button>
+          <button
+            onClick={() => setTaskFilter('my')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              taskFilter === 'my'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            Assigned to Me ({tasks.filter((t) => t.assignedTo === currentProfile.id).length})
+          </button>
+          <button
+            onClick={() => setTaskFilter('team')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1 ${
+              taskFilter === 'team'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <span>My Team's Tasks</span>
+            <span className="text-[10px] bg-slate-800 px-1.5 py-0.2 rounded ml-1">
+              {tasks.filter((t) => directReportIds.has(t.assignedTo) || t.assignedTo === currentProfile.id).length}
+            </span>
+          </button>
+        </div>
+
+        <div className="text-[11px] text-slate-400">
+          Showing: <strong className="text-white">{visibleTasks.length}</strong> tasks
+        </div>
+      </div>
+
       {/* Mobile Column Switcher */}
       <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:hidden">
         <button
@@ -117,10 +171,10 @@ export const TaskBoard: React.FC = () => {
               : 'bg-slate-900 text-slate-400 border border-slate-800'
           }`}
         >
-          All ({tasks.length})
+          All ({visibleTasks.length})
         </button>
         {columns.map((c) => {
-          const count = tasks.filter((t) => t.status === c.id).length;
+          const count = visibleTasks.filter((t) => t.status === c.id).length;
           return (
             <button
               key={c.id}
@@ -140,7 +194,7 @@ export const TaskBoard: React.FC = () => {
       {/* Kanban Board Columns */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {columns.filter((c) => mobileCol === 'all' || mobileCol === c.id).map((col) => {
-          const colTasks = tasks.filter((t) => t.status === col.id);
+          const colTasks = visibleTasks.filter((t) => t.status === col.id);
           return (
             <div key={col.id} className={`rounded-xl border ${col.color} p-4 flex flex-col min-h-[480px]`}>
               {/* Column Header */}
@@ -329,11 +383,15 @@ export const TaskBoard: React.FC = () => {
                     onChange={(e) => setAssignedTo(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
-                    {orgProfiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName} ({p.role})
-                      </option>
-                    ))}
+                    {orgProfiles.map((p) => {
+                      const isDirectReport = p.managerId === currentProfile.id;
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {isDirectReport ? '★ [Direct Report] ' : ''}
+                          {p.firstName} {p.lastName} ({p.role.toUpperCase()} - {p.designation || p.department})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 

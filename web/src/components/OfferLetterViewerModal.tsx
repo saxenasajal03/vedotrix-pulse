@@ -47,6 +47,12 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
             <span className="text-xs font-mono font-bold text-cyan-400 bg-slate-900 px-2.5 py-1 rounded border border-cyan-500/30">
               {offer.serialNumber}
             </span>
+            {offer.securityCode && (
+              <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30 flex items-center">
+                <Lock className="w-3 h-3 mr-1" />
+                PIN: {offer.securityCode}
+              </span>
+            )}
             <span
               className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
                 offer.status === 'accepted'
@@ -154,6 +160,28 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
               <strong className="text-slate-950 underline">{offer.designation}</strong> in our{' '}
               <strong>{offer.department}</strong> division.
             </p>
+            {(offer.managerName || offer.hrDepartment) && (
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1">
+                {offer.hrDepartment && (
+                  <p>
+                    <span className="text-slate-500 font-medium">Issuing Division:</span>{' '}
+                    <strong className="text-slate-900">{offer.hrDepartment}</strong>
+                  </p>
+                )}
+                {offer.managerName && (
+                  <p>
+                    <span className="text-slate-500 font-medium">Designated Reporting Manager:</span>{' '}
+                    <strong className="text-indigo-900">{offer.managerName}</strong>
+                  </p>
+                )}
+                {offer.securityCode && (
+                  <p>
+                    <span className="text-slate-500 font-medium">Verification Security PIN:</span>{' '}
+                    <span className="font-mono font-bold text-slate-800">{offer.securityCode}</span>
+                  </p>
+                )}
+              </div>
+            )}
             <p>
               Your skills, track record, and passion align with our team's mission. We are confident you will make a substantial contribution to our organizational milestones.
             </p>

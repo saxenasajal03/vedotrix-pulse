@@ -81,7 +81,7 @@ export type OfferLetterStatus = 'draft' | 'issued' | 'accepted' | 'declined' | '
 export interface OfferLetter {
   id: string;
   orgId: string;
-  serialNumber: string; // Format: VDX-[ORG_CODE]-[YEAR]-[HEX]
+  serialNumber: string; // Format: VDX-[ORG_CODE]-[YEAR]-[HEX] or manual
   candidateName: string;
   candidateEmail: string;
   candidatePhone: string;
@@ -95,6 +95,10 @@ export interface OfferLetter {
   status: OfferLetterStatus;
   verificationToken: string;
   pdfUrl?: string;
+  securityCode?: string; // Optional security PIN / code set by HR
+  hrDepartment?: string; // Department of issuing HR / Talent Acquisition
+  managerId?: string; // Designated Reporting Manager
+  managerName?: string;
   issuedBy: string; // profile id
   hrVerifiedAt?: string;
   candidateAcceptedAt?: string;
@@ -116,9 +120,13 @@ export interface AttendanceRecord {
   checkOutLat?: number;
   checkOutLong?: number;
   locationId?: string;
+  officeAddress?: string; // Human-readable office address
   distanceMeters?: number;
   status: AttendanceStatus;
   isRemote: boolean;
+  approvalStatus?: 'approved' | 'pending_manager_approval' | 'rejected';
+  approvedBy?: string;
+  approvalNotes?: string;
   regularizationReason?: string;
   regularizationStatus: RegularizationStatus;
   regularizedBy?: string;

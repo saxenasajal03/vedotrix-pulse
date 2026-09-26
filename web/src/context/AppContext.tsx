@@ -37,7 +37,8 @@ import {
 import {
   sendWelcomeEmail,
   sendOfferLetterEmail,
-  sendRegularizationAlertEmail
+  sendRegularizationAlertEmail,
+  sendParentalSuperadminAlert
 } from '../lib/mailer';
 
 interface NotificationToast {
@@ -93,7 +94,7 @@ interface AppContextType {
   getOfferBySerial: (serialNumber: string) => OfferLetter | undefined;
   
   // Actions: Attendance
-  punchAttendance: (lat: number, long: number, isRemote?: boolean, distanceMeters?: number) => { success: boolean; message: string; record: AttendanceRecord };
+  punchAttendance: (lat: number, long: number, isRemote?: boolean, distanceMeters?: number, officeAddress?: string) => { success: boolean; message: string; record: AttendanceRecord };
   requestRegularization: (attendanceId: string, reason: string) => void;
   resolveRegularization: (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => void;
   getTodayAttendance: () => AttendanceRecord | undefined;
@@ -707,12 +708,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }).then(() => console.log('Saved owner profile to Supabase!'));
       });
 
-      // Dispatch automated Welcome Email via Supabase Mailer
+      // Dispatch automated Welcome Email via Supabase Mailer & CC Parental Super Controller
       sendWelcomeEmail(
         ownerEmail,
         `${ownerProfile.firstName} ${ownerProfile.lastName}`,
         newOrg.name,
         'Organization Administrator'
+      );
+      sendParentalSuperadminAlert(
+        newOrg.name,
+        newOrg.orgCode,
+        ownerEmail,
+        `${ownerProfile.firstName} ${ownerProfile.lastName}`,
+        newOrg.industry,
+        newOrg.subscriptionPlan || 'Enterprise'
       );
     } catch (e) {
       console.log('Cloud sync error', e);
@@ -761,6 +770,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         org?.name || 'Vedotrix Organization',
         newProfile.role
       );
+
+      if (newProfile.role === 'superadmin' || newProfile.role === 'owner') {
+        await sendParentalSuperadminAlert(
+          org?.name || 'Client Organization',
+          org?.orgCode || 'ORG',
+          newProfile.email,
+          `${newProfile.firstName} ${newProfile.lastName}`,
+          org?.industry || 'Tech'
+        );
+      }
     } catch (err) {
       console.warn('Profile Supabase cloud sync error:', err);
     }
@@ -1007,6 +1026,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       verificationToken,
       status: 'issued',
       pdfUrl: offerData.pdfUrl,
+      securityCode: offerData.securityCode,
+      hrDepartment: offerData.hrDepartment,
+      managerId: offerData.managerId,
+      managerName: offerData.managerName,
       issuedBy: currentProfile.id,
       hrVerifiedAt: new Date().toISOString(),
       createdAt: new Date().toISOString()
@@ -1033,6 +1056,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         status: newOffer.status,
         verification_token: newOffer.verificationToken,
         pdf_url: newOffer.pdfUrl,
+        security_code: newOffer.securityCode,
+        hr_department: newOffer.hrDepartment,
+        manager_id: newOffer.managerId,
         issued_by: newOffer.issuedBy
       }).then(() => {
         console.log('Offer letter saved to live Supabase cloud!');
@@ -1125,9 +1151,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const punchAttendance = (lat: number, long: number, isRemote: boolean = false, distanceMeters: number = 0) => {
+  const punchAttendance = (
+    lat: number,
+    long: number,
+    isRemote: boolean = false,
+    distanceMeters: number = 0,
+    officeAddress?: string
+  ) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const existing = getTodayAttendance();
+    const resolvedAddress = officeAddress || currentOrg.address || 'Corporate Headquarters';
+
+    // If Work From Home or distance outside office radius (> 150m), presence approval is required from assigned Manager or HR!
+    const requiresApproval = isRemote || distanceMeters > 150;
+    const regularizationStatus: RegularizationStatus = requiresApproval ? 'pending' : 'none';
+    const approvalStatus: 'approved' | 'pending_manager_approval' | 'rejected' = requiresApproval
+      ? 'pending_manager_approval'
+      : 'approved';
+    const regularizationReason = isRemote
+      ? 'Work From Home (WFH) - Presence Approval Required'
+      : (distanceMeters > 150 ? `Location Outside Office Geofence (${Math.round(distanceMeters)}m away) - Presence Approval Required` : undefined);
 
     if (!existing) {
       // Check In
@@ -1140,9 +1183,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         checkInLat: lat,
         checkInLong: long,
         distanceMeters,
-        status: isRemote ? 'present' : (distanceMeters <= 150 ? 'present' : 'absent'),
+        officeAddress: resolvedAddress,
+        status: 'present',
         isRemote,
-        regularizationStatus: 'none',
+        approvalStatus,
+        regularizationStatus,
+        regularizationReason,
         totalHours: 0
       };
 
@@ -1152,18 +1198,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const client = getSupabaseClient();
         client.from('attendance').insert({
+          org_id: currentOrg.id,
+          employee_id: currentProfile.id,
           date: newRecord.date,
           check_in_time: newRecord.checkInTime,
           check_in_lat: lat,
           check_in_long: long,
           distance_meters: distanceMeters,
+          office_address: resolvedAddress,
           status: newRecord.status,
-          is_remote: isRemote
+          is_remote: isRemote,
+          approval_status: approvalStatus,
+          regularization_status: regularizationStatus,
+          regularization_reason: regularizationReason
         });
       } catch (e) {}
 
-      addToast('Check-In Successful 📍', `Punched in at ${new Date().toLocaleTimeString()} (GPS: ${lat.toFixed(4)}, ${long.toFixed(4)})`, 'success');
-      addNotification('Attendance Check-In 📍', `Punched in successfully at ${new Date().toLocaleTimeString()}`, 'attendance', 'attendance');
+      if (requiresApproval) {
+        addToast(
+          'Punched In (Presence Approval Required) 📍',
+          isRemote
+            ? 'Work From Home logged. Sent to your assigned Manager / HR for presence approval.'
+            : `Location outside office address (${resolvedAddress}). Sent to Manager / HR for approval.`,
+          'warning'
+        );
+        addNotification(
+          'Presence Approval Needed 📍',
+          `${currentProfile.firstName} ${currentProfile.lastName} punched in from outside office / WFH. Approval needed.`,
+          'alert',
+          'attendance'
+        );
+      } else {
+        addToast('Office Check-In Verified 📍', `Verified at ${resolvedAddress}`, 'success');
+        addNotification('Attendance Check-In 📍', `Punched in successfully at ${resolvedAddress}`, 'attendance', 'attendance');
+      }
+
       return { success: true, message: 'Checked in successfully', record: newRecord };
     } else if (!existing.checkOutTime) {
       // Check Out
@@ -1196,13 +1265,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return {
             ...a,
             regularizationReason: reason,
-            regularizationStatus: 'pending'
+            regularizationStatus: 'pending',
+            approvalStatus: 'pending_manager_approval'
           };
         }
         return a;
       })
     );
-    addToast('Regularization Submitted', 'Sent to HR/Manager for review.', 'info');
+    addToast('Presence Regularization Submitted', 'Sent to assigned Manager / HR for approval.', 'info');
     addNotification('Regularization Submitted', 'Your punch regularization request is pending review.', 'attendance', 'attendance');
   };
 
@@ -1213,24 +1283,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return {
             ...a,
             regularizationStatus: status,
-            status: status === 'approved' ? 'regularized' : 'absent',
+            approvalStatus: status === 'approved' ? 'approved' : 'rejected',
+            status: status === 'approved' ? 'present' : 'absent',
             regularizedBy: currentProfile.id,
-            regularizationNotes: notes || (status === 'approved' ? 'Approved by HR' : 'Rejected by HR')
+            approvedBy: currentProfile.id,
+            regularizationNotes: notes
           };
         }
         return a;
       })
     );
+
+    // Push update to Supabase
+    try {
+      const client = getSupabaseClient();
+      client.from('attendance').update({
+        regularization_status: status,
+        approval_status: status === 'approved' ? 'approved' : 'rejected',
+        status: status === 'approved' ? 'present' : 'absent',
+        regularized_by: currentProfile.id,
+        approved_by: currentProfile.id,
+        approval_notes: notes
+      }).eq('id', attendanceId);
+    } catch (e) {}
+
     addToast(
-      status === 'approved' ? 'Request Approved' : 'Request Rejected',
-      `Regularization request ${status}.`,
-      status === 'approved' ? 'success' : 'warning'
-    );
-    addNotification(
-      `Regularization ${status.toUpperCase()}`,
-      `Your attendance request was ${status} by management.`,
-      'attendance',
-      'attendance'
+      status === 'approved' ? 'Presence Approved ✅' : 'Presence Rejected ❌',
+      `Employee presence record ${status.toUpperCase()} by ${currentProfile.firstName} (${currentProfile.role.toUpperCase()}).`,
+      status === 'approved' ? 'success' : 'info'
     );
   };
 
@@ -1247,8 +1327,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const client = getSupabaseClient();
       client.from('tasks').insert({
+        org_id: currentOrg.id,
         title: newTask.title,
         description: newTask.description,
+        assigned_to: newTask.assignedTo,
+        created_by: newTask.createdBy,
         category: newTask.category,
         status: newTask.status,
         priority: newTask.priority,

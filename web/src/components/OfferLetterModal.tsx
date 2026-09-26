@@ -12,7 +12,9 @@ import {
   UploadCloud,
   CheckCircle2,
   FileText,
-  Loader2
+  Loader2,
+  KeyRound,
+  Users
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
 import { uploadFileToStorage } from '../lib/storage';
@@ -23,9 +25,13 @@ interface OfferLetterModalProps {
 }
 
 export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onClose }) => {
-  const { currentOrg, createOfferLetter, addToast } = useApp();
+  const { currentOrg, createOfferLetter, orgProfiles, addToast } = useApp();
 
   const [serialNumber, setSerialNumber] = useState('');
+  const [securityCode, setSecurityCode] = useState('');
+  const [hrDepartment, setHrDepartment] = useState('HR & Talent Acquisition');
+  const [managerId, setManagerId] = useState('');
+
   const [candidateName, setCandidateName] = useState('');
   const [candidateEmail, setCandidateEmail] = useState('');
   const [candidatePhone, setCandidatePhone] = useState('+91 ');
@@ -47,6 +53,12 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
   const basicMonthly = Math.round(monthlyTotal * 0.5);
   const hraMonthly = Math.round(monthlyTotal * 0.25);
   const specialAllowance = monthlyTotal - (basicMonthly + hraMonthly);
+
+  const handleGenerateSecurityCode = () => {
+    const code = `SEC-${Math.floor(1000 + Math.random() * 9000)}`;
+    setSecurityCode(code);
+    addToast('Security PIN Generated', `PIN: ${code}`, 'info');
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -75,6 +87,8 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
       return;
     }
 
+    const selectedManager = orgProfiles.find((p) => p.id === managerId);
+
     createOfferLetter({
       serialNumber: serialNumber.trim().toUpperCase(),
       candidateName: candidateName.trim(),
@@ -88,6 +102,10 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
       hraMonthly,
       specialAllowance,
       pdfUrl: uploadedDocUrl || undefined,
+      securityCode: securityCode.trim() || undefined,
+      hrDepartment: hrDepartment.trim() || undefined,
+      managerId: managerId || undefined,
+      managerName: selectedManager ? `${selectedManager.firstName} ${selectedManager.lastName}` : undefined,
       issuedBy: 'active_hr_user'
     });
 
@@ -117,26 +135,56 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* Manual Serial Number Entry (No Auto-Generation) */}
-          <div className="bg-slate-950 p-4 rounded-xl border border-cyan-500/30 space-y-2">
-            <label className="block text-xs font-semibold text-slate-200 flex items-center justify-between">
-              <span className="flex items-center text-cyan-300">
-                <ShieldCheck className="w-4 h-4 mr-1.5 text-cyan-400" />
-                Offer Letter Serial Number * (Filled Manually by HR)
-              </span>
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Custom Reference</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={serialNumber}
-              onChange={(e) => setSerialNumber(e.target.value.toUpperCase())}
-              placeholder={`e.g. ${currentOrg.orgCode}/2026/001 or VDX-${currentOrg.orgCode}-2026-001`}
-              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm font-mono uppercase text-cyan-300 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition"
-            />
-            <p className="text-[11px] text-slate-400">
-              Enter your organization's official offer reference/serial code. Candidates will use this code to verify authenticity.
-            </p>
+          {/* Reference & Security Code Section */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Manual Serial Number Entry (No Auto-Generation) */}
+            <div className="bg-slate-950 p-4 rounded-xl border border-cyan-500/30 space-y-2">
+              <label className="block text-xs font-semibold text-slate-200 flex items-center justify-between">
+                <span className="flex items-center text-cyan-300">
+                  <ShieldCheck className="w-4 h-4 mr-1.5 text-cyan-400" />
+                  Offer Serial Number *
+                </span>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">HR Manual</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={serialNumber}
+                onChange={(e) => setSerialNumber(e.target.value.toUpperCase())}
+                placeholder={`e.g. ${currentOrg.orgCode}/2026/001`}
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm font-mono uppercase text-cyan-300 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition"
+              />
+              <p className="text-[10px] text-slate-400">
+                Mandatory reference serial code entered manually by HR.
+              </p>
+            </div>
+
+            {/* Optional Security Code / PIN */}
+            <div className="bg-slate-950 p-4 rounded-xl border border-indigo-500/30 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-200 flex items-center text-indigo-300">
+                  <KeyRound className="w-4 h-4 mr-1.5 text-indigo-400" />
+                  Security Code (Optional PIN)
+                </label>
+                <button
+                  type="button"
+                  onClick={handleGenerateSecurityCode}
+                  className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 underline"
+                >
+                  Generate PIN
+                </button>
+              </div>
+              <input
+                type="text"
+                value={securityCode}
+                onChange={(e) => setSecurityCode(e.target.value.toUpperCase())}
+                placeholder="e.g. SEC-8841 or Custom PIN"
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm font-mono uppercase text-indigo-300 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
+              />
+              <p className="text-[10px] text-slate-400">
+                Optional candidate PIN for additional anti-fraud verification.
+              </p>
+            </div>
           </div>
 
           {/* Manual Option to Upload Offer Letter Document (PDF / DOC / Image) */}
@@ -316,6 +364,43 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
                   className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
+            </div>
+
+            {/* HR / Talent Acquisition Department */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Issuing HR Department / Unit
+              </label>
+              <input
+                type="text"
+                value={hrDepartment}
+                onChange={(e) => setHrDepartment(e.target.value)}
+                placeholder="e.g. HR Department, Talent Acquisition"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            {/* Designated Reporting Manager */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                <span className="flex items-center">
+                  <Users className="w-3.5 h-3.5 mr-1 text-indigo-400" />
+                  Designated Reporting Manager
+                </span>
+                <span className="text-[10px] text-slate-500">Optional</span>
+              </label>
+              <select
+                value={managerId}
+                onChange={(e) => setManagerId(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">-- Select Reporting Manager / Lead --</option>
+                {orgProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.firstName} {p.lastName} ({p.role.toUpperCase()} - {p.designation || p.department})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

@@ -133,12 +133,26 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
 
                       <td className="p-3">
                         <div className="font-bold text-white">{offer.candidateName}</div>
-                        <span className="text-[10px] text-slate-400">{offer.candidateEmail}</span>
+                        <span className="text-[10px] text-slate-400 block">{offer.candidateEmail}</span>
+                        {offer.securityCode && (
+                          <span className="inline-flex items-center text-[10px] font-mono font-semibold text-amber-300 bg-amber-950/40 px-1.5 py-0.2 rounded border border-amber-500/30 mt-1 mr-1">
+                            <Lock className="w-2.5 h-2.5 mr-1" />
+                            {offer.securityCode}
+                          </span>
+                        )}
+                        {offer.managerName && (
+                          <span className="text-[10px] text-slate-400 block mt-0.5">
+                            Reporting to: <strong className="text-slate-300">{offer.managerName}</strong>
+                          </span>
+                        )}
                       </td>
 
                       <td className="p-3">
                         <div className="font-semibold text-slate-200">{offer.designation}</div>
-                        <span className="text-[10px] text-indigo-400">{offer.department}</span>
+                        <span className="text-[10px] text-indigo-400 block">{offer.department}</span>
+                        {offer.hrDepartment && (
+                          <span className="text-[9px] text-slate-500 block">Unit: {offer.hrDepartment}</span>
+                        )}
                       </td>
 
                       <td className="p-3 text-right font-mono font-bold text-white">

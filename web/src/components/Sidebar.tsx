@@ -12,7 +12,8 @@ import {
   Sparkles,
   Crown,
   X,
-  ChevronRight
+  ChevronRight,
+  Users
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -30,7 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen = false,
   onCloseMobile
 }) => {
-  const { currentOrg, currentProfile, isVedotrixSuperadmin, offerLetters, attendanceRecords, tasks, accessRequests } = useApp();
+  const { currentOrg, currentProfile, isVedotrixSuperadmin, offerLetters, attendanceRecords, tasks, accessRequests, orgProfiles } = useApp();
 
   const pendingRegularizations = attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length;
   const pendingOffers = offerLetters.filter((o) => o.status === 'issued').length;
@@ -77,6 +78,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: currentOrg.industry === 'Tech' ? 'Tech Sprints & Git' : 'Campaigns & ROAS',
       icon: KanbanSquare,
       badge: `${tasks.length} Tasks`
+    },
+    {
+      id: 'employees',
+      label: 'Workforce & Employees',
+      icon: Users,
+      badge: `${orgProfiles.length} Staff`
     },
     {
       id: 'standups',

@@ -207,6 +207,29 @@ export const PublicVerifyModal: React.FC<PublicVerifyModalProps> = ({
                         Issued on {new Date(foundOffer.createdAt).toLocaleDateString()}
                       </span>
                     </div>
+
+                    {(foundOffer.hrDepartment || foundOffer.managerName) && (
+                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800 sm:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        {foundOffer.hrDepartment && (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Issuing HR Unit</span>
+                            <span className="text-xs font-semibold text-slate-200">{foundOffer.hrDepartment}</span>
+                          </div>
+                        )}
+                        {foundOffer.managerName && (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Reporting Manager</span>
+                            <span className="text-xs font-semibold text-indigo-300">{foundOffer.managerName}</span>
+                          </div>
+                        )}
+                        {foundOffer.securityCode && (
+                          <div className="bg-slate-950 px-2.5 py-1 rounded border border-amber-500/30">
+                            <span className="text-[9px] uppercase font-bold text-amber-400 block">Sec PIN</span>
+                            <span className="text-xs font-mono font-bold text-amber-300">{foundOffer.securityCode}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Attached Document Download (If provided by HR) */}

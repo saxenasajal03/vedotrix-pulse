@@ -85,8 +85,10 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
     setGpsError(null);
   };
 
+  const activeOfficeAddress = activeOffice.address || currentOrg.address || 'Corporate Headquarters';
+
   const handlePunch = () => {
-    const res = punchAttendance(userLat, userLong, !isInsideFence, currentDistance);
+    const res = punchAttendance(userLat, userLong, !isInsideFence, currentDistance, activeOfficeAddress);
     if (res.success && todayRecord && !todayRecord.checkOutTime) {
       // Just checked out! Prompt for EOD Standup
       onOpenStandup();
@@ -99,12 +101,12 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center space-x-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shrink-0">
-            <MapPin className="w-5 h-5" />
+            <Building className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-sm sm:text-base font-bold text-white truncate">Geo-Fenced Smart Attendance</h3>
+            <h3 className="text-sm sm:text-base font-bold text-white truncate">Smart Office Presence & Geo Attendance</h3>
             <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-              Geofence: <span className="text-indigo-400 font-semibold">{activeOffice.name}</span> ({activeOffice.radiusMeters}m radius)
+              Assigned Office: <span className="text-cyan-400 font-semibold">{activeOffice.name}</span>
             </p>
           </div>
         </div>
@@ -120,33 +122,45 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           {isInsideFence ? (
             <>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>In Office Radius</span>
+              <span>Office Location Matched</span>
             </>
           ) : (
             <>
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-              <span>Outside Geofence (Remote)</span>
+              <span>Location Not Matched (Approval Needed)</span>
             </>
           )}
         </div>
       </div>
 
-      {/* Geolocation Stats Radar Card */}
+      {/* Geolocation Stats Radar Card - Showing Office Address instead of raw lat/long */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-950/70 p-4 rounded-xl border border-slate-800">
         <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400 block">Distance to Geofence</span>
-          <p className="text-xl font-extrabold text-white mt-0.5 font-mono">
-            {formatDistance(currentDistance)}
+          <span className="text-[10px] uppercase font-bold text-slate-400 block flex items-center">
+            <MapPin className="w-3.5 h-3.5 mr-1 text-indigo-400" />
+            Official Office Location
+          </span>
+          <p className="text-xs font-bold text-white mt-1 leading-snug">
+            {activeOfficeAddress}
           </p>
-          <span className="text-[10px] text-slate-500">Threshold: &le; {activeOffice.radiusMeters} meters</span>
+          <span className="text-[10px] text-slate-500 mt-1 block">
+            Office Radius: &le; {activeOffice.radiusMeters}m geofence
+          </span>
         </div>
 
         <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400 block">Current Coordinates</span>
-          <p className="text-xs font-mono font-semibold text-cyan-300 mt-1 truncate">
-            {userLat.toFixed(5)}° N, {userLong.toFixed(5)}° E
+          <span className="text-[10px] uppercase font-bold text-slate-400 block flex items-center">
+            <Compass className="w-3.5 h-3.5 mr-1 text-cyan-400" />
+            Presence Verification Status
+          </span>
+          <p className={`text-xs font-extrabold mt-1 ${isInsideFence ? 'text-emerald-400' : 'text-amber-400'}`}>
+            {isInsideFence ? 'On-Premise Verified' : 'Work From Home / Remote'}
           </p>
-          <span className="text-[10px] text-slate-500">Haversine verified</span>
+          <span className="text-[10px] text-slate-400 mt-0.5 block leading-tight">
+            {isInsideFence
+              ? `Within office perimeter (${formatDistance(currentDistance)} away)`
+              : `${formatDistance(currentDistance)} from office • Requires Manager/HR Approval`}
+          </span>
         </div>
 
         <div className="flex flex-col justify-center space-y-1.5">
@@ -156,7 +170,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
             className="w-full py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-semibold flex items-center justify-center space-x-1.5 transition"
           >
             <Navigation className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{gpsLoading ? 'Reading GPS...' : 'Use Browser GPS'}</span>
+            <span>{gpsLoading ? 'Reading GPS...' : 'Use Browser Location'}</span>
           </button>
           
           <div className="flex space-x-1">
@@ -223,6 +237,13 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
                   Hours: <strong className="text-cyan-400 font-mono">{todayRecord.totalHours} hrs</strong>
                 </span>
               )}
+            </div>
+          )}
+
+          {todayRecord && todayRecord.approvalStatus === 'pending_manager_approval' && (
+            <div className="mt-2 inline-flex items-center text-[10px] text-amber-300 bg-amber-950/50 border border-amber-500/30 px-2.5 py-1 rounded-lg">
+              <AlertTriangle className="w-3 h-3 mr-1.5 text-amber-400 shrink-0" />
+              Presence approval pending from assigned Reporting Manager or HR
             </div>
           )}
         </div>

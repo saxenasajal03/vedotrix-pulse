@@ -19,6 +19,7 @@ import { DailyStandupModal } from './components/DailyStandupModal';
 import { ToastContainer } from './components/ToastContainer';
 import { LoginScreen } from './components/LoginScreen';
 import { AccessRequestsView } from './components/AccessRequestsView';
+import { EmployeesDirectory } from './components/EmployeesDirectory';
 import { OfferLetter } from './types';
 
 const MainLayout: React.FC = () => {
@@ -115,6 +116,7 @@ const MainLayout: React.FC = () => {
           )}
 
           {activeTab === 'tasks' && <TaskBoard />}
+          {activeTab === 'employees' && <EmployeesDirectory />}
 
           {activeTab === 'standups' && (
             <StandupsView onOpenSubmitModal={() => setIsStandupOpen(true)} />

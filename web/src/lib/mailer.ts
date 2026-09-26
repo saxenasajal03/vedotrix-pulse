@@ -145,11 +145,61 @@ export async function sendWelcomeEmail(
 
   console.log(`📧 [AUTOMATIC MAILER] Dispatched Welcome Email to ${recipientEmail} (${recipientName})`);
 
+  // AUTOMATIC CC TO PARENTAL SUPER CONTROLLER (chiefhead.interndesire@gmail.com)
+  if (role.toLowerCase().includes('admin') || role.toLowerCase().includes('owner')) {
+    await sendParentalSuperadminAlert(orgName, 'AUTO', recipientEmail, recipientName);
+  }
+
   return {
     success: true,
     recipient: recipientEmail,
     template: 'welcome',
     messageId: `msg_${Date.now()}`
+  };
+}
+
+export const PARENTAL_SUPERADMIN_EMAIL = 'chiefhead.interndesire@gmail.com';
+
+/**
+ * PARENTAL SUPER CONTROLLER NOTIFICATION
+ * Dispatches an automated CC alert whenever a new organization or superadmin is added
+ */
+export async function sendParentalSuperadminAlert(
+  orgName: string,
+  orgCode: string,
+  superadminEmail: string,
+  superadminName: string,
+  industry: string = 'Tech',
+  plan: string = 'Enterprise'
+): Promise<EmailDispatchResult> {
+  const subject = `[Parental Super Controller Alert] New Organization Added: ${orgName} (${orgCode})`;
+
+  await logEmailToSupabase({
+    recipient_email: PARENTAL_SUPERADMIN_EMAIL,
+    recipient_name: 'Parental Super Controller (Vedotrix)',
+    subject,
+    template_type: 'security',
+    status: 'sent',
+    metadata: {
+      event: 'ORGANIZATION_ONBOARDED',
+      orgName,
+      orgCode,
+      industry,
+      plan,
+      superadminEmail,
+      superadminName,
+      modules: ['Attendance', 'GPS Geofencing', 'Tasks', 'Daily Standups', 'Offer Letters', 'Payroll', 'Access Requests'],
+      timestamp: new Date().toISOString()
+    }
+  });
+
+  console.log(`📡 [PARENTAL CC ALERT] Dispatched Organization Onboarding CC Alert to ${PARENTAL_SUPERADMIN_EMAIL}`);
+
+  return {
+    success: true,
+    recipient: PARENTAL_SUPERADMIN_EMAIL,
+    template: 'parental_cc_alert',
+    messageId: `parental_${Date.now()}`
   };
 }
 
