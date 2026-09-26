@@ -14,7 +14,9 @@ import {
   FileText,
   Loader2,
   KeyRound,
-  Users
+  Users,
+  UserCheck,
+  Sparkles
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
 import { uploadFileToStorage } from '../lib/storage';
@@ -26,6 +28,10 @@ interface OfferLetterModalProps {
 
 export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onClose }) => {
   const { currentOrg, currentProfile, createOfferLetter, orgProfiles, addToast } = useApp();
+
+  // Mode: Existing Employee vs New Candidate
+  const [recipientType, setRecipientType] = useState<'existing_employee' | 'new_candidate'>('existing_employee');
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
 
   const [serialNumber, setSerialNumber] = useState('');
   const [securityCode, setSecurityCode] = useState('');
@@ -54,6 +60,31 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
   const hraMonthly = Math.round(monthlyTotal * 0.25);
   const specialAllowance = monthlyTotal - (basicMonthly + hraMonthly);
 
+  const handleSelectEmployee = (empId: string) => {
+    setSelectedEmployeeId(empId);
+    if (!empId) return;
+
+    const emp = orgProfiles.find((p) => p.id === empId);
+    if (emp) {
+      setCandidateName(`${emp.firstName} ${emp.lastName}`);
+      setCandidateEmail(emp.email);
+      setCandidatePhone(emp.phone || '+91 ');
+      setDesignation(emp.designation || 'Team Member');
+      setDepartment(emp.department || 'Engineering');
+      setJoiningDate(emp.joiningDate || new Date().toISOString().split('T')[0]);
+      if (emp.baseSalary) {
+        setAnnualCtc(emp.baseSalary * 12);
+      }
+      if (emp.managerId) {
+        setManagerId(emp.managerId);
+      }
+      if (!serialNumber) {
+        setSerialNumber(`VDX-${currentOrg.orgCode}-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+      }
+      addToast('Employee Selected 👤', `Loaded credentials for ${emp.firstName} ${emp.lastName}`, 'info');
+    }
+  };
+
   const handleGenerateSecurityCode = () => {
     const code = `SEC-${Math.floor(1000 + Math.random() * 9000)}`;
     setSecurityCode(code);
@@ -71,7 +102,7 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
       setUploadedDocName(file.name);
       addToast('Document Uploaded 📄', `Attached "${file.name}" to offer letter.`, 'success');
     } else {
-      addToast('Upload Failed', res.error || 'Could not upload document to S3 storage.', 'error');
+      addToast('Upload Failed', res.error || 'Could not upload document to storage.', 'error');
     }
     setIsUploadingDoc(false);
   };
@@ -106,11 +137,14 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
       hrDepartment: hrDepartment.trim() || undefined,
       managerId: managerId || undefined,
       managerName: selectedManager ? `${selectedManager.firstName} ${selectedManager.lastName}` : undefined,
+      employeeId: recipientType === 'existing_employee' && selectedEmployeeId ? selectedEmployeeId : undefined,
       issuedBy: currentProfile.id
     });
 
     onClose();
   };
+
+  const linkedEmployee = orgProfiles.find((p) => p.id === selectedEmployeeId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
@@ -124,7 +158,7 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
             <div>
               <h3 className="text-base font-bold text-white">Create Official Offer Letter</h3>
               <p className="text-xs text-slate-400">
-                Organization: <span className="text-cyan-400 font-semibold">{currentOrg.name}</span> • Manual Serial & Document Attachment
+                Organization: <span className="text-cyan-400 font-semibold">{currentOrg.name}</span> • Employee Linking & Security
               </p>
             </div>
           </div>
@@ -135,9 +169,85 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {/* Recipient Selection Toggle */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-white flex items-center">
+                <Users className="w-4 h-4 mr-1.5 text-cyan-400" />
+                Select Recipient Type *
+              </label>
+              <span className="text-[10px] text-slate-400">Link directly to employee portal</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setRecipientType('existing_employee');
+                  if (!selectedEmployeeId && orgProfiles.length > 0) {
+                    handleSelectEmployee(orgProfiles[0].id);
+                  }
+                }}
+                className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center space-x-1.5 transition border ${
+                  recipientType === 'existing_employee'
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Existing Staff Member</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRecipientType('new_candidate');
+                  setSelectedEmployeeId('');
+                }}
+                className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center space-x-1.5 transition border ${
+                  recipientType === 'new_candidate'
+                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>New External Candidate</span>
+              </button>
+            </div>
+
+            {/* Existing Employee Selector Dropdown */}
+            {recipientType === 'existing_employee' && (
+              <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  Choose Employee from Organization:
+                </label>
+                <select
+                  value={selectedEmployeeId}
+                  onChange={(e) => handleSelectEmployee(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-cyan-500/40 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-400"
+                >
+                  <option value="">-- Choose Existing Employee Profile --</option>
+                  {orgProfiles.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.firstName} {emp.lastName} — {emp.designation} ({emp.department} • {emp.email})
+                    </option>
+                  ))}
+                </select>
+
+                {linkedEmployee && (
+                  <div className="flex items-center space-x-2 text-[11px] text-cyan-400 bg-cyan-950/40 p-2 rounded border border-cyan-500/30">
+                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Linked to <strong>{linkedEmployee.firstName} {linkedEmployee.lastName}</strong>. They will be able to view and accept this contract directly in their portal!
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Reference & Security Code Section */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Manual Serial Number Entry (No Auto-Generation) */}
+            {/* Manual Serial Number Entry */}
             <div className="bg-slate-950 p-4 rounded-xl border border-cyan-500/30 space-y-2">
               <label className="block text-xs font-semibold text-slate-200 flex items-center justify-between">
                 <span className="flex items-center text-cyan-300">
@@ -178,25 +288,25 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
                 type="text"
                 value={securityCode}
                 onChange={(e) => setSecurityCode(e.target.value.toUpperCase())}
-                placeholder="e.g. SEC-8841 or Custom PIN"
+                placeholder="e.g. SEC-8291"
                 className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm font-mono uppercase text-indigo-300 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
               />
               <p className="text-[10px] text-slate-400">
-                Optional candidate PIN for additional anti-fraud verification.
+                Optional verification PIN sent to candidate to access offer letter.
               </p>
             </div>
           </div>
 
-          {/* Manual Option to Upload Offer Letter Document (PDF / DOC / Image) */}
-          <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2.5">
-            <label className="block text-xs font-semibold text-slate-300 flex items-center justify-between">
-              <span className="flex items-center">
+          {/* Manual Document / Letterhead Upload Option */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <label className="block text-xs font-semibold text-slate-200 flex items-center justify-between">
+              <span className="flex items-center text-slate-200">
                 <UploadCloud className="w-4 h-4 mr-1.5 text-indigo-400" />
-                Attach Offer Letter Document (Optional PDF / Word / Image)
+                Upload Official Company Offer Letter (PDF / Document)
               </span>
               {isUploadingDoc && (
-                <span className="text-[10px] text-cyan-400 flex items-center">
-                  <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Uploading to S3...
+                <span className="text-[10px] text-indigo-400 flex items-center">
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Uploading to cloud...
                 </span>
               )}
             </label>
@@ -255,17 +365,17 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
                   <span>Click to Browse & Upload Official Offer Letter (PDF / DOCX)</span>
                 </button>
                 <p className="text-[10px] text-slate-500 mt-1">
-                  Upload signed company letterhead document. Stored securely in Supabase S3 storage for download and verification.
+                  Upload signed company letterhead document. Stored securely for download and verification.
                 </p>
               </div>
             )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Candidate Name */}
+            {/* Candidate / Employee Name */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Candidate Full Name *
+                Candidate / Employee Full Name *
               </label>
               <div className="relative">
                 <User className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -280,10 +390,10 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
               </div>
             </div>
 
-            {/* Candidate Email */}
+            {/* Email */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Candidate Email * (For Verification Loop)
+                Candidate / Employee Email *
               </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -292,30 +402,46 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
                   required
                   value={candidateEmail}
                   onChange={(e) => setCandidateEmail(e.target.value)}
-                  placeholder="e.g. priya.sharma@example.com"
+                  placeholder="priya@company.com"
                   className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
 
-            {/* Candidate Phone */}
+            {/* Phone */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Phone Number
+                Contact Phone
               </label>
               <input
                 type="text"
                 value={candidatePhone}
                 onChange={(e) => setCandidatePhone(e.target.value)}
                 placeholder="+91 98765 43210"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
               />
+            </div>
+
+            {/* Joining Date */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Joining Date
+              </label>
+              <div className="relative">
+                <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                <input
+                  type="date"
+                  value={joiningDate}
+                  onChange={(e) => setJoiningDate(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
             </div>
 
             {/* Designation */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Designation *
+                Official Designation *
               </label>
               <div className="relative">
                 <Briefcase className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -324,7 +450,7 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
                   required
                   value={designation}
                   onChange={(e) => setDesignation(e.target.value)}
-                  placeholder={currentOrg.industry === 'Digital Marketing' ? 'Performance Marketing Lead' : 'Senior Software Engineer'}
+                  placeholder="e.g. Senior Software Architect"
                   className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -333,49 +459,33 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
             {/* Department */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Department
+                Target Department
               </label>
               <select
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
               >
-                <option value="Growth & Performance Marketing">Growth & Performance Marketing</option>
-                <option value="Social Media & Content">Social Media & Content</option>
-                <option value="Creative Studio & Design">Creative Studio & Design</option>
-                <option value="Digital Solutions & Tech">Digital Solutions & Tech</option>
-                <option value="HR & Operations">HR & Operations</option>
-                <option value="Client Servicing">Client Servicing</option>
+                <option value="Engineering">Engineering & Tech</option>
+                <option value="Product Design">Product & Design</option>
+                <option value="Growth Marketing">Growth Marketing & Performance</option>
+                <option value="HR & Operations">HR, Talent & People Ops</option>
+                <option value="Finance & Legal">Finance & Corporate Law</option>
+                <option value="Client Services">Client Solutions & Account Mgmt</option>
               </select>
             </div>
 
-            {/* Joining Date */}
+            {/* HR Department of Issuing Profile */}
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Target Joining Date
-              </label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-                <input
-                  type="date"
-                  required
-                  value={joiningDate}
-                  onChange={(e) => setJoiningDate(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            {/* HR / Talent Acquisition Department */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Issuing HR Department / Unit
+              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                <span>HR / Talent Unit</span>
+                <span className="text-[10px] text-slate-500">Issuing Dept</span>
               </label>
               <input
                 type="text"
                 value={hrDepartment}
                 onChange={(e) => setHrDepartment(e.target.value)}
-                placeholder="e.g. HR Department, Talent Acquisition"
+                placeholder="e.g. Global Talent Acquisition"
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -455,7 +565,7 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
               className="inline-flex items-center justify-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-indigo-600/30"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Issue Offer & Save to Cloud</span>
+              <span>Issue Offer & Link to Employee</span>
             </button>
           </div>
         </form>

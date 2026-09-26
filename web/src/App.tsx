@@ -20,6 +20,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { LoginScreen } from './components/LoginScreen';
 import { AccessRequestsView } from './components/AccessRequestsView';
 import { EmployeesDirectory } from './components/EmployeesDirectory';
+import { LeaveManager } from './components/LeaveManager';
 import { OfferLetter } from './types';
 
 const MainLayout: React.FC = () => {
@@ -123,6 +124,8 @@ const MainLayout: React.FC = () => {
           )}
 
           {activeTab === 'payroll' && <PayrollManager />}
+
+          {activeTab === 'leaves' && <LeaveManager />}
 
           {activeTab === 'access_requests' && <AccessRequestsView />}
         </main>

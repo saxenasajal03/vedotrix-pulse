@@ -13,7 +13,11 @@ import {
   InAppNotification,
   SystemBroadcast,
   AccessRequest,
-  RegularizationStatus
+  RegularizationStatus,
+  LeaveRequest,
+  LeaveType,
+  LeaveStatus,
+  LeaveBalance
 } from '../types';
 import {
   INITIAL_ORGS,
@@ -109,6 +113,22 @@ interface AppContextType {
   markPayrollPaid: (recordId: string, reference: string) => void;
   exportBankPayoutCsv: (month: number, year: number) => string;
 
+  // Actions & State: Leave Management
+  leaveRequests: LeaveRequest[];
+  submitLeaveRequest: (data: {
+    leaveType: LeaveType;
+    startDate: string;
+    endDate: string;
+    totalDays: number;
+    isHalfDay?: boolean;
+    halfDaySession?: 'first_half' | 'second_half';
+    reason: string;
+    documentUrl?: string;
+  }) => Promise<LeaveRequest>;
+  resolveLeaveRequest: (leaveId: string, status: 'approved' | 'rejected', notes?: string) => Promise<void>;
+  cancelLeaveRequest: (leaveId: string) => Promise<void>;
+  getLeaveBalance: (employeeId?: string) => LeaveBalance;
+
   // In-App Notification Center
   notifications: InAppNotification[];
   markNotificationRead: (id: string) => void;
@@ -141,7 +161,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   // Clean stale local storage caches to make sure live Supabase DB is the absolute single source of truth
-  const DB_CACHE_VERSION = 'vdx_db_v4_live_clean';
+  const DB_CACHE_VERSION = 'vdx_db_v5_leaves_active';
   useEffect(() => {
     if (localStorage.getItem('vdx_db_version') !== DB_CACHE_VERSION) {
       console.log('Upgrading local cache to direct live Supabase DB single source of truth...');
@@ -154,6 +174,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem('vdx_standups');
       localStorage.removeItem('vdx_payroll');
       localStorage.removeItem('vdx_access_requests');
+      localStorage.removeItem('vdx_leave_requests');
       localStorage.setItem('vdx_db_version', DB_CACHE_VERSION);
     }
   }, []);
@@ -236,6 +257,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_PAYROLL;
   });
 
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
+    const saved = localStorage.getItem('vdx_leave_requests');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [notifications, setNotifications] = useState<InAppNotification[]>(() => {
     const saved = localStorage.getItem('vdx_notifications');
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
@@ -294,6 +320,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [payrollRecords]);
 
   useEffect(() => {
+    localStorage.setItem('vdx_leave_requests', JSON.stringify(leaveRequests));
+  }, [leaveRequests]);
+
+  useEffect(() => {
     localStorage.setItem('vdx_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
@@ -315,7 +345,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           { data: cloudTasks, error: errTasks },
           { data: cloudStandups, error: errStandups },
           { data: cloudRequests, error: errReqs },
-          { data: cloudPayroll, error: errPay }
+          { data: cloudPayroll, error: errPay },
+          { data: cloudLeaves, error: errLeaves }
         ] = await Promise.all([
           client.from('organizations').select('*'),
           client.from('profiles').select('*'),
@@ -325,7 +356,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           client.from('tasks').select('*'),
           client.from('daily_standups').select('*'),
           client.from('access_requests').select('*'),
-          client.from('payroll_records').select('*')
+          client.from('payroll_records').select('*'),
+          client.from('leave_requests').select('*')
         ]);
 
         if (errOrgs) console.warn('Supabase orgs fetch error:', errOrgs);
@@ -337,6 +369,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (errStandups) console.warn('Supabase standups fetch error:', errStandups);
         if (errReqs) console.warn('Supabase requests fetch error:', errReqs);
         if (errPay) console.warn('Supabase payroll fetch error:', errPay);
+        if (errLeaves) console.warn('Supabase leaves fetch error:', errLeaves);
 
         if (cloudOrgs && cloudOrgs.length > 0) {
           const mappedOrgs: Organization[] = cloudOrgs.map((o: any) => ({
@@ -415,6 +448,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             securityCode: o.security_code,
             hrDepartment: o.hr_department,
             managerId: o.manager_id || undefined,
+            employeeId: o.employee_id || undefined,
             issuedBy: o.issued_by || '00000000-0000-0000-0000-000000000003',
             hrVerifiedAt: o.hr_verified_at,
             candidateAcceptedAt: o.candidate_accepted_at,
@@ -529,6 +563,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           setPayrollRecords(mappedPayroll);
         }
+
+        if (cloudLeaves && cloudLeaves.length > 0) {
+          const mappedLeaves: LeaveRequest[] = cloudLeaves.map((l: any) => ({
+            id: l.id,
+            orgId: l.org_id,
+            employeeId: l.employee_id,
+            leaveType: l.leave_type || 'casual',
+            startDate: l.start_date,
+            endDate: l.end_date,
+            totalDays: Number(l.total_days) || 1,
+            isHalfDay: l.is_half_day ?? false,
+            halfDaySession: l.half_day_session,
+            reason: l.reason,
+            status: l.status || 'pending',
+            assignedApproverId: l.assigned_approver_id,
+            approverDecisionNotes: l.approver_decision_notes,
+            approvedBy: l.approved_by,
+            decidedAt: l.decided_at,
+            documentUrl: l.document_url,
+            createdAt: l.created_at
+          }));
+          setLeaveRequests(mappedLeaves);
+        }
       } catch (err) {
         console.warn('Live cloud sync note:', err);
       }
@@ -545,7 +602,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Please enter both email and password.' };
     }
 
-    // 1. Primary: Verify against live Supabase PostgreSQL database using pgcrypto bcrypt RPC
     try {
       const client = getSupabaseClient();
       const { data: rpcData, error: rpcError } = await client.rpc('verify_user_password', {
@@ -566,7 +622,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setCurrentProfileId(verifiedUser.user_id);
           setIsAuthenticated(true);
 
-          // If the organization is not yet loaded in state, fetch it directly from Supabase
           if (!organizations.some((o) => o.id === verifiedUser.org_id)) {
             client.from('organizations').select('*').eq('id', verifiedUser.org_id).maybeSingle()
               .then(({ data: orgData }) => {
@@ -595,7 +650,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               });
           }
 
-          // Ensure verified profile exists in profiles state
           setProfiles((prev) => {
             const index = prev.findIndex((p) => p.id === verifiedUser.user_id);
             if (index >= 0) {
@@ -609,7 +663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 lastName: verifiedUser.last_name || '',
                 designation: verifiedUser.designation || 'Team Member',
                 department: verifiedUser.department || 'Operations',
-                modulesAccess: verifiedUser.modules_access || ['attendance', 'tasks', 'standups'],
+                modulesAccess: verifiedUser.modules_access || ['attendance', 'tasks', 'standups', 'leaves'],
                 managerId: verifiedUser.manager_id
               };
               return updated;
@@ -631,7 +685,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 isActive: true,
                 managerId: verifiedUser.manager_id,
                 passwordHash: '[ENCRYPTED_BCRYPT]',
-                modulesAccess: verifiedUser.modules_access || ['attendance', 'tasks', 'standups']
+                modulesAccess: verifiedUser.modules_access || ['attendance', 'tasks', 'standups', 'leaves']
               }
             ];
           });
@@ -652,7 +706,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Supabase RPC verify_user_password failed, evaluating offline state:', rpcErr);
     }
 
-    // 2. Offline Fallback: Only if cloud database is completely unreachable
+    // 2. Offline Fallback
     const user = profiles.find((p) => p.email.toLowerCase() === cleanEmail && p.isActive);
     if (user && user.passwordHash) {
       if (cleanPass === user.passwordHash) {
@@ -802,7 +856,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setOrganizations((prev) => [...prev, newOrg]);
 
-    // Create default tenant owner profile
     const ownerEmail = newOrg.website?.includes('@') ? newOrg.website : `admin@${newOrg.slug || 'company'}.com`;
     const ownerProfile: Profile = {
       id: ownerProfileId,
@@ -817,7 +870,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       baseSalary: 150000,
       avatarUrl: newOrg.logoUrl || '/vedotrix-logo.png',
       isActive: true,
-      modulesAccess: ['all', 'attendance', 'tasks', 'standups', 'offers', 'payroll', 'access_requests']
+      modulesAccess: ['all', 'attendance', 'tasks', 'standups', 'offers', 'payroll', 'access_requests', 'leaves']
     };
     setProfiles((prev) => [...prev, ownerProfile]);
 
@@ -833,7 +886,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setOfficeLocationsList((prev) => [...prev, defaultOffice]);
 
-    // Also persist directly to live Supabase DB
     (async () => {
       try {
         const client = getSupabaseClient();
@@ -880,7 +932,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
         if (offErr) console.error('Supabase default office insert error:', offErr);
 
-        // Dispatch automated Welcome Email via Supabase Mailer & CC Parental Super Controller
         sendWelcomeEmail(
           ownerEmail,
           `${ownerProfile.firstName} ${ownerProfile.lastName}`,
@@ -914,7 +965,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: newId,
       managerId: managerIdUuid || undefined,
       passwordHash: profileData.passwordHash || 'Vedotrix@2026',
-      modulesAccess: profileData.modulesAccess || ['attendance', 'tasks', 'standups']
+      modulesAccess: profileData.modulesAccess || ['attendance', 'tasks', 'standups', 'leaves']
     };
     setProfiles((prev) => [...prev, newProfile]);
 
@@ -942,7 +993,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const org = organizations.find((o) => o.id === newProfile.orgId);
-      // Dispatch automated Welcome Email via Supabase Mailer
       sendWelcomeEmail(
         newProfile.email,
         `${newProfile.firstName} ${newProfile.lastName}`,
@@ -976,11 +1026,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<AccessRequest> => {
     const newId = generateUUID();
     
-    // Designated Approver Routing:
     let assignedApproverId: string | undefined = currentProfile.managerId;
     if (!assignedApproverId || assignedApproverId === currentProfile.id) {
       if (requestType === 'org_feature' || currentProfile.role === 'owner') {
-        assignedApproverId = '00000000-0000-0000-0000-000000000003'; // Root Superadmin
+        assignedApproverId = '00000000-0000-0000-0000-000000000003';
       } else {
         const owner = profiles.find((p) => p.orgId === currentOrg.id && p.role === 'owner');
         assignedApproverId = owner?.id || '00000000-0000-0000-0000-000000000003';
@@ -1061,7 +1110,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    // If approved, update user's modulesAccess
     if (status === 'approved') {
       setProfiles((prev) =>
         prev.map((p) => {
@@ -1198,6 +1246,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     
     const issuedByUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : '00000000-0000-0000-0000-000000000003';
     const managerIdUuid = offerData.managerId && offerData.managerId.length === 36 ? offerData.managerId : null;
+    const employeeIdUuid = offerData.employeeId && offerData.employeeId.length === 36 ? offerData.employeeId : null;
 
     const newOffer: OfferLetter = {
       ...offerData,
@@ -1211,6 +1260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       hrDepartment: offerData.hrDepartment,
       managerId: managerIdUuid || undefined,
       managerName: offerData.managerName,
+      employeeId: employeeIdUuid || undefined,
       issuedBy: issuedByUuid,
       hrVerifiedAt: new Date().toISOString(),
       createdAt: new Date().toISOString()
@@ -1241,13 +1291,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         security_code: newOffer.securityCode || null,
         hr_department: newOffer.hrDepartment || null,
         manager_id: managerIdUuid,
+        employee_id: employeeIdUuid,
         issued_by: issuedByUuid
       }).then(({ error }) => {
         if (error) console.error('Supabase offer letter insert error:', error);
         else console.log('Offer letter persisted to live Supabase cloud!');
       });
 
-      // Dispatch automated Offer Letter & Verification email
       sendOfferLetterEmail(
         newOffer.candidateEmail,
         newOffer.candidateName,
@@ -1345,7 +1395,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const existing = getTodayAttendance();
     const resolvedAddress = officeAddress || currentOrg.address || 'Corporate Headquarters';
 
-    // If Work From Home or distance outside office radius (> 150m), presence approval is required
     const requiresApproval = isRemote || distanceMeters > 150;
     const regularizationStatus: RegularizationStatus = requiresApproval ? 'pending' : 'none';
     const approvalStatus: 'approved' | 'pending_manager_approval' | 'rejected' = requiresApproval
@@ -1356,7 +1405,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       : (distanceMeters > 150 ? `Location Outside Office Geofence (${Math.round(distanceMeters)}m away) - Presence Approval Required` : undefined);
 
     if (!existing) {
-      // Check In
       const newId = generateUUID();
       const newRecord: AttendanceRecord = {
         id: newId,
@@ -1378,7 +1426,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setAttendanceRecords((prev) => [newRecord, ...prev]);
 
-      // Push to Supabase PostgreSQL
       try {
         const client = getSupabaseClient();
         client.from('attendance').insert({
@@ -1425,7 +1472,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return { success: true, message: 'Checked in successfully', record: newRecord };
     } else if (!existing.checkOutTime) {
-      // Check Out
       const checkInDate = new Date(existing.checkInTime!).getTime();
       const now = Date.now();
       const hours = Math.round(((now - checkInDate) / (1000 * 60 * 60)) * 100) / 100;
@@ -1443,7 +1489,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setAttendanceRecords((prev) => prev.map((a) => (a.id === existing.id ? updatedRecord : a)));
 
-      // Update in Supabase
       try {
         const client = getSupabaseClient();
         client.from('attendance').update({
@@ -1516,7 +1561,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Push update to Supabase
     try {
       const client = getSupabaseClient();
       client.from('attendance').update({
@@ -1635,6 +1679,238 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addNotification('Daily Standup Logged', 'EOD work log submitted successfully.', 'task', 'standups');
   };
 
+  // --- LEAVE MANAGEMENT ---
+  const submitLeaveRequest = async (data: {
+    leaveType: LeaveType;
+    startDate: string;
+    endDate: string;
+    totalDays: number;
+    isHalfDay?: boolean;
+    halfDaySession?: 'first_half' | 'second_half';
+    reason: string;
+    documentUrl?: string;
+  }): Promise<LeaveRequest> => {
+    const newId = generateUUID();
+    
+    // Designated Approver Routing: Reporting Manager -> or Org Owner -> or Root Superadmin
+    let assignedApproverId: string | undefined = currentProfile.managerId;
+    if (!assignedApproverId || assignedApproverId === currentProfile.id) {
+      const owner = profiles.find((p) => p.orgId === currentOrg.id && p.role === 'owner');
+      assignedApproverId = owner?.id || '00000000-0000-0000-0000-000000000003';
+    }
+
+    const assignedApproverUuid = assignedApproverId && assignedApproverId.length === 36 ? assignedApproverId : null;
+
+    const newLeave: LeaveRequest = {
+      id: newId,
+      orgId: currentOrg.id,
+      employeeId: currentProfile.id,
+      leaveType: data.leaveType,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      totalDays: data.totalDays,
+      isHalfDay: data.isHalfDay,
+      halfDaySession: data.halfDaySession,
+      reason: data.reason,
+      status: 'pending',
+      assignedApproverId: assignedApproverUuid || undefined,
+      documentUrl: data.documentUrl,
+      createdAt: new Date().toISOString()
+    };
+
+    setLeaveRequests((prev) => [newLeave, ...prev]);
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('leave_requests').insert({
+        id: newId,
+        org_id: currentOrg.id,
+        employee_id: currentProfile.id,
+        leave_type: data.leaveType,
+        start_date: data.startDate,
+        end_date: data.endDate,
+        total_days: data.totalDays,
+        is_half_day: data.isHalfDay || false,
+        half_day_session: data.halfDaySession || null,
+        reason: data.reason,
+        status: 'pending',
+        assigned_approver_id: assignedApproverUuid,
+        document_url: data.documentUrl || null
+      });
+    } catch (err) {
+      console.warn('Supabase leave_requests insert warning:', err);
+    }
+
+    const approver = profiles.find((p) => p.id === assignedApproverUuid);
+    addToast(
+      'Leave Application Submitted 🌴',
+      `${data.totalDays} day(s) ${data.leaveType.toUpperCase()} leave sent to ${approver ? `${approver.firstName} ${approver.lastName}` : 'Manager'} for approval.`,
+      'success'
+    );
+    addNotification(
+      'Leave Application Received 🌴',
+      `${currentProfile.firstName} applied for ${data.totalDays} day(s) ${data.leaveType} leave (${data.startDate} to ${data.endDate}).`,
+      'leave',
+      'leaves'
+    );
+
+    return newLeave;
+  };
+
+  const resolveLeaveRequest = async (
+    leaveId: string,
+    status: 'approved' | 'rejected',
+    notes?: string
+  ): Promise<void> => {
+    const targetLeave = leaveRequests.find((l) => l.id === leaveId);
+    if (!targetLeave) return;
+
+    const isDesignatedApprover = targetLeave.assignedApproverId === currentProfile.id;
+    const isOrgOwner = currentProfile.role === 'owner' && currentProfile.orgId === targetLeave.orgId;
+    const isSuper = currentProfile.role === 'superadmin';
+    const isHr = currentProfile.role === 'hr';
+
+    if (!isDesignatedApprover && !isOrgOwner && !isSuper && !isHr) {
+      addToast('Access Denied ⚠️', 'Only the designated reporting manager, HR, or Owner can approve leave.', 'error');
+      return;
+    }
+
+    const decidedAt = new Date().toISOString();
+    const approverUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
+
+    setLeaveRequests((prev) =>
+      prev.map((l) =>
+        l.id === leaveId
+          ? {
+              ...l,
+              status,
+              approverDecisionNotes: notes,
+              approvedBy: approverUuid || undefined,
+              decidedAt
+            }
+          : l
+      )
+    );
+
+    // If approved, mark attendance records as 'on_leave' for those dates
+    if (status === 'approved') {
+      const datesToMark: string[] = [];
+      const cur = new Date(targetLeave.startDate);
+      const end = new Date(targetLeave.endDate);
+      while (cur <= end) {
+        datesToMark.push(cur.toISOString().split('T')[0]);
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      setAttendanceRecords((prev) => {
+        const updated = [...prev];
+        datesToMark.forEach((dateStr) => {
+          const existingIdx = updated.findIndex(
+            (a) => a.orgId === targetLeave.orgId && a.employeeId === targetLeave.employeeId && a.date === dateStr
+          );
+          if (existingIdx >= 0) {
+            updated[existingIdx] = {
+              ...updated[existingIdx],
+              status: 'on_leave',
+              approvalStatus: 'approved'
+            };
+          } else {
+            updated.push({
+              id: generateUUID(),
+              orgId: targetLeave.orgId,
+              employeeId: targetLeave.employeeId,
+              date: dateStr,
+              status: 'on_leave',
+              isRemote: false,
+              approvalStatus: 'approved',
+              regularizationStatus: 'none',
+              totalHours: 8
+            });
+          }
+        });
+        return updated;
+      });
+    }
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('leave_requests').update({
+        status,
+        approver_decision_notes: notes || null,
+        approved_by: approverUuid,
+        decided_at: decidedAt
+      }).eq('id', leaveId);
+    } catch (err) {
+      console.warn('Supabase leave resolve warning:', err);
+    }
+
+    const emp = profiles.find((p) => p.id === targetLeave.employeeId);
+    addToast(
+      status === 'approved' ? 'Leave Approved ✅' : 'Leave Rejected ❌',
+      `Leave for ${emp ? emp.firstName : 'Employee'} (${targetLeave.totalDays} days) has been ${status.toUpperCase()}.`,
+      status === 'approved' ? 'success' : 'info'
+    );
+    addNotification(
+      `Leave Request ${status.toUpperCase()} 🌴`,
+      `Your ${targetLeave.leaveType} leave application has been ${status}. Notes: ${notes || 'No remarks provided.'}`,
+      'leave',
+      'leaves'
+    );
+  };
+
+  const cancelLeaveRequest = async (leaveId: string): Promise<void> => {
+    const target = leaveRequests.find((l) => l.id === leaveId);
+    if (!target) return;
+
+    if (target.employeeId !== currentProfile.id && currentProfile.role !== 'owner' && currentProfile.role !== 'superadmin') {
+      addToast('Cannot Cancel', 'You can only cancel your own pending leave requests.', 'warning');
+      return;
+    }
+
+    setLeaveRequests((prev) =>
+      prev.map((l) => (l.id === leaveId ? { ...l, status: 'cancelled' } : l))
+    );
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('leave_requests').update({ status: 'cancelled' }).eq('id', leaveId);
+    } catch (err) {}
+
+    addToast('Leave Cancelled', 'Your leave application was cancelled.', 'info');
+  };
+
+  const getLeaveBalance = (employeeId?: string): LeaveBalance => {
+    const targetEmpId = employeeId || currentProfile.id;
+    const currentYear = new Date().getFullYear();
+
+    const approvedLeaves = leaveRequests.filter(
+      (l) =>
+        l.employeeId === targetEmpId &&
+        l.status === 'approved' &&
+        new Date(l.startDate).getFullYear() === currentYear
+    );
+
+    const casualUsed = approvedLeaves
+      .filter((l) => l.leaveType === 'casual')
+      .reduce((sum, l) => sum + Number(l.totalDays), 0);
+    const sickUsed = approvedLeaves
+      .filter((l) => l.leaveType === 'sick')
+      .reduce((sum, l) => sum + Number(l.totalDays), 0);
+    const privilegeUsed = approvedLeaves
+      .filter((l) => l.leaveType === 'privilege')
+      .reduce((sum, l) => sum + Number(l.totalDays), 0);
+    const unpaidUsed = approvedLeaves
+      .filter((l) => l.leaveType === 'unpaid')
+      .reduce((sum, l) => sum + Number(l.totalDays), 0);
+
+    return {
+      casual: { total: 12, used: casualUsed, remaining: Math.max(0, 12 - casualUsed) },
+      sick: { total: 10, used: sickUsed, remaining: Math.max(0, 10 - sickUsed) },
+      privilege: { total: 15, used: privilegeUsed, remaining: Math.max(0, 15 - privilegeUsed) },
+      unpaid: { used: unpaidUsed }
+    };
+  };
+
   // --- PAYROLL & DISBURSAL ---
   const processMonthlyPayroll = (month: number, year: number) => {
     const targetEmployees = orgProfiles.filter((p) => p.isActive);
@@ -1647,7 +1923,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       const totalDaysInMonth = new Date(year, month, 0).getDate();
-      const presentCount = empAttendance.filter((a) => a.status === 'present' || a.status === 'regularized').length;
+      const presentCount = empAttendance.filter((a) => a.status === 'present' || a.status === 'regularized' || a.status === 'on_leave').length;
       const halfDayCount = empAttendance.filter((a) => a.status === 'half_day').length;
       const effectivePresent = Math.min(totalDaysInMonth, Math.max(presentCount + halfDayCount * 0.5, totalDaysInMonth));
       const lopDays = Math.max(0, totalDaysInMonth - effectivePresent);
@@ -1688,7 +1964,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...prev.filter((p) => !(p.orgId === currentOrg.id && p.month === month && p.year === year))
     ]);
 
-    // Push to Supabase PostgreSQL
     try {
       const client = getSupabaseClient();
       client.from('payroll_records').insert(newRecords.map(r => ({
@@ -1813,6 +2088,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         processMonthlyPayroll,
         markPayrollPaid,
         exportBankPayoutCsv,
+        leaveRequests: leaveRequests.filter((l) => l.orgId === currentOrg.id),
+        submitLeaveRequest,
+        resolveLeaveRequest,
+        cancelLeaveRequest,
+        getLeaveBalance,
         notifications,
         markNotificationRead,
         markAllNotificationsRead,

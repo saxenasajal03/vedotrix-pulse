@@ -34,7 +34,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onOpenVerify,
   setActiveTab
 }) => {
-  const { currentOrg, orgProfiles, offerLetters, attendanceRecords, tasks, standups, createProfile } = useApp();
+  const { currentOrg, orgProfiles, offerLetters, attendanceRecords, tasks, standups, leaveRequests, createProfile } = useApp();
 
   // Add Staff Member Form State
   const [isAddStaffOpen, setIsAddStaffOpen] = useState(false);
@@ -53,6 +53,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const todayPunches = attendanceRecords.filter((a) => a.date === todayStr);
   const presentCount = todayPunches.filter((a) => a.status === 'present' || a.status === 'regularized').length;
   const attendanceRate = orgProfiles.length > 0 ? Math.round((presentCount / orgProfiles.length) * 100) : 0;
+  const onLeaveCount = leaveRequests.filter((l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr).length;
 
   const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,6 +101,22 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               ? 'Complete workforce management platform for technology companies: Geo-fenced attendance, agile sprint workflows, tamper-proof offer letter verification, and payroll.'
               : 'Growth agency operations suite: Campaign ad-spend deliverables, client ROAS tracking, field visit regularizations, and banking batch payouts.'}
           </p>
+          <div className="pt-2 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setActiveTab('leaves')}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-bold border border-cyan-500/40 transition"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Leave Management ({onLeaveCount} On Leave Today)</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('offers')}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs font-bold border border-indigo-500/40 transition"
+            >
+              <FileCheck2 className="w-3.5 h-3.5" />
+              <span>Offer Letters & Contracts</span>
+            </button>
+          </div>
         </div>
       </div>
 

@@ -13,7 +13,8 @@ import {
   Crown,
   X,
   ChevronRight,
-  Users
+  Users,
+  CalendarCheck
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -31,7 +32,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen = false,
   onCloseMobile
 }) => {
-  const { currentOrg, currentProfile, isVedotrixSuperadmin, offerLetters, attendanceRecords, tasks, accessRequests, orgProfiles } = useApp();
+  const {
+    currentOrg,
+    currentProfile,
+    isVedotrixSuperadmin,
+    offerLetters,
+    attendanceRecords,
+    tasks,
+    accessRequests,
+    orgProfiles,
+    leaveRequests
+  } = useApp();
 
   const pendingRegularizations = attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length;
   const pendingOffers = offerLetters.filter((o) => o.status === 'issued').length;
@@ -41,6 +52,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       (r.assignedApproverId === currentProfile.id ||
         (currentProfile.role === 'owner' && r.orgId === currentOrg.id) ||
         (currentProfile.role === 'superadmin' && isVedotrixSuperadmin))
+  ).length;
+
+  const pendingLeavesCount = leaveRequests.filter(
+    (l) =>
+      l.status === 'pending' &&
+      (l.assignedApproverId === currentProfile.id ||
+        (currentProfile.role === 'owner' && l.orgId === currentOrg.id) ||
+        (currentProfile.role === 'superadmin' && isVedotrixSuperadmin) ||
+        (currentProfile.role === 'hr' && l.orgId === currentOrg.id))
   ).length;
 
   const navItems = [
@@ -96,6 +116,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Payroll & Disbursals',
       icon: Banknote,
       badge: 'Auto'
+    },
+    {
+      id: 'leaves',
+      label: 'Leave & Time-Off',
+      icon: CalendarCheck,
+      badge: pendingLeavesCount > 0 ? `${pendingLeavesCount} New` : null
     },
     {
       id: 'access_requests',

@@ -99,6 +99,7 @@ export interface OfferLetter {
   hrDepartment?: string; // Department of issuing HR / Talent Acquisition
   managerId?: string; // Designated Reporting Manager
   managerName?: string;
+  employeeId?: string; // Linked employee profile ID if issued to existing staff
   issuedBy: string; // profile id
   hrVerifiedAt?: string;
   candidateAcceptedAt?: string;
@@ -207,7 +208,7 @@ export interface InAppNotification {
   id: string;
   title: string;
   message: string;
-  category: 'offer' | 'attendance' | 'task' | 'payroll' | 'system' | 'broadcast';
+  category: 'offer' | 'attendance' | 'task' | 'payroll' | 'system' | 'broadcast' | 'leave';
   isRead: boolean;
   timestamp: string;
   linkTab?: string;
@@ -221,4 +222,34 @@ export interface SystemBroadcast {
   issuedBy: string;
   issuedAt: string;
   targetOrgs: 'all' | string[];
+}
+
+export type LeaveType = 'casual' | 'sick' | 'privilege' | 'unpaid' | 'emergency' | 'maternity' | 'paternity';
+export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface LeaveRequest {
+  id: string;
+  orgId: string;
+  employeeId: string;
+  leaveType: LeaveType;
+  startDate: string;
+  endDate: string;
+  totalDays: number;
+  isHalfDay?: boolean;
+  halfDaySession?: 'first_half' | 'second_half';
+  reason: string;
+  status: LeaveStatus;
+  assignedApproverId?: string;
+  approverDecisionNotes?: string;
+  approvedBy?: string;
+  decidedAt?: string;
+  documentUrl?: string;
+  createdAt: string;
+}
+
+export interface LeaveBalance {
+  casual: { total: number; used: number; remaining: number };
+  sick: { total: number; used: number; remaining: number };
+  privilege: { total: number; used: number; remaining: number };
+  unpaid: { used: number };
 }
