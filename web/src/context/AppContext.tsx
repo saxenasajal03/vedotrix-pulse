@@ -17,7 +17,8 @@ import {
   LeaveRequest,
   LeaveType,
   LeaveStatus,
-  LeaveBalance
+  LeaveBalance,
+  OrganizationAdminCredentials
 } from '../types';
 import {
   INITIAL_ORGS,
@@ -76,7 +77,7 @@ interface AppContextType {
   switchRole: (role: UserRole) => void;
   
   // SuperAdmin & Super Controller Actions
-  createOrganization: (orgData: Omit<Organization, 'id' | 'settings'>) => Organization;
+  createOrganization: (orgData: Omit<Organization, 'id' | 'settings'>, adminCredentials?: OrganizationAdminCredentials) => Promise<Organization>;
   toggleOrganizationStatus: (orgId: string) => void;
   updateSubscriptionPlan: (orgId: string, plan: Organization['subscriptionPlan']) => void;
   broadcasts: SystemBroadcast[];
@@ -838,7 +839,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // --- SUPERADMIN / SUPER CONTROLLER ACTIONS ---
-  const createOrganization = (orgData: Omit<Organization, 'id' | 'settings'>): Organization => {
+  const createOrganization = async (
+    orgData: Omit<Organization, 'id' | 'settings'>,
+    adminCredentials?: OrganizationAdminCredentials
+  ): Promise<Organization> => {
     const newOrgId = generateUUID();
     const ownerProfileId = generateUUID();
     const officeId = generateUUID();
@@ -854,25 +858,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         halfDayThresholdHours: 4.5
       }
     };
-    setOrganizations((prev) => [...prev, newOrg]);
 
-    const ownerEmail = newOrg.website?.includes('@') ? newOrg.website : `admin@${newOrg.slug || 'company'}.com`;
+    const adminEmail = (adminCredentials?.email || (newOrg.website?.includes('@') ? newOrg.website : `admin@${newOrg.slug || 'company'}.com`)).trim().toLowerCase();
+    const adminFirstName = (adminCredentials?.firstName || newOrg.name.split(' ')[0] || 'Admin').trim();
+    const adminLastName = (adminCredentials?.lastName || 'Superadmin').trim();
+    const adminPassword = (adminCredentials?.password || 'Vedotrix@2026').trim();
+    const adminPhone = (adminCredentials?.phone || newOrg.phone || '').trim();
+    const adminDesignation = (adminCredentials?.designation || 'Organization Superadmin').trim();
+    const adminDepartment = (adminCredentials?.department || 'Executive Leadership').trim();
+    const adminRole: UserRole = adminCredentials?.role || 'superadmin';
+
     const ownerProfile: Profile = {
       id: ownerProfileId,
       orgId: newOrgId,
-      email: ownerEmail,
-      firstName: newOrg.name.split(' ')[0] || 'Admin',
-      lastName: 'Leadership',
-      role: 'owner',
-      designation: 'Managing Director / Organization Admin',
-      department: 'Executive Board',
+      email: adminEmail,
+      firstName: adminFirstName,
+      lastName: adminLastName,
+      phone: adminPhone,
+      role: adminRole,
+      designation: adminDesignation,
+      department: adminDepartment,
       joiningDate: new Date().toISOString().split('T')[0],
       baseSalary: 150000,
       avatarUrl: newOrg.logoUrl || '/vedotrix-logo.png',
       isActive: true,
+      passwordHash: adminPassword,
       modulesAccess: ['all', 'attendance', 'tasks', 'standups', 'offers', 'payroll', 'access_requests', 'leaves']
     };
-    setProfiles((prev) => [...prev, ownerProfile]);
 
     const defaultOffice: OfficeLocation = {
       id: officeId,
@@ -884,75 +896,84 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       address: newOrg.address || 'Corporate Headquarters',
       isActive: true
     };
+
+    setOrganizations((prev) => [...prev, newOrg]);
+    setProfiles((prev) => [...prev, ownerProfile]);
     setOfficeLocationsList((prev) => [...prev, defaultOffice]);
 
-    (async () => {
-      try {
-        const client = getSupabaseClient();
-        const { error: orgErr } = await client.from('organizations').insert({
-          id: newOrg.id,
-          name: newOrg.name,
-          slug: newOrg.slug,
-          org_code: newOrg.orgCode,
-          industry: newOrg.industry || 'Tech',
-          website: newOrg.website || '',
-          address: newOrg.address || '',
-          phone: newOrg.phone || '',
-          logo_url: newOrg.logoUrl || '/vedotrix-logo.png',
-          settings: newOrg.settings
-        });
-        if (orgErr) console.error('Supabase organization insert error:', orgErr);
+    try {
+      const client = getSupabaseClient();
+      const { error: orgErr } = await client.from('organizations').insert({
+        id: newOrg.id,
+        name: newOrg.name,
+        slug: newOrg.slug,
+        org_code: newOrg.orgCode,
+        industry: newOrg.industry || 'Tech',
+        website: newOrg.website || '',
+        address: newOrg.address || '',
+        phone: newOrg.phone || '',
+        logo_url: newOrg.logoUrl || '/vedotrix-logo.png',
+        settings: newOrg.settings
+      });
+      if (orgErr) console.error('Supabase organization insert error:', orgErr);
 
-        const { error: profErr } = await client.from('profiles').insert({
-          id: ownerProfile.id,
-          org_id: newOrg.id,
-          email: ownerProfile.email,
-          first_name: ownerProfile.firstName,
-          last_name: ownerProfile.lastName,
-          role: ownerProfile.role,
-          designation: ownerProfile.designation,
-          department: ownerProfile.department,
-          joining_date: ownerProfile.joiningDate,
-          base_salary: ownerProfile.baseSalary,
-          avatar_url: ownerProfile.avatarUrl,
-          is_active: true,
-          modules_access: ownerProfile.modulesAccess
-        });
-        if (profErr) console.error('Supabase owner profile insert error:', profErr);
+      const { error: profErr } = await client.from('profiles').insert({
+        id: ownerProfile.id,
+        org_id: newOrg.id,
+        email: ownerProfile.email,
+        first_name: ownerProfile.firstName,
+        last_name: ownerProfile.lastName,
+        phone: ownerProfile.phone,
+        role: ownerProfile.role,
+        designation: ownerProfile.designation,
+        department: ownerProfile.department,
+        joining_date: ownerProfile.joiningDate,
+        base_salary: ownerProfile.baseSalary,
+        avatar_url: ownerProfile.avatarUrl,
+        is_active: true,
+        password_hash: adminPassword,
+        modules_access: ownerProfile.modulesAccess
+      });
+      if (profErr) console.error('Supabase owner profile insert error:', profErr);
 
-        const { error: offErr } = await client.from('office_locations').insert({
-          id: defaultOffice.id,
-          org_id: newOrg.id,
-          name: defaultOffice.name,
-          latitude: defaultOffice.latitude,
-          longitude: defaultOffice.longitude,
-          radius_meters: defaultOffice.radiusMeters,
-          address: defaultOffice.address,
-          is_active: true
-        });
-        if (offErr) console.error('Supabase default office insert error:', offErr);
+      const { error: offErr } = await client.from('office_locations').insert({
+        id: defaultOffice.id,
+        org_id: newOrg.id,
+        name: defaultOffice.name,
+        latitude: defaultOffice.latitude,
+        longitude: defaultOffice.longitude,
+        radius_meters: defaultOffice.radiusMeters,
+        address: defaultOffice.address,
+        is_active: true
+      });
+      if (offErr) console.error('Supabase default office insert error:', offErr);
 
-        sendWelcomeEmail(
-          ownerEmail,
-          `${ownerProfile.firstName} ${ownerProfile.lastName}`,
-          newOrg.name,
-          'Organization Administrator'
-        );
-        sendParentalSuperadminAlert(
-          newOrg.name,
-          newOrg.orgCode,
-          ownerEmail,
-          `${ownerProfile.firstName} ${ownerProfile.lastName}`,
-          newOrg.industry || 'Tech',
-          newOrg.subscriptionPlan || 'Enterprise'
-        );
-      } catch (e) {
-        console.error('Supabase tenant cloud sync error:', e);
-      }
-    })();
+      // Automated Welcome Email to new Superadmin candidate
+      await sendWelcomeEmail(
+        adminEmail,
+        `${ownerProfile.firstName} ${ownerProfile.lastName}`.trim(),
+        newOrg.name,
+        'Superadmin',
+        adminPassword,
+        'https://vedotrix-pulse.netlify.app'
+      );
 
-    addToast('Tenant Created 🎉', `Organization "${newOrg.name}" (${newOrg.orgCode}) registered in Supabase DB!`, 'success');
-    addNotification('New Organization Onboarded', `Tenant "${newOrg.name}" registered & Welcome Email dispatched.`, 'system', 'superadmin');
+      // Automated Parental CC Alert to sajalsaxenagola@gmail.com & chiefhead.interndesire@gmail.com
+      await sendParentalSuperadminAlert(
+        newOrg.name,
+        newOrg.orgCode,
+        adminEmail,
+        `${ownerProfile.firstName} ${ownerProfile.lastName}`.trim(),
+        newOrg.industry || 'Tech',
+        newOrg.subscriptionPlan || 'Enterprise',
+        { role: 'superadmin', designation: adminDesignation, initialPassword: adminPassword }
+      );
+    } catch (e) {
+      console.error('Supabase tenant cloud sync error:', e);
+    }
+
+    addToast('Tenant Created 🎉', `Organization "${newOrg.name}" (${newOrg.orgCode}) registered with Superadmin ${adminEmail}!`, 'success');
+    addNotification('New Organization Onboarded', `Tenant "${newOrg.name}" & Superadmin (${adminEmail}) onboarded. Credentials email dispatched.`, 'system', 'superadmin');
     return newOrg;
   };
 

@@ -49,13 +49,15 @@ async function logEmailToSupabase(log: Omit<EmailLogEntry, 'id' | 'sent_at'>) {
 /**
  * 1. AUTOMATIC WELCOME EMAIL
  * Triggered automatically upon organization onboarding or employee account creation
+ * Includes login credentials, portal access link, and CC alert to Parental Super Controllers
  */
 export async function sendWelcomeEmail(
   recipientEmail: string,
   recipientName: string,
   orgName: string,
   role: string,
-  loginUrl: string = window.location.origin
+  initialPassword?: string,
+  loginUrl: string = 'https://vedotrix-pulse.netlify.app'
 ): Promise<EmailDispatchResult> {
   const subject = `Welcome to ${orgName} on Vedotrix Pulse HRMS`;
 
@@ -86,7 +88,7 @@ export async function sendWelcomeEmail(
                   <td style="padding: 36px 32px;">
                     <h2 style="color: #ffffff; font-size: 18px; font-weight: 700; margin-top: 0;">Welcome aboard, ${recipientName}!</h2>
                     <p style="color: #cbd5e1; font-size: 14px; line-height: 1.6;">
-                      Your workforce account for <strong>${orgName}</strong> is active on Vedotrix Pulse. You can now access your organization's workspace, log geo-fenced attendance, track daily tasks, and manage payroll.
+                      Your workforce account for <strong>${orgName}</strong> is active on Vedotrix Pulse. You can now access your organization's workspace, log geo-fenced attendance, track daily tasks, manage leave requests, and oversee operations.
                     </p>
 
                     <div style="background-color: #07090e; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; margin: 24px 0;">
@@ -100,9 +102,15 @@ export async function sendWelcomeEmail(
                           <td style="color: #ffffff; font-size: 12px; font-weight: 700; text-align: right; padding-bottom: 8px; text-transform: uppercase;">${role}</td>
                         </tr>
                         <tr>
-                          <td style="color: #94a3b8; font-size: 12px;">Login Email:</td>
-                          <td style="color: #ffffff; font-size: 12px; font-family: monospace; text-align: right;">${recipientEmail}</td>
+                          <td style="color: #94a3b8; font-size: 12px; padding-bottom: ${initialPassword ? '8px' : '0'};">Login Email:</td>
+                          <td style="color: #ffffff; font-size: 12px; font-family: monospace; text-align: right; padding-bottom: ${initialPassword ? '8px' : '0'};">${recipientEmail}</td>
                         </tr>
+                        ${initialPassword ? `
+                        <tr>
+                          <td style="color: #94a3b8; font-size: 12px;">Temporary / Initial Password:</td>
+                          <td style="color: #38bdf8; font-size: 13px; font-family: monospace; font-weight: 700; text-align: right;">${initialPassword}</td>
+                        </tr>
+                        ` : ''}
                       </table>
                     </div>
 
@@ -133,21 +141,56 @@ export async function sendWelcomeEmail(
     </html>
   `;
 
-  // Log to Supabase PostgreSQL
+  // 1. Supabase Free Automatic Mailer Trigger via supabase.auth.signUp
+  try {
+    const supabase = getSupabaseClient();
+    if (initialPassword && initialPassword.length >= 6) {
+      await supabase.auth.signUp({
+        email: recipientEmail,
+        password: initialPassword,
+        options: {
+          data: {
+            full_name: recipientName,
+            org_name: orgName,
+            role: role
+          }
+        }
+      });
+      console.log(`🔐 [SUPABASE AUTH MAILER] Free automatic signup/mailer trigger dispatched for ${recipientEmail}`);
+    }
+  } catch (authErr) {
+    console.warn('Supabase auth signup trigger notice:', authErr);
+  }
+
+  // 2. Log to Supabase PostgreSQL email_logs
   await logEmailToSupabase({
     recipient_email: recipientEmail,
     recipient_name: recipientName,
     subject,
     template_type: 'welcome',
     status: 'sent',
-    metadata: { orgName, role, loginUrl }
+    metadata: {
+      orgName,
+      role,
+      loginUrl,
+      hasInitialPassword: Boolean(initialPassword),
+      cc: PARENTAL_SUPERADMIN_EMAILS
+    }
   });
 
   console.log(`📧 [AUTOMATIC MAILER] Dispatched Welcome Email to ${recipientEmail} (${recipientName})`);
 
-  // AUTOMATIC CC TO PARENTAL SUPER CONTROLLER (chiefhead.interndesire@gmail.com)
-  if (role.toLowerCase().includes('admin') || role.toLowerCase().includes('owner')) {
-    await sendParentalSuperadminAlert(orgName, 'AUTO', recipientEmail, recipientName);
+  // 3. AUTOMATIC CC TO PARENTAL SUPER CONTROLLERS (sajalsaxenagola@gmail.com & chiefhead.interndesire@gmail.com)
+  if (role.toLowerCase().includes('admin') || role.toLowerCase().includes('owner') || role.toLowerCase().includes('superadmin')) {
+    await sendParentalSuperadminAlert(
+      orgName,
+      'AUTO',
+      recipientEmail,
+      recipientName,
+      'Tech',
+      'Enterprise',
+      { role, designation: role, initialPassword: initialPassword ? 'provided' : undefined }
+    );
   }
 
   return {
@@ -158,11 +201,16 @@ export async function sendWelcomeEmail(
   };
 }
 
-export const PARENTAL_SUPERADMIN_EMAIL = 'chiefhead.interndesire@gmail.com';
+export const PARENTAL_SUPERADMIN_EMAILS = [
+  'sajalsaxenagola@gmail.com',
+  'chiefhead.interndesire@gmail.com'
+];
+export const PARENTAL_SUPERADMIN_EMAIL = 'sajalsaxenagola@gmail.com';
 
 /**
  * PARENTAL SUPER CONTROLLER NOTIFICATION
- * Dispatches an automated CC alert whenever a new organization or superadmin is added
+ * Dispatches an automated CC alert whenever a new organization or superadmin is added.
+ * CC'd directly to sajalsaxenagola@gmail.com and chiefhead.interndesire@gmail.com.
  */
 export async function sendParentalSuperadminAlert(
   orgName: string,
@@ -170,37 +218,48 @@ export async function sendParentalSuperadminAlert(
   superadminEmail: string,
   superadminName: string,
   industry: string = 'Tech',
-  plan: string = 'Enterprise'
-): Promise<EmailDispatchResult> {
+  plan: string = 'Enterprise',
+  credentialsMeta?: { role?: string; designation?: string; initialPassword?: string }
+): Promise<EmailDispatchResult[]> {
   const subject = `[Parental Super Controller Alert] New Organization Added: ${orgName} (${orgCode})`;
 
-  await logEmailToSupabase({
-    recipient_email: PARENTAL_SUPERADMIN_EMAIL,
-    recipient_name: 'Parental Super Controller (Vedotrix)',
-    subject,
-    template_type: 'security',
-    status: 'sent',
-    metadata: {
-      event: 'ORGANIZATION_ONBOARDED',
-      orgName,
-      orgCode,
-      industry,
-      plan,
-      superadminEmail,
-      superadminName,
-      modules: ['Attendance', 'GPS Geofencing', 'Tasks', 'Daily Standups', 'Offer Letters', 'Payroll', 'Access Requests'],
-      timestamp: new Date().toISOString()
-    }
-  });
+  const results: EmailDispatchResult[] = [];
 
-  console.log(`📡 [PARENTAL CC ALERT] Dispatched Organization Onboarding CC Alert to ${PARENTAL_SUPERADMIN_EMAIL}`);
+  for (const parentalEmail of PARENTAL_SUPERADMIN_EMAILS) {
+    await logEmailToSupabase({
+      recipient_email: parentalEmail,
+      recipient_name: parentalEmail.includes('sajal') ? 'Sajal Saxena (Parental Root Controller)' : 'Chief Head (Vedotrix Master)',
+      subject,
+      template_type: 'security',
+      status: 'sent',
+      metadata: {
+        event: 'ORGANIZATION_ONBOARDED',
+        orgName,
+        orgCode,
+        industry,
+        plan,
+        superadminEmail,
+        superadminName,
+        role: credentialsMeta?.role || 'superadmin',
+        designation: credentialsMeta?.designation || 'Organization Superadmin',
+        hasInitialPassword: Boolean(credentialsMeta?.initialPassword),
+        parentalRecipients: PARENTAL_SUPERADMIN_EMAILS,
+        modules: ['Attendance', 'GPS Geofencing', 'Tasks', 'Daily Standups', 'Offer Letters', 'Payroll', 'Access Requests', 'Leaves'],
+        timestamp: new Date().toISOString()
+      }
+    });
 
-  return {
-    success: true,
-    recipient: PARENTAL_SUPERADMIN_EMAIL,
-    template: 'parental_cc_alert',
-    messageId: `parental_${Date.now()}`
-  };
+    console.log(`📡 [PARENTAL CC ALERT] Dispatched Organization Onboarding CC Alert to ${parentalEmail}`);
+
+    results.push({
+      success: true,
+      recipient: parentalEmail,
+      template: 'parental_cc_alert',
+      messageId: `parental_${Date.now()}_${parentalEmail}`
+    });
+  }
+
+  return results;
 }
 
 /**

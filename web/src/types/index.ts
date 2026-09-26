@@ -29,6 +29,17 @@ export interface Organization {
   };
 }
 
+export interface OrganizationAdminCredentials {
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  phone?: string;
+  designation?: string;
+  department?: string;
+  role?: UserRole;
+}
+
 export interface Profile {
   id: string;
   orgId: string;

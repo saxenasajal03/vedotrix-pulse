@@ -18,7 +18,14 @@ import {
   Lock,
   Globe,
   HardDrive,
-  ShieldAlert
+  ShieldAlert,
+  Key,
+  EyeOff,
+  Mail,
+  Phone,
+  UserCheck,
+  RefreshCw,
+  Briefcase
 } from 'lucide-react';
 import { Organization } from '../types';
 import { ImageUpload } from './ImageUpload';
@@ -70,6 +77,27 @@ export const SuperAdminConsole: React.FC = () => {
   const [newOrgLogo, setNewOrgLogo] = useState('');
   const [newOrgPlan, setNewOrgPlan] = useState<'Starter' | 'Professional' | 'Enterprise'>('Professional');
 
+  // Superadmin Credentials State
+  const [adminFirstName, setAdminFirstName] = useState('');
+  const [adminLastName, setAdminLastName] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const [adminPhone, setAdminPhone] = useState('+91 ');
+  const [adminDesignation, setAdminDesignation] = useState('Superadmin / Managing Director');
+  const [adminDepartment, setAdminDepartment] = useState('HR & Administration');
+  const [isSubmittingOrg, setIsSubmittingOrg] = useState(false);
+
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+    let pwd = '';
+    for (let i = 0; i < 12; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setAdminPassword(pwd);
+    setShowAdminPassword(true);
+  };
+
   // Supabase Configuration State
   const [supabaseUrl, setSupabaseUrl] = useState(supabaseConfig.url);
   const [supabaseKey, setSupabaseKey] = useState(supabaseConfig.anonKey);
@@ -81,27 +109,65 @@ export const SuperAdminConsole: React.FC = () => {
   const [broadcastMsg, setBroadcastMsg] = useState('');
   const [broadcastPriority, setBroadcastPriority] = useState<'info' | 'alert' | 'critical'>('info');
 
-  const handleAddOrg = (e: React.FormEvent) => {
+  const handleAddOrg = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOrgName || !newOrgCode) return;
+    if (!newOrgName.trim() || !newOrgCode.trim()) {
+      addToast('Missing Details', 'Please specify Company Name and Org Code.', 'warning');
+      return;
+    }
 
-    createOrganization({
-      name: newOrgName.trim(),
-      slug: newOrgSlug.trim() || newOrgName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-      orgCode: newOrgCode.trim().toUpperCase(),
-      industry: newOrgIndustry,
-      website: newOrgWebsite.trim(),
-      address: newOrgAddress.trim() || 'Corporate Headquarters',
-      phone: newOrgPhone.trim(),
-      logoUrl: newOrgLogo || '/vedotrix-logo.png',
-      subscriptionPlan: newOrgPlan
-    });
+    if (!adminEmail.trim() || !adminPassword.trim() || !adminFirstName.trim()) {
+      addToast('Credentials Required', 'Please provide Superadmin First Name, Login Email, and Initial Password.', 'warning');
+      return;
+    }
 
-    setIsAddOrgOpen(false);
-    setNewOrgName('');
-    setNewOrgCode('');
-    setNewOrgSlug('');
-    setNewOrgLogo('');
+    setIsSubmittingOrg(true);
+    try {
+      await createOrganization(
+        {
+          name: newOrgName.trim(),
+          slug: newOrgSlug.trim() || newOrgName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          orgCode: newOrgCode.trim().toUpperCase(),
+          industry: newOrgIndustry,
+          website: newOrgWebsite.trim(),
+          address: newOrgAddress.trim() || 'Corporate Headquarters',
+          phone: newOrgPhone.trim(),
+          logoUrl: newOrgLogo || '/vedotrix-logo.png',
+          subscriptionPlan: newOrgPlan
+        },
+        {
+          firstName: adminFirstName.trim(),
+          lastName: adminLastName.trim(),
+          email: adminEmail.trim().toLowerCase(),
+          password: adminPassword.trim(),
+          phone: adminPhone.trim(),
+          designation: adminDesignation.trim() || 'Superadmin / Managing Director',
+          department: adminDepartment.trim() || 'HR & Administration',
+          role: 'superadmin'
+        }
+      );
+
+      setIsAddOrgOpen(false);
+      // Reset form
+      setNewOrgName('');
+      setNewOrgCode('');
+      setNewOrgSlug('');
+      setNewOrgLogo('');
+      setNewOrgAddress('');
+      setNewOrgPhone('+91 ');
+      setAdminFirstName('');
+      setAdminLastName('');
+      setAdminEmail('');
+      setAdminPassword('');
+      setAdminPhone('+91 ');
+      setAdminDesignation('Superadmin / Managing Director');
+      setAdminDepartment('HR & Administration');
+    } catch (err: any) {
+      console.error('Failed to create organization:', err);
+      addToast('Onboarding Failed', err.message || 'Could not onboard organization', 'error');
+    } finally {
+      setIsSubmittingOrg(false);
+    }
   };
 
   const handleTestAndSaveDb = async (e: React.FormEvent) => {
@@ -393,108 +459,304 @@ export const SuperAdminConsole: React.FC = () => {
         </div>
       </div>
 
-      {/* Add Organization Modal with S3 Image Upload */}
+      {/* Add Organization Modal with S3 Image Upload & Explicit Superadmin Credentials */}
       {isAddOrgOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
-          <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto my-6 sm:my-8">
-            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
-              <h3 className="text-sm font-bold text-white flex items-center">
-                <Building className="w-4 h-4 mr-2 text-cyan-400" />
-                Register New Client Organization
-              </h3>
-              <button onClick={() => setIsAddOrgOpen(false)} className="text-slate-400 hover:text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] overflow-y-auto my-4 sm:my-6">
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950 sticky top-0 z-20">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                  <Building className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Onboard New Enterprise Tenant</h3>
+                  <p className="text-[11px] text-slate-400">Register company profile and create designated Superadmin credentials</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAddOrgOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+              >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleAddOrg} className="p-6 space-y-4">
-              {/* S3 Image Logo Upload Component */}
-              <ImageUpload
-                bucket="organization-logos"
-                currentUrl={newOrgLogo}
-                onUploaded={(url) => setNewOrgLogo(url)}
-                label="Company Logo (Stored in Supabase S3)"
-                helperText="Upload official company logo (PNG, JPG, SVG, WEBP)"
-              />
+            <form onSubmit={handleAddOrg} className="p-6 space-y-6">
+              {/* SECTION 1: Tenant Details */}
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2 border-b border-slate-800 pb-2">
+                  <Globe className="w-4 h-4 text-cyan-400" />
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">1. Organization Details & Branding</h4>
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Company Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={newOrgName}
-                  onChange={(e) => setNewOrgName(e.target.value)}
-                  placeholder="e.g. Apex Global Technologies"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                {/* S3 Image Logo Upload Component */}
+                <ImageUpload
+                  bucket="organization-logos"
+                  currentUrl={newOrgLogo}
+                  onUploaded={(url) => setNewOrgLogo(url)}
+                  label="Company Logo (Stored in Supabase S3)"
+                  helperText="Upload official company logo (PNG, JPG, SVG, WEBP)"
                 />
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Company Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={newOrgName}
+                      onChange={(e) => {
+                        setNewOrgName(e.target.value);
+                        if (!newOrgSlug) {
+                          setNewOrgSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '-'));
+                        }
+                      }}
+                      placeholder="e.g. BNK Digital"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Org Code (3-4 Chars) *</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={4}
+                      value={newOrgCode}
+                      onChange={(e) => setNewOrgCode(e.target.value.toUpperCase())}
+                      placeholder="e.g. BNK"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono uppercase text-cyan-300 focus:outline-none focus:border-cyan-500"
+                    />
+                    <span className="text-[10px] text-slate-500">For serials: VDX-[CODE]-YYYY</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Industry Type</label>
+                    <select
+                      value={newOrgIndustry}
+                      onChange={(e) => setNewOrgIndustry(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    >
+                      <option value="Tech">Tech / Software House</option>
+                      <option value="Digital Marketing">Digital Marketing Agency</option>
+                      <option value="Hybrid">Hybrid Enterprise</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Subscription Plan</label>
+                    <select
+                      value={newOrgPlan}
+                      onChange={(e) => setNewOrgPlan(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    >
+                      <option value="Starter">Starter (Free Tier)</option>
+                      <option value="Professional">Professional Tier</option>
+                      <option value="Enterprise">Enterprise Cloud</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Company Website</label>
+                    <input
+                      type="text"
+                      value={newOrgWebsite}
+                      onChange={(e) => setNewOrgWebsite(e.target.value)}
+                      placeholder="https://bnkdigital.com"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Company Contact Phone</label>
+                    <input
+                      type="text"
+                      value={newOrgPhone}
+                      onChange={(e) => setNewOrgPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Org Code (3-4 Chars) *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Headquarters Office Address</label>
                   <input
                     type="text"
-                    required
-                    maxLength={4}
-                    value={newOrgCode}
-                    onChange={(e) => setNewOrgCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. APX"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono uppercase text-cyan-300 focus:outline-none focus:border-cyan-500"
-                  />
-                  <span className="text-[10px] text-slate-500">For serials: VDX-[CODE]-YYYY-HEX</span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Industry Type</label>
-                  <select
-                    value={newOrgIndustry}
-                    onChange={(e) => setNewOrgIndustry(e.target.value as any)}
+                    value={newOrgAddress}
+                    onChange={(e) => setNewOrgAddress(e.target.value)}
+                    placeholder="e.g. Tower B, Tech Park, Bangalore, Karnataka"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
-                  >
-                    <option value="Tech">Tech / Software House</option>
-                    <option value="Digital Marketing">Digital Marketing Agency</option>
-                    <option value="Hybrid">Hybrid Enterprise</option>
-                  </select>
+                  />
+                  <span className="text-[10px] text-slate-500">Used as default geofenced punch-in location for employees.</span>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Company Website</label>
-                <input
-                  type="text"
-                  value={newOrgWebsite}
-                  onChange={(e) => setNewOrgWebsite(e.target.value)}
-                  placeholder="https://apex.com"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
-                />
+              {/* SECTION 2: Superadmin Credentials */}
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center space-x-2">
+                    <UserCheck className="w-4 h-4 text-emerald-400" />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">2. Designated Superadmin Credentials</h4>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Full Tenant Authority
+                  </span>
+                </div>
+
+                {/* Email Notice Card */}
+                <div className="p-3 bg-indigo-950/40 border border-indigo-500/30 rounded-xl text-xs text-slate-300 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-indigo-300 font-bold text-[11px]">
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Supabase Automatic Free Mailer & CC Dispatch</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Upon onboarding, login credentials will be stored with bcrypt encryption in Supabase PostgreSQL. An automated welcome email will be dispatched to the candidate, with an instant CC notification sent to <strong className="text-white">sajalsaxenagola@gmail.com</strong> and <strong className="text-white">chiefhead.interndesire@gmail.com</strong>.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Superadmin First Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={adminFirstName}
+                      onChange={(e) => setAdminFirstName(e.target.value)}
+                      placeholder="e.g. Kshitiz"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Superadmin Last Name</label>
+                    <input
+                      type="text"
+                      value={adminLastName}
+                      onChange={(e) => setAdminLastName(e.target.value)}
+                      placeholder="e.g. Narayan"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Work / Login Email *</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        required
+                        value={adminEmail}
+                        onChange={(e) => setAdminEmail(e.target.value)}
+                        placeholder="kshitiznarayan543@gmail.com"
+                        className="w-full pl-8 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                      />
+                      <Mail className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Initial Login Password *</span>
+                      <button
+                        type="button"
+                        onClick={generateRandomPassword}
+                        className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium flex items-center space-x-1"
+                      >
+                        <RefreshCw className="w-2.5 h-2.5" />
+                        <span>Generate</span>
+                      </button>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showAdminPassword ? 'text' : 'password'}
+                        required
+                        value={adminPassword}
+                        onChange={(e) => setAdminPassword(e.target.value)}
+                        placeholder="e.g. Kshitiz@2006"
+                        className="w-full pl-8 pr-9 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
+                      />
+                      <Key className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminPassword(!showAdminPassword)}
+                        className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                      >
+                        {showAdminPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Contact Phone</label>
+                    <input
+                      type="text"
+                      value={adminPhone}
+                      onChange={(e) => setAdminPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Designation</label>
+                    <input
+                      type="text"
+                      value={adminDesignation}
+                      onChange={(e) => setAdminDesignation(e.target.value)}
+                      placeholder="e.g. Superadmin / HR Head"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Department</label>
+                    <input
+                      type="text"
+                      value={adminDepartment}
+                      onChange={(e) => setAdminDepartment(e.target.value)}
+                      placeholder="e.g. HR Department"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Subscription Plan</label>
-                <select
-                  value={newOrgPlan}
-                  onChange={(e) => setNewOrgPlan(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
-                >
-                  <option value="Starter">Starter (Free Tier)</option>
-                  <option value="Professional">Professional Tier</option>
-                  <option value="Enterprise">Enterprise Cloud</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end space-x-2 pt-2">
+              {/* Form Action Buttons */}
+              <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"
+                  disabled={isSubmittingOrg}
                   onClick={() => setIsAddOrgOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-indigo-600 text-slate-950 font-bold text-xs rounded-lg transition shadow-md"
+                  disabled={isSubmittingOrg}
+                  className="inline-flex items-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-cyan-500 via-indigo-600 to-emerald-500 text-slate-950 font-extrabold text-xs rounded-xl transition shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 disabled:opacity-50"
                 >
-                  Onboard Tenant to S3 & DB
+                  {isSubmittingOrg ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+                      <span>Onboarding Tenant & Notifying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
+                      <span>Onboard Tenant & Dispatch Credentials</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
