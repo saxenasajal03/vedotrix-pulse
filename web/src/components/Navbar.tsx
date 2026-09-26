@@ -36,17 +36,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     availableOrgs,
     switchOrganization,
     currentProfile,
+    isVedotrixSuperadmin,
     theme,
     setTheme,
     logout
   } = useApp();
-
-  const isVedotrixSuperadmin =
-    currentProfile.role === 'superadmin' &&
-    (currentProfile.orgId === '00000000-0000-0000-0000-000000000001' ||
-     currentProfile.email.toLowerCase() === 'admin@vedotrix.com' ||
-     currentProfile.email.toLowerCase() === 'sajalsaxenagola@gmail.com');
-  const isSuperadmin = isVedotrixSuperadmin;
 
   return (
     <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 transition-colors">
@@ -70,27 +64,40 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <div className="relative group shrink-0">
                 <img
-                  src="/vedotrix-logo.png"
-                  alt="Vedotrix Technologies Logo"
+                  src={isVedotrixSuperadmin ? '/vedotrix-logo.png' : (currentOrg.logoUrl || '/vedotrix-logo.png')}
+                  alt={isVedotrixSuperadmin ? 'Vedotrix Technologies' : currentOrg.name}
                   className="w-9 h-9 sm:w-10 sm:h-10 object-contain rounded-xl p-0.5 bg-slate-900 border border-cyan-500/40 shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition"
+                  onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
                 />
-                <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-cyan-400 border-2 border-slate-900" />
+                <div className={`absolute -bottom-1 -right-1 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full border-2 border-slate-900 ${isVedotrixSuperadmin ? 'bg-cyan-400' : 'bg-emerald-400'}`} />
               </div>
 
               <div className="min-w-0">
                 <div className="flex items-center space-x-1.5">
                   <span className="font-extrabold text-base sm:text-lg tracking-tight text-white truncate">
-                    Vedotrix <span className="text-cyan-400">Pulse</span>
+                    {isVedotrixSuperadmin ? (
+                      <>Vedotrix <span className="text-cyan-400">Pulse</span></>
+                    ) : (
+                      currentOrg.name
+                    )}
                   </span>
-                  {isSuperadmin && (
+                  {isVedotrixSuperadmin ? (
                     <span className="hidden sm:inline-flex text-[9px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-1.5 py-0.5 rounded-full items-center space-x-1 shrink-0">
                       <Crown className="w-2.5 h-2.5 mr-0.5" />
                       <span>SUPER CONTROLLER</span>
                     </span>
+                  ) : (
+                    <span className="hidden sm:inline-flex text-[9px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.5 rounded-full items-center shrink-0">
+                      <span>{currentOrg.orgCode}</span>
+                    </span>
                   )}
                 </div>
                 <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 truncate">
-                  Designed & Managed by <span className="text-cyan-400 font-semibold">Vedotrix Technologies</span>
+                  {isVedotrixSuperadmin ? (
+                    <>Designed & Managed by <span className="text-cyan-400 font-semibold">Vedotrix Technologies</span></>
+                  ) : (
+                    <>Enterprise Workspace • <span className="text-cyan-400 font-semibold">Vedotrix Pulse</span></>
+                  )}
                 </p>
               </div>
             </div>
@@ -98,8 +105,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Quick Actions & Controls */}
           <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
-            {/* SuperAdmin Quick Tab Button (Desktop) */}
-            {isSuperadmin && (
+            {/* SuperAdmin Quick Tab Button (Strictly Vedotrix Parental Master Only) */}
+            {isVedotrixSuperadmin && (
               <button
                 onClick={() => setActiveTab('superadmin')}
                 className={`hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-extrabold rounded-lg transition border ${

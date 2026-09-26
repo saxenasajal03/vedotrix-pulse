@@ -17,7 +17,8 @@ import {
   ExternalLink,
   Lock,
   Globe,
-  HardDrive
+  HardDrive,
+  ShieldAlert
 } from 'lucide-react';
 import { Organization } from '../types';
 import { ImageUpload } from './ImageUpload';
@@ -25,6 +26,8 @@ import { S3_CONFIG } from '../lib/storage';
 
 export const SuperAdminConsole: React.FC = () => {
   const {
+    isVedotrixSuperadmin,
+    currentOrg,
     allOrganizations,
     createOrganization,
     toggleOrganizationStatus,
@@ -37,6 +40,23 @@ export const SuperAdminConsole: React.FC = () => {
     updateSupabaseCredentials,
     addToast
   } = useApp();
+
+  if (!isVedotrixSuperadmin) {
+    return (
+      <div className="p-8 max-w-xl mx-auto my-12 text-center bg-slate-900 border border-red-500/30 rounded-2xl shadow-2xl">
+        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-white mb-2">Vedotrix Parental Authority Required</h2>
+        <p className="text-slate-400 text-sm mb-4 leading-relaxed">
+          The Super Controller Hub, live database connectivity, and cloud storage configurations are strictly restricted to parental administrators at Vedotrix Technologies.
+        </p>
+        <div className="text-xs text-slate-500 bg-slate-950 p-3 rounded-lg border border-slate-800">
+          Current Organization: <span className="text-white font-bold">{currentOrg.name}</span>
+        </div>
+      </div>
+    );
+  }
 
   // New Organization Form
   const [isAddOrgOpen, setIsAddOrgOpen] = useState(false);

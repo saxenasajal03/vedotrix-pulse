@@ -22,19 +22,19 @@ import { AccessRequestsView } from './components/AccessRequestsView';
 import { OfferLetter } from './types';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, currentProfile } = useApp();
+  const { isAuthenticated, currentProfile, isVedotrixSuperadmin } = useApp();
   const [activeTab, setActiveTab] = useState<string>(() => {
-    return currentProfile.role === 'superadmin' ? 'superadmin' : 'dashboard';
+    return isVedotrixSuperadmin ? 'superadmin' : 'dashboard';
   });
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Security Guard: Prevent non-superadmins from ever seeing superadmin tab
+  // Security Guard: Prevent non-Vedotrix organizations from ever seeing Super Controller Hub
   React.useEffect(() => {
-    if (activeTab === 'superadmin' && currentProfile.role !== 'superadmin') {
+    if (activeTab === 'superadmin' && !isVedotrixSuperadmin) {
       setActiveTab('dashboard');
     }
-  }, [currentProfile.role, activeTab]);
+  }, [isVedotrixSuperadmin, activeTab]);
 
   // Modal States
   const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
@@ -84,7 +84,7 @@ const MainLayout: React.FC = () => {
 
         {/* Main Content Area with Bottom Padding on Mobile for Fixed Bottom Bar */}
         <main className="flex-1 p-3.5 sm:p-6 lg:p-8 overflow-y-auto pb-24 md:pb-8 min-w-0">
-          {activeTab === 'superadmin' && currentProfile.role === 'superadmin' && <SuperAdminConsole />}
+          {activeTab === 'superadmin' && isVedotrixSuperadmin && <SuperAdminConsole />}
 
           {activeTab === 'dashboard' && (
             <DashboardOverview

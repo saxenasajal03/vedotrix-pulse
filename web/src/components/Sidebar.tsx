@@ -30,13 +30,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen = false,
   onCloseMobile
 }) => {
-  const { currentOrg, currentProfile, offerLetters, attendanceRecords, tasks, accessRequests } = useApp();
+  const { currentOrg, currentProfile, isVedotrixSuperadmin, offerLetters, attendanceRecords, tasks, accessRequests } = useApp();
 
-  const isSuperadmin =
-    currentProfile.role === 'superadmin' &&
-    (currentProfile.orgId === '00000000-0000-0000-0000-000000000001' ||
-     currentProfile.email.toLowerCase() === 'admin@vedotrix.com' ||
-     currentProfile.email.toLowerCase() === 'sajalsaxenagola@gmail.com');
   const pendingRegularizations = attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length;
   const pendingOffers = offerLetters.filter((o) => o.status === 'issued').length;
   const pendingApprovalsCount = accessRequests.filter(
@@ -44,11 +39,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       r.status === 'pending' &&
       (r.assignedApproverId === currentProfile.id ||
         (currentProfile.role === 'owner' && r.orgId === currentOrg.id) ||
-        (currentProfile.role === 'superadmin'))
+        (currentProfile.role === 'superadmin' && isVedotrixSuperadmin))
   ).length;
 
   const navItems = [
-    ...(isSuperadmin
+    ...(isVedotrixSuperadmin
       ? [
           {
             id: 'superadmin',
@@ -114,15 +109,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Mobile Header with Close Button */}
         {isMobileView && (
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-            <div className="flex items-center space-x-2">
-              <img src="/vedotrix-logo.png" alt="Vedotrix" className="w-7 h-7 object-contain" />
-              <span className="font-extrabold text-sm text-white">
-                Vedotrix <span className="text-cyan-400">Pulse</span>
+            <div className="flex items-center space-x-2 min-w-0">
+              <img
+                src={currentOrg.logoUrl || '/vedotrix-logo.png'}
+                alt={currentOrg.name}
+                className="w-7 h-7 object-contain rounded-lg shrink-0 p-0.5 bg-slate-900 border border-slate-700"
+                onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
+              />
+              <span className="font-extrabold text-sm text-white truncate">
+                {currentOrg.name}
               </span>
             </div>
             <button
               onClick={onCloseMobile}
-              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white shrink-0 ml-2"
               aria-label="Close Navigation"
             >
               <X className="w-4 h-4" />
@@ -133,12 +133,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Organization Card */}
         <div className="p-3.5 rounded-xl bg-gradient-to-br from-slate-800/80 to-slate-900 border border-slate-700/60 shadow-inner">
           <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs border border-indigo-500/30 overflow-hidden shrink-0">
-              <img src="/vedotrix-logo.png" alt="Org Logo" className="w-full h-full object-contain p-0.5" />
+            <div className="w-9 h-9 rounded-lg bg-slate-950 text-indigo-400 flex items-center justify-center font-bold text-xs border border-indigo-500/30 overflow-hidden shrink-0 p-1">
+              <img
+                src={currentOrg.logoUrl || '/vedotrix-logo.png'}
+                alt={currentOrg.name}
+                className="w-full h-full object-contain"
+                onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
+              />
             </div>
             <div className="overflow-hidden min-w-0">
               <h2 className="text-xs font-bold text-white truncate">{currentOrg.name}</h2>
-              <span className="inline-flex items-center text-[10px] text-cyan-400 font-medium">
+              <span className="inline-flex items-center text-[10px] text-cyan-400 font-medium truncate">
                 <Sparkles className="w-3 h-3 mr-1 shrink-0" />
                 <span className="truncate">{currentOrg.industry} ({currentOrg.orgCode})</span>
               </span>

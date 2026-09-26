@@ -61,6 +61,7 @@ interface AppContextType {
   // Tenancy & Active State
   currentOrg: Organization;
   currentProfile: Profile;
+  isVedotrixSuperadmin: boolean;
   availableOrgs: Organization[];
   allOrganizations: Organization[];
   orgProfiles: Profile[];
@@ -1406,6 +1407,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTheme,
         currentOrg,
         currentProfile,
+        isVedotrixSuperadmin,
         availableOrgs: isVedotrixSuperadmin ? organizations : organizations.filter((o) => o.id === currentOrg.id),
         allOrganizations: isVedotrixSuperadmin ? organizations : organizations.filter((o) => o.id === currentOrg.id),
         orgProfiles,

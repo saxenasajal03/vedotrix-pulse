@@ -20,9 +20,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   setActiveTab,
   onOpenMobileMenu
 }) => {
-  const { currentProfile, accessRequests, attendanceRecords } = useApp();
+  const { currentProfile, isVedotrixSuperadmin, accessRequests, attendanceRecords } = useApp();
 
-  const isSuperadmin = currentProfile.role === 'superadmin';
   const pendingApprovalsCount = accessRequests.filter(
     (r) =>
       r.status === 'pending' &&
@@ -35,9 +34,9 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
   const navItems = [
     {
-      id: isSuperadmin ? 'superadmin' : 'dashboard',
-      label: isSuperadmin ? 'SuperAdmin' : 'Dashboard',
-      icon: isSuperadmin ? Crown : LayoutDashboard,
+      id: isVedotrixSuperadmin ? 'superadmin' : 'dashboard',
+      label: isVedotrixSuperadmin ? 'SuperAdmin' : 'Dashboard',
+      icon: isVedotrixSuperadmin ? Crown : LayoutDashboard,
       badge: null
     },
     {
