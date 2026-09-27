@@ -22,8 +22,10 @@ import {
   MeetingEvent,
   NoticeItem,
   ChatMessage,
-  ChatChannel
+  ChatChannel,
+  ChatAttachment
 } from '../types';
+import { sendDeviceNotification } from '../lib/deviceNotifications';
 import {
   INITIAL_ORGS,
   INITIAL_OFFICES,
@@ -180,7 +182,13 @@ interface AppContextType {
   chatChannels: ChatChannel[];
   createChatChannel: (data: { name: string; description: string; isPrivate?: boolean; memberIds?: string[] }) => Promise<ChatChannel>;
   deleteChatChannel: (channelId: string) => Promise<void>;
-  sendChatMessage: (message: string, channel: string, recipientId?: string) => Promise<ChatMessage>;
+  sendChatMessage: (
+    message: string,
+    channel: string,
+    recipientId?: string,
+    attachments?: ChatAttachment[],
+    replyTo?: { id: string; snippet: string }
+  ) => Promise<ChatMessage>;
   addChatReaction: (messageId: string, emoji: string) => Promise<void>;
   activeChatChannel: string;
   setActiveChatChannel: (channel: string) => void;
@@ -358,8 +366,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ];
   });
 
-  // Organizational Live Chat State (Supabase DB synced)
-  const [activeChatChannel, setActiveChatChannel] = useState<string>('general');
+  // Organizational Real-Time Chat State
+  const [activeChatChannel, setActiveChatChannel] = useState<string>('support');
   const [customChannels, setCustomChannels] = useState<ChatChannel[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_custom_channels');
@@ -380,8 +388,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         senderName: 'Sajal Saxena',
         senderRole: 'superadmin',
         senderAvatar: '/vedotrix-logo.png',
-        channel: 'general',
-        message: 'Welcome everyone to Vedotrix Pulse! Multi-tenant security, IST time synchronization, and our live corporate chat are now active. 🚀',
+        channel: 'support',
+        message: 'Welcome everyone to Vedotrix Pulse! For any HR inquiries, payroll clarifications, attendance adjustments, or IT issues, reach out here or create a dedicated channel. 🚀',
         reactions: [{ emoji: '🚀', count: 3, userIds: ['00000000-0000-0000-0000-000000000003'] }],
         createdAt: new Date(Date.now() - 3600000).toISOString()
       },
@@ -392,8 +400,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         senderName: 'HR Administration',
         senderRole: 'hr',
         senderAvatar: '/vedotrix-logo.png',
-        channel: 'general',
-        message: 'Please review the updated holiday calendar on the Corporate Notice Board. Attendance regularizations can be raised directly from the dashboard.',
+        channel: 'support',
+        message: 'Please note: You can create new custom public channels or private groups with specific team members at any time using the "+ New" button.',
         reactions: [{ emoji: '👍', count: 2, userIds: [] }],
         createdAt: new Date(Date.now() - 1800000).toISOString()
       }
@@ -2537,11 +2545,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Notice Removed', 'The notice has been removed.', 'info');
   };
 
-  // Organizational Live Chat Handlers (Supabase DB synced)
+  // Organizational Real-Time Chat Handlers
   const sendChatMessage = async (
     messageText: string,
     channelName: string,
-    recipientId?: string
+    recipientId?: string,
+    attachments?: ChatAttachment[],
+    replyTo?: { id: string; snippet: string }
   ): Promise<ChatMessage> => {
     const newMsg: ChatMessage = {
       id: generateUUID(),
@@ -2553,6 +2563,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       channel: channelName,
       recipientId: recipientId || undefined,
       message: messageText.trim(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      replyToMessageId: replyTo?.id,
+      replyToSnippet: replyTo?.snippet,
       reactions: [],
       createdAt: new Date().toISOString()
     };
@@ -2581,17 +2594,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         created_at: newMsg.createdAt
       }]);
     } catch (e) {
-      console.warn('Supabase chat insert warning (using local store):', e);
+      console.warn('Realtime chat insert note:', e);
     }
 
     if (recipientId) {
       addNotification(
         `New Message from ${newMsg.senderName}`,
-        newMsg.message.length > 50 ? `${newMsg.message.slice(0, 50)}...` : newMsg.message,
+        newMsg.message.length > 50 ? `${newMsg.message.slice(0, 50)}...` : newMsg.message || 'Sent an attachment',
         'system',
         'chat',
         { recipientId }
       );
+    }
+
+    // Hardware / Phone / Browser Device Notification
+    try {
+      sendDeviceNotification({
+        title: recipientId ? `Message from ${newMsg.senderName}` : `Vedotrix Pulse • #${channelName}`,
+        body: `${newMsg.senderName}: ${newMsg.message || (newMsg.attachments?.length ? `[${newMsg.attachments[0].name}]` : 'Sent a message')}`,
+        channel: channelName
+      });
+    } catch (notifErr) {
+      console.warn('Device notification dispatch note:', notifErr);
     }
 
     return newMsg;
@@ -2684,7 +2708,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
     if (activeChatChannel === channelId) {
-      setActiveChatChannel('general');
+      setActiveChatChannel('support');
     }
     addToast('Channel Removed', `Channel #${channelId} was removed.`, 'info');
   };
@@ -2692,45 +2716,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const isSuperOrHr = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
   const directReportIds = new Set(profiles.filter((p) => p.orgId === currentOrg.id && p.managerId === currentProfile?.id).map((p) => p.id));
 
-  // Standard Base Channels for the current organization
+  // Sole Default Channel for the organization (all other channels are created by users)
   const standardChannels: ChatChannel[] = [
-    {
-      id: 'general',
-      orgId: currentOrg.id,
-      name: 'general',
-      description: 'Company-wide updates & general team discussion',
-      type: 'channel',
-      isPrivate: false
-    },
     {
       id: 'support',
       orgId: currentOrg.id,
       name: 'support',
       description: 'Common Support: Internal helpdesk, HR questions & IT ticket assistance',
-      type: 'channel',
-      isPrivate: false
-    },
-    {
-      id: 'engineering',
-      orgId: currentOrg.id,
-      name: 'engineering',
-      description: 'Technical sprints, PR reviews, bug reports, and deployments',
-      type: 'channel',
-      isPrivate: false
-    },
-    {
-      id: 'operations',
-      orgId: currentOrg.id,
-      name: 'operations',
-      description: 'Daily client workflows, workplace facilities, and operations',
-      type: 'channel',
-      isPrivate: false
-    },
-    {
-      id: 'announcements',
-      orgId: currentOrg.id,
-      name: 'announcements',
-      description: 'Official corporate releases, townhalls, and broadcasts',
       type: 'channel',
       isPrivate: false
     }

@@ -25,14 +25,19 @@ import { MeetingsManager } from './components/MeetingsManager';
 import { NoticeBoardView } from './components/NoticeBoardView';
 import { TeamChat } from './components/TeamChat';
 import { OfferLetter } from './types';
+import { MessageSquare } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, isVedotrixSuperadmin, currentProfile, orgProfiles } = useApp();
+  const { isAuthenticated, isVedotrixSuperadmin, currentProfile, orgProfiles, chatMessages } = useApp();
   const [activeTab, setActiveTab] = useState<string>(() => {
     return isVedotrixSuperadmin ? 'superadmin' : 'dashboard';
   });
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isFloatingChatWidgetOpen, setIsFloatingChatWidgetOpen] = useState(false);
+  const isPopoutMode = typeof window !== 'undefined' && window.location.hash === '#chat-popout';
+
+  const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
 
   // Security Guard: Prevent non-Vedotrix organizations from ever seeing Super Controller Hub
   React.useEffect(() => {
@@ -78,6 +83,15 @@ const MainLayout: React.FC = () => {
         <LoginScreen />
         <ToastContainer />
       </>
+    );
+  }
+
+  if (isPopoutMode) {
+    return (
+      <div className="h-screen w-screen bg-slate-100 p-2 sm:p-4 overflow-hidden font-['Plus_Jakarta_Sans',sans-serif]">
+        <TeamChat isWidgetMode={false} />
+        <ToastContainer />
+      </div>
     );
   }
 
@@ -137,7 +151,14 @@ const MainLayout: React.FC = () => {
 
           {activeTab === 'tasks' && <TaskBoard />}
           {activeTab === 'employees' && <EmployeesDirectory />}
-          {activeTab === 'chat' && <TeamChat />}
+          {activeTab === 'chat' && (
+            <TeamChat
+              onCloseWidget={() => {
+                setIsFloatingChatWidgetOpen(true);
+                setActiveTab('dashboard');
+              }}
+            />
+          )}
 
           {activeTab === 'standups' && (
             <StandupsView onOpenSubmitModal={() => setIsStandupOpen(true)} />
@@ -192,6 +213,40 @@ const MainLayout: React.FC = () => {
         isOpen={isStandupOpen}
         onClose={() => setIsStandupOpen(false)}
       />
+
+      {/* Floating Slack-Style Chat Widget Window */}
+      {isFloatingChatWidgetOpen && (
+        <div className="fixed bottom-4 right-4 z-50 w-[95vw] sm:w-[480px] h-[620px] max-h-[85vh] shadow-2xl rounded-2xl overflow-hidden border border-slate-200 bg-white flex flex-col animate-in slide-in-from-bottom-5 duration-200">
+          <TeamChat
+            isWidgetMode={true}
+            onCloseWidget={() => setIsFloatingChatWidgetOpen(false)}
+            onMaximizeWidget={() => {
+              setIsFloatingChatWidgetOpen(false);
+              setActiveTab('chat');
+            }}
+          />
+        </div>
+      )}
+
+      {/* Floating Chat Quick Launcher */}
+      {!isFloatingChatWidgetOpen && activeTab !== 'chat' && (
+        <button
+          onClick={() => setIsFloatingChatWidgetOpen(true)}
+          className="fixed bottom-20 md:bottom-6 right-6 z-40 px-4 py-2.5 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-xl flex items-center space-x-2 transition hover:scale-105 active:scale-95 border border-white/20"
+          title="Open Team Chat Floating Widget"
+        >
+          <div className="relative">
+            <MessageSquare className="w-4 h-4" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400 absolute -top-0.5 -right-0.5" />
+          </div>
+          <span>Team Chat</span>
+          {chatUnreadCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-extrabold animate-pulse">
+              {chatUnreadCount}
+            </span>
+          )}
+        </button>
+      )}
 
       {/* Reactive Toasts */}
       <ToastContainer />

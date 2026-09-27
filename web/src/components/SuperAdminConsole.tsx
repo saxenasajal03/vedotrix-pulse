@@ -309,7 +309,7 @@ export const SuperAdminConsole: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-1 max-w-xl">
-                Master command center for <strong>Vedotrix Technologies</strong>. Manage client organizations, S3 image storage, live Supabase DB, and platform broadcasts.
+                Master command center for <strong>Vedotrix Technologies</strong>. Manage client organizations, S3 image storage, cloud infrastructure, and platform broadcasts.
               </p>
             </div>
           </div>
@@ -324,14 +324,14 @@ export const SuperAdminConsole: React.FC = () => {
         </div>
       </div>
 
-      {/* Grid: Live Database & Supabase S3 Storage */}
+      {/* Grid: Cloud Infrastructure & Storage */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 1. Live Supabase Database Connection Card */}
+        {/* 1. Cloud Database Connection Card */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div className="flex items-center space-x-2.5">
               <Database className="w-5 h-5 text-emerald-400" />
-              <h2 className="text-sm font-bold text-white">Live Supabase Database</h2>
+              <h2 className="text-sm font-bold text-white">Cloud Database & Multi-Tenant Engine</h2>
             </div>
             <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />

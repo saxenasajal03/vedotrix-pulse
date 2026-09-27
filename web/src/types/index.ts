@@ -317,6 +317,15 @@ export interface NoticeItem {
   createdAt: string;
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  size: number; // in bytes
+  type: string; // MIME type e.g. image/png, video/mp4, application/pdf
+  url: string; // Base64 data URL or hosted URL
+  category: 'image' | 'video' | 'audio' | 'document' | 'other';
+}
+
 export interface ChatMessage {
   id: string;
   orgId: string;
@@ -324,10 +333,13 @@ export interface ChatMessage {
   senderName: string;
   senderRole: UserRole;
   senderAvatar?: string;
-  channel: string; // e.g. 'general', 'engineering', 'operations', 'announcements', or 'dm:<id1>:<id2>'
+  channel: string; // e.g. 'support', custom channel name, or 'dm:<id1>:<id2>'
   recipientId?: string;
   message: string;
+  attachments?: ChatAttachment[];
   reactions?: Array<{ emoji: string; count: number; userIds: string[] }>;
+  replyToMessageId?: string;
+  replyToSnippet?: string;
   isPinned?: boolean;
   createdAt: string;
 }
