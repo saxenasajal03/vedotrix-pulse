@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Users,
@@ -22,7 +22,11 @@ import {
   X,
   Phone,
   ShieldCheck,
-  Plus
+  Plus,
+  Video,
+  Megaphone,
+  Pin,
+  ExternalLink
 } from 'lucide-react';
 import { formatCurrency, formatSalaryOrStipend, getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 
@@ -44,12 +48,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const {
     currentOrg,
     currentProfile,
+    isVedotrixSuperadmin,
     orgProfiles,
     offerLetters,
     attendanceRecords,
     tasks,
     leaveRequests,
     accessRequests,
+    meetings,
+    notices,
     createProfile,
     addToast
   } = useApp();
@@ -119,7 +126,71 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   }, '');
   const areaD = `${pathD} L ${chartPoints[chartPoints.length - 1].x} 120 L ${chartPoints[0].x} 120 Z`;
 
-  // Dynamic Recent Activities derived strictly from real Supabase tenant rows
+  // Dynamic IST Clock and Greeting
+  const [liveISTTime, setLiveISTTime] = useState(() => {
+    return new Date().toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveISTTime(
+        new Date().toLocaleTimeString('en-US', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        })
+      );
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const getISTGreeting = () => {
+    const istHours = parseInt(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Kolkata',
+        hour: 'numeric',
+        hour12: false
+      }).format(new Date()),
+      10
+    );
+
+    if (istHours >= 4 && istHours < 12) return { greeting: 'Good Morning', icon: '🌅' };
+    if (istHours >= 12 && istHours < 17) return { greeting: 'Good Afternoon', icon: '☀️' };
+    if (istHours >= 17 && istHours < 22) return { greeting: 'Good Evening', icon: '🌆' };
+    return { greeting: 'Good Night', icon: '🌙' };
+  };
+
+  const istGreeting = getISTGreeting();
+
+  // Hierarchy Activity Scoping:
+  // Elevated roles (Superadmin, Owner, HR) see all org activities.
+  // Managers see their own activities plus those of their direct reports.
+  // Regular employees see only their own activities.
+  const isElevatedRole =
+    currentProfile?.role === 'superadmin' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'hr' ||
+    isVedotrixSuperadmin;
+
+  const directReportIds = new Set(
+    orgProfiles.filter((p) => p.managerId === currentProfile?.id).map((p) => p.id)
+  );
+
+  const canViewEmployeeActivity = (targetEmployeeId?: string) => {
+    if (isElevatedRole) return true;
+    if (!targetEmployeeId) return false;
+    if (targetEmployeeId === currentProfile?.id) return true;
+    if (directReportIds.has(targetEmployeeId)) return true;
+    return false;
+  };
+
+  // Dynamic Recent Activities strictly scoped by hierarchy
   const dynamicActivities: Array<{
     id: string;
     title: string;
@@ -129,7 +200,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   }> = [];
 
   [...attendanceRecords]
-    .filter((a) => a.checkInTime)
+    .filter((a) => a.checkInTime && canViewEmployeeActivity(a.employeeId))
     .sort((a, b) => new Date(b.checkInTime!).getTime() - new Date(a.checkInTime!).getTime())
     .slice(0, 3)
     .forEach((a) => {
@@ -144,6 +215,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     });
 
   [...leaveRequests]
+    .filter((l) => canViewEmployeeActivity(l.employeeId))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 2)
     .forEach((l) => {
@@ -158,12 +230,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     });
 
   [...tasks]
+    .filter((t) => canViewEmployeeActivity(t.assignedTo) || t.assignedBy === currentProfile?.id)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 2)
     .forEach((t) => {
       dynamicActivities.push({
         id: `task-${t.id}`,
-        title: `Task assigned: ${t.title}`,
+        title: `Task: ${t.title}`,
         time: formatISTDate(t.createdAt),
         color: 'bg-blue-100 text-blue-600',
         icon: FileText
@@ -171,12 +244,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     });
 
   [...offerLetters]
+    .filter((o) => canViewEmployeeActivity(o.employeeId) || o.managerId === currentProfile?.id || o.issuedBy === currentProfile?.id)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 2)
     .forEach((o) => {
       dynamicActivities.push({
         id: `offer-${o.id}`,
-        title: `Offer letter ${o.serialNumber} issued for ${o.candidateName}`,
+        title: `Offer letter ${o.serialNumber} for ${o.candidateName}`,
         time: formatISTDate(o.createdAt),
         color: 'bg-indigo-100 text-indigo-600',
         icon: UserPlus
@@ -221,21 +295,29 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* 1. Header Greeting & Weather/Date Widget */}
+      {/* 1. Header Greeting & Weather/Date Widget with Dynamic IST Time */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            Good Morning, {currentProfile?.firstName || 'Team Member'}! 👋
+            {istGreeting.greeting}, {currentProfile?.firstName || 'Team Member'}! {istGreeting.icon}
           </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Here's what's happening with your team today.
+          <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center text-blue-700 font-semibold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+              <Clock className="w-3 h-3 mr-1" />
+              {liveISTTime} IST
+            </span>
+            <span>•</span>
+            <span>Indian Standard Time (Asia/Kolkata)</span>
+            <span>•</span>
+            <span className="font-medium text-slate-700">{currentOrg.name}</span>
           </p>
         </div>
 
         <div className="flex items-center space-x-3 text-right shrink-0">
           <div>
             <p className="text-xs font-semibold text-slate-700">
-              {new Date().toLocaleDateString('en-US', {
+              {new Date().toLocaleDateString('en-IN', {
+                timeZone: 'Asia/Kolkata',
                 weekday: 'short',
                 day: 'numeric',
                 month: 'short',
@@ -245,7 +327,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div className="flex items-center justify-end space-x-1.5 text-xs text-slate-500 mt-0.5">
               <Sun className="w-4 h-4 text-amber-500 fill-amber-500" />
               <span className="font-bold text-slate-800">28°C</span>
-              <span className="text-slate-400 font-medium">New Delhi</span>
+              <span className="text-slate-400 font-medium">IST Zone</span>
             </div>
           </div>
         </div>
@@ -563,7 +645,132 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       </div>
 
-      {/* 4. Modal: Add New Employee Member */}
+      {/* 4. Interactive Widgets: Today's Meetings & Corporate Notice Board */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Today's Meetings & Video Conferences */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <Video className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">Meetings & Sessions 📅</h2>
+                  <p className="text-[10px] text-slate-400">Assigned by Manager or Superadmin</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveTab('meetings')}
+                className="text-xs text-blue-600 hover:text-blue-700 font-semibold inline-flex items-center"
+              >
+                Full Calendar →
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 mt-2 space-y-2">
+              {meetings.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 text-xs">
+                  <p className="font-semibold text-slate-500">No scheduled meetings.</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Sessions scheduled by leadership or managers appear here.</p>
+                </div>
+              ) : (
+                meetings.slice(0, 3).map((meeting) => (
+                  <div key={meeting.id} className="pt-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-slate-900 truncate">{meeting.title}</span>
+                        {meeting.date === todayStr && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-blue-100 text-blue-700 uppercase">
+                            Today
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5">
+                        <span className="font-mono text-blue-600 font-semibold">{meeting.startTime} IST</span>
+                        <span>•</span>
+                        <span>{meeting.organizerName}</span>
+                        <span>•</span>
+                        <span className="capitalize">{meeting.isOnline ? 'Online 🎥' : meeting.location}</span>
+                      </p>
+                    </div>
+
+                    {meeting.isOnline && meeting.meetingUrl && (
+                      <a
+                        href={meeting.meetingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs shrink-0 self-start sm:self-center"
+                      >
+                        <Video className="w-3.5 h-3.5" />
+                        <span>Join 🎥</span>
+                        <ExternalLink className="w-3 h-3 ml-0.5" />
+                      </a>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Corporate Notice Board Feed */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                  <Megaphone className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">Notice Board 📢</h2>
+                  <p className="text-[10px] text-slate-400">Corporate circulars & holiday notices</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveTab('notices')}
+                className="text-xs text-blue-600 hover:text-blue-700 font-semibold inline-flex items-center"
+              >
+                All Notices →
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 mt-2 space-y-2">
+              {notices.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 text-xs">
+                  <p className="font-semibold text-slate-500">Notice board is clear.</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Official circulars and announcements will appear here.</p>
+                </div>
+              ) : (
+                notices.slice(0, 3).map((notice) => (
+                  <div key={notice.id} className="pt-2.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center space-x-1.5">
+                        {notice.isPinned && (
+                          <Pin className="w-3 h-3 text-amber-500 fill-amber-500 shrink-0" />
+                        )}
+                        <span className="text-xs font-bold text-slate-900 line-clamp-1">{notice.title}</span>
+                      </div>
+                      <span className="text-[10px] font-bold uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 shrink-0">
+                        {notice.category}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                      {notice.content}
+                    </p>
+                    <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400">
+                      <span>By {notice.authorName} ({notice.authorRole.toUpperCase()})</span>
+                      <span>{formatISTDate(notice.date || notice.createdAt)}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. Modal: Add New Employee Member */}
       {isAddStaffOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
           <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden my-6 border border-slate-100">

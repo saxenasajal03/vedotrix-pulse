@@ -18,7 +18,9 @@ import {
   LeaveType,
   LeaveStatus,
   LeaveBalance,
-  OrganizationAdminCredentials
+  OrganizationAdminCredentials,
+  MeetingEvent,
+  NoticeItem
 } from '../types';
 import {
   INITIAL_ORGS,
@@ -160,6 +162,16 @@ interface AppContextType {
   submitAccessRequest: (targetModule: string, justification: string, requestType?: AccessRequest['requestType']) => Promise<AccessRequest>;
   resolveAccessRequest: (requestId: string, status: 'approved' | 'rejected', notes?: string) => Promise<void>;
   updateEmployeeManager: (employeeId: string, managerId: string | null) => Promise<void>;
+
+  // Meetings & Events
+  meetings: MeetingEvent[];
+  createMeeting: (data: Omit<MeetingEvent, 'id' | 'orgId' | 'createdAt' | 'status'>) => Promise<MeetingEvent>;
+  updateMeetingStatus: (meetingId: string, status: MeetingEvent['status']) => void;
+
+  // Corporate Notice Board
+  notices: NoticeItem[];
+  createNotice: (data: Omit<NoticeItem, 'id' | 'orgId' | 'createdAt'>) => Promise<NoticeItem>;
+  deleteNotice: (noticeId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -182,16 +194,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Theme state
   const [theme, setThemeState] = useState<ThemeMode>(() => {
-    return (localStorage.getItem('vdx_theme') as ThemeMode) || 'cyber-dark';
+    try {
+      return (localStorage.getItem('vdx_theme') as ThemeMode) || 'corporate-light';
+    } catch {
+      return 'corporate-light';
+    }
   });
 
   const setTheme = (newTheme: ThemeMode) => {
     setThemeState(newTheme);
-    localStorage.setItem('vdx_theme', newTheme);
+    try {
+      localStorage.setItem('vdx_theme', newTheme);
+    } catch {}
   };
 
   useEffect(() => {
     const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
     root.classList.remove('theme-cyber-dark', 'theme-midnight', 'theme-corporate-light', 'dark', 'light');
     if (theme === 'cyber-dark') {
       root.classList.add('dark', 'theme-cyber-dark');
@@ -226,6 +245,106 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>([]);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
+
+  // Meetings & Events State
+  const [meetings, setMeetings] = useState<MeetingEvent[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_meetings');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [
+      {
+        id: 'meet-1',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        title: 'Daily Technical Sprints & Standup',
+        description: 'Review active feature branches, sprint blockers, and production deployments.',
+        date: getTodayISTDateString(),
+        startTime: '10:30',
+        endTime: '11:15',
+        isOnline: true,
+        meetingUrl: 'https://meet.google.com/vdx-pulse-tech',
+        location: 'Google Meet',
+        organizerId: '00000000-0000-0000-0000-000000000003',
+        organizerName: 'Sajal Saxena',
+        organizerRole: 'superadmin',
+        attendeeIds: ['all'],
+        department: 'Engineering',
+        status: 'scheduled',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'meet-2',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        title: 'Monthly Performance & OKR Review',
+        description: 'Review key department metrics and quarterly goals with direct managers.',
+        date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+        startTime: '15:00',
+        endTime: '16:00',
+        isOnline: true,
+        meetingUrl: 'https://meet.google.com/vdx-okr-sync',
+        location: 'Google Meet',
+        organizerId: '00000000-0000-0000-0000-000000000003',
+        organizerName: 'HR Administration',
+        organizerRole: 'hr',
+        attendeeIds: ['all'],
+        department: 'Operations',
+        status: 'scheduled',
+        createdAt: new Date().toISOString()
+      }
+    ];
+  });
+
+  // Corporate Notice Board State
+  const [notices, setNotices] = useState<NoticeItem[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_notices');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [
+      {
+        id: 'notice-1',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        title: 'Official Holiday Schedule: Festive Season 2026',
+        content: 'Please find the official company holiday schedule for Q4 2026. All managers are advised to ensure sprint deadlines are aligned and on-call rotations are established.',
+        category: 'holiday',
+        priority: 'high',
+        authorId: '00000000-0000-0000-0000-000000000003',
+        authorName: 'Corporate HR',
+        authorRole: 'hr',
+        date: new Date().toISOString(),
+        isPinned: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'notice-2',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        title: 'Workplace Attendance & Regularization Guidelines',
+        content: 'All team members must punch in via the Vedotrix Pulse portal within the designated 150m office radius. In case of field client visits or WFH, please submit an attendance regularization request with notes.',
+        category: 'policy',
+        priority: 'medium',
+        authorId: '00000000-0000-0000-0000-000000000003',
+        authorName: 'Operations Lead',
+        authorRole: 'superadmin',
+        date: new Date().toISOString(),
+        isPinned: false,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'notice-3',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        title: 'Platform Upgrade: Security & Multi-Tenant Isolation Active',
+        content: 'Our HR and technical team have rolled out enhanced multi-tenant security, IST time synchronization, digital offer acceptance verification, and direct reporting manager hierarchies.',
+        category: 'announcement',
+        priority: 'high',
+        authorId: '00000000-0000-0000-0000-000000000003',
+        authorName: 'Root Administrator',
+        authorRole: 'superadmin',
+        date: new Date().toISOString(),
+        isPinned: true,
+        createdAt: new Date().toISOString()
+      }
+    ];
+  });
 
   // Only sync session pointers to local storage
   useEffect(() => {
@@ -2194,6 +2313,114 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return csvContent;
   };
 
+  // Meetings & Events Handlers
+  const createMeeting = async (data: Omit<MeetingEvent, 'id' | 'orgId' | 'createdAt' | 'status'>): Promise<MeetingEvent> => {
+    const newMeeting: MeetingEvent = {
+      ...data,
+      id: generateUUID(),
+      orgId: currentOrg.id,
+      status: 'scheduled',
+      createdAt: new Date().toISOString()
+    };
+    setMeetings((prev) => {
+      const updated = [newMeeting, ...prev];
+      try {
+        localStorage.setItem('vdx_meetings', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    if (data.attendeeIds.includes('all')) {
+      addNotification(
+        `New Meeting: ${data.title}`,
+        `Organized by ${data.organizerName} for ${data.date} at ${data.startTime} IST.`,
+        'task',
+        'meetings',
+        { orgId: currentOrg.id }
+      );
+    } else {
+      data.attendeeIds.forEach((empId) => {
+        addNotification(
+          `Meeting Invitation: ${data.title}`,
+          `Organized by ${data.organizerName} for ${data.date} at ${data.startTime} IST.`,
+          'task',
+          'meetings',
+          { recipientId: empId, orgId: currentOrg.id }
+        );
+      });
+    }
+
+    addToast('Meeting Scheduled', `Meeting "${data.title}" scheduled successfully.`, 'success');
+    return newMeeting;
+  };
+
+  const updateMeetingStatus = (meetingId: string, status: MeetingEvent['status']) => {
+    setMeetings((prev) => {
+      const updated = prev.map((m) => (m.id === meetingId ? { ...m, status } : m));
+      try {
+        localStorage.setItem('vdx_meetings', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    addToast('Meeting Status Updated', `Status changed to ${status}.`, 'info');
+  };
+
+  // Corporate Notice Handlers
+  const createNotice = async (data: Omit<NoticeItem, 'id' | 'orgId' | 'createdAt'>): Promise<NoticeItem> => {
+    const newNotice: NoticeItem = {
+      ...data,
+      id: generateUUID(),
+      orgId: currentOrg.id,
+      createdAt: new Date().toISOString()
+    };
+    setNotices((prev) => {
+      const updated = [newNotice, ...prev];
+      try {
+        localStorage.setItem('vdx_notices', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    addNotification(
+      `Notice: ${data.title}`,
+      `Published by ${data.authorName} (${data.category.toUpperCase()}).`,
+      'announcement',
+      'notices',
+      { orgId: currentOrg.id }
+    );
+
+    addToast('Notice Published', `"${data.title}" posted to the Notice Board.`, 'success');
+    return newNotice;
+  };
+
+  const deleteNotice = (noticeId: string) => {
+    setNotices((prev) => {
+      const updated = prev.filter((n) => n.id !== noticeId);
+      try {
+        localStorage.setItem('vdx_notices', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    addToast('Notice Removed', 'The notice has been removed.', 'info');
+  };
+
+  const isSuperOrHr = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
+  const directReportIds = new Set(profiles.filter((p) => p.orgId === currentOrg.id && p.managerId === currentProfile?.id).map((p) => p.id));
+
+  // Scoped Meetings: elevated roles see all in org; employees/managers see meetings assigned to them, organized by them, organized by their manager, or attended by their direct reports
+  const scopedMeetings = meetings.filter((m) => {
+    if (m.orgId !== currentOrg.id && !isVedotrixSuperadmin) return false;
+    if (isSuperOrHr) return true;
+    if (m.organizerId === currentProfile?.id) return true;
+    if (m.attendeeIds.includes('all')) return true;
+    if (currentProfile?.id && m.attendeeIds.includes(currentProfile.id)) return true;
+    if (currentProfile?.managerId && m.organizerId === currentProfile.managerId) return true;
+    if (m.attendeeIds.some((id) => directReportIds.has(id))) return true;
+    return false;
+  });
+
+  const scopedNotices = notices.filter((n) => isVedotrixSuperadmin || n.orgId === currentOrg.id);
+
   return (
     <AppContext.Provider
       value={{
@@ -2277,7 +2504,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         accessRequests: accessRequests.filter((r) => r.orgId === currentOrg.id),
         submitAccessRequest,
         resolveAccessRequest,
-        updateEmployeeManager
+        updateEmployeeManager,
+        meetings: scopedMeetings,
+        createMeeting,
+        updateMeetingStatus,
+        notices: scopedNotices,
+        createNotice,
+        deleteNotice
       }}
     >
       {children}

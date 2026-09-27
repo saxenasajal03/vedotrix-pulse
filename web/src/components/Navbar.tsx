@@ -10,7 +10,11 @@ import {
   X,
   Crown,
   User,
-  Settings
+  Settings,
+  Sun,
+  Moon,
+  Sparkles,
+  Palette
 } from 'lucide-react';
 import { NotificationDropdown } from './NotificationDropdown';
 
@@ -35,10 +39,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     switchOrganization,
     currentProfile,
     isVedotrixSuperadmin,
+    theme,
+    setTheme,
     logout
   } = useApp();
 
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -47,6 +54,15 @@ export const Navbar: React.FC<NavbarProps> = ({
       setActiveTab('employees');
     }
   };
+
+  const themeOptions = [
+    { id: 'corporate-light', label: 'Corporate Light', icon: Sun, desc: 'Clean White & Slate' },
+    { id: 'cyber-dark', label: 'Cyber Dark', icon: Moon, desc: 'Modern Slate Dark' },
+    { id: 'midnight', label: 'Midnight Galaxy', icon: Sparkles, desc: 'Deep Space Navy' }
+  ];
+
+  const currentThemeMeta = themeOptions.find((t) => t.id === theme) || themeOptions[0];
+  const CurrentThemeIcon = currentThemeMeta.icon;
 
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-slate-200/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] h-16">
@@ -111,6 +127,59 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </option>
                 ))}
               </select>
+            )}
+          </div>
+
+          {/* Multi-Theme Switcher Pill */}
+          <div className="relative">
+            <button
+              onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700 transition shadow-xs"
+              title="Change UI Theme"
+            >
+              <CurrentThemeIcon className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="hidden md:inline">{currentThemeMeta.label}</span>
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {isThemeMenuOpen && (
+              <div
+                className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150"
+                onClick={() => setIsThemeMenuOpen(false)}
+              >
+                <div className="px-3 py-1.5 border-b border-slate-100">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                    <Palette className="w-3 h-3 text-blue-600" />
+                    Interface Theme
+                  </p>
+                </div>
+                <div className="py-1">
+                  {themeOptions.map((opt) => {
+                    const OptIcon = opt.icon;
+                    const isActive = theme === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => setTheme(opt.id as any)}
+                        className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition ${
+                          isActive
+                            ? 'bg-blue-50 text-blue-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <OptIcon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
+                          <div>
+                            <span className="block leading-tight">{opt.label}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{opt.desc}</span>
+                          </div>
+                        </div>
+                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
 

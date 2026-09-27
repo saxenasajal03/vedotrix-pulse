@@ -15,7 +15,9 @@ import {
   X,
   ChevronRight,
   ShieldCheck,
-  Crown
+  Crown,
+  Video,
+  Megaphone
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -43,6 +45,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     accessRequests,
     orgProfiles,
     leaveRequests,
+    meetings,
+    notices,
     addToast
   } = useApp();
 
@@ -71,7 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     currentProfile?.role === 'superadmin' ||
     isVedotrixSuperadmin;
 
-  // Exact navigation item list matching the reference image
+  // Exact navigation item list matching the reference image & requirements
   const navItems = [
     {
       id: 'dashboard',
@@ -104,6 +108,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: isHrOrSuperadmin ? null : 'Slips'
     },
     {
+      id: 'meetings',
+      label: 'Meetings & Events',
+      icon: Video,
+      badge: meetings.length > 0 ? `${meetings.length}` : null
+    },
+    {
+      id: 'notices',
+      label: 'Notice Board',
+      icon: Megaphone,
+      badge: notices.some((n) => n.isPinned) ? '📌' : null
+    },
+    {
       id: 'tasks',
       label: 'Performance',
       icon: TrendingUp,
@@ -111,7 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'offers',
-      label: 'Recruitment',
+      label: isHrOrSuperadmin ? 'Recruitment' : 'Profile Details',
       icon: Briefcase,
       badge: pendingOffers > 0 && isHrOrSuperadmin ? `${pendingOffers}` : null
     },

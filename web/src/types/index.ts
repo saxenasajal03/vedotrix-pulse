@@ -230,7 +230,7 @@ export interface InAppNotification {
   recipientRole?: UserRole | 'all'; // target role (optional, e.g. 'hr', 'superadmin', 'manager', 'employee', 'all')
   title: string;
   message: string;
-  category: 'offer' | 'attendance' | 'task' | 'payroll' | 'system' | 'broadcast' | 'leave';
+  category: 'offer' | 'attendance' | 'task' | 'payroll' | 'system' | 'broadcast' | 'leave' | 'announcement';
   isRead: boolean;
   timestamp: string;
   linkTab?: string;
@@ -274,4 +274,45 @@ export interface LeaveBalance {
   sick: { total: number; used: number; remaining: number };
   privilege: { total: number; used: number; remaining: number };
   unpaid: { used: number };
+}
+
+export type MeetingStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface MeetingEvent {
+  id: string;
+  orgId: string;
+  title: string;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  isOnline: boolean;
+  meetingUrl?: string; // e.g. Google Meet, Zoom, Teams
+  location?: string; // e.g. Conference Room A
+  organizerId: string;
+  organizerName: string;
+  organizerRole: string; // 'manager' | 'superadmin' | 'hr' | 'owner'
+  attendeeIds: string[]; // List of employee IDs or ['all']
+  department?: string; // 'All' or specific
+  status: MeetingStatus;
+  createdAt: string;
+}
+
+export type NoticeCategory = 'announcement' | 'policy' | 'holiday' | 'urgent' | 'event';
+export type NoticePriority = 'high' | 'medium' | 'low';
+
+export interface NoticeItem {
+  id: string;
+  orgId: string;
+  title: string;
+  content: string;
+  category: NoticeCategory;
+  priority: NoticePriority;
+  authorId: string;
+  authorName: string;
+  authorRole: string;
+  date: string; // IST ISO string
+  attachmentUrl?: string;
+  isPinned?: boolean;
+  createdAt: string;
 }
