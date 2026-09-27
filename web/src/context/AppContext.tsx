@@ -208,7 +208,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Clean stale local storage caches to make sure live Supabase DB is the absolute single source of truth
   useEffect(() => {
     const keysToClean = [
-      'vdx_organizations', 'vdx_profiles', 'vdx_office_locations',
+      'vdx_profiles', 'vdx_office_locations',
       'vdx_offers', 'vdx_attendance', 'vdx_tasks', 'vdx_standups',
       'vdx_payroll', 'vdx_access_requests', 'vdx_leave_requests'
     ];
@@ -248,7 +248,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(getStoredSupabaseConfig());
 
   // Direct Supabase-synced state (clean zero-mock baseline)
-  const [organizations, setOrganizations] = useState<Organization[]>(INITIAL_ORGS);
+  const [organizations, setOrganizations] = useState<Organization[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_organizations');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return INITIAL_ORGS;
+  });
   const [currentOrgId, setCurrentOrgId] = useState<string>(() => {
     return localStorage.getItem('vdx_current_org_id') || '00000000-0000-0000-0000-000000000001';
   });
@@ -265,7 +271,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [standups, setStandups] = useState<DailyStandup[]>([]);
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
-  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [notifications, setNotifications] = useState<InAppNotification[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_notifications');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [];
+  });
   const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>([]);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
 
@@ -491,6 +503,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           }));
           setOrganizations(mappedOrgs);
+          try {
+            localStorage.setItem('vdx_organizations', JSON.stringify(mappedOrgs));
+          } catch {}
         }
 
         if (!errProf && cloudProfiles) {
@@ -1346,11 +1361,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: 'Just now',
       linkTab
     };
-    setNotifications((prev) => [newNotif, ...prev]);
+    setNotifications((prev) => {
+      const updated = [newNotif, ...prev.filter((n) => n.id !== newNotif.id)].slice(0, 50);
+      try {
+        localStorage.setItem('vdx_notifications', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
   };
 
   const markNotificationRead = (id: string) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+    setNotifications((prev) => {
+      const updated = prev.map((n) => (n.id === id ? { ...n, isRead: true } : n));
+      try {
+        localStorage.setItem('vdx_notifications', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
   };
 
   const fallbackOrg: Organization = {
@@ -1463,7 +1490,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const markAllNotificationsRead = () => {
     const userIds = new Set(userNotifications.map((n) => n.id));
-    setNotifications((prev) => prev.map((n) => (userIds.has(n.id) ? { ...n, isRead: true } : n)));
+    setNotifications((prev) => {
+      const updated = prev.map((n) => (userIds.has(n.id) ? { ...n, isRead: true } : n));
+      try {
+        localStorage.setItem('vdx_notifications', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
   };
 
   const switchOrganization = (orgId: string) => {
@@ -1894,7 +1927,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateOrganization = async (orgId: string, updates: Partial<Organization>): Promise<void> => {
-    setOrganizations((prev) => prev.map((o) => (o.id === orgId ? { ...o, ...updates } : o)));
+    setOrganizations((prev) => {
+      const updated = prev.map((o) => (o.id === orgId ? { ...o, ...updates } : o));
+      try {
+        localStorage.setItem('vdx_organizations', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
 
     try {
       const client = getSupabaseClient();

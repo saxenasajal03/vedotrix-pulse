@@ -55,20 +55,22 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onNa
     }
   };
 
-  const countDisplay = unreadNotificationCount > 0 ? unreadNotificationCount : 3;
+  const countDisplay = unreadNotificationCount;
 
   return (
     <div className="relative" ref={dropdownRef}>
-      {/* Bell Trigger Button matching reference screenshot */}
+      {/* Bell Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         aria-label="Toggle In-App Notifications"
         className="relative p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition"
       >
         <Bell className="w-5 h-5" />
-        <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-rose-500 text-white font-extrabold text-[9px] flex items-center justify-center shadow-xs">
-          {countDisplay}
-        </span>
+        {countDisplay > 0 && (
+          <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white font-extrabold text-[9px] flex items-center justify-center shadow-xs animate-in zoom-in-50 duration-150">
+            {countDisplay > 99 ? '99+' : countDisplay}
+          </span>
+        )}
       </button>
 
       {/* Dropdown Panel */}

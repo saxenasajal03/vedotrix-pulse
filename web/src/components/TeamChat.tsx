@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { ChatMessage, Profile, ChatChannel, ChatAttachment } from '../types';
 import {
@@ -44,7 +44,8 @@ import {
   LogOut,
   AtSign,
   Menu,
-  List
+  List,
+  UserCheck
 } from 'lucide-react';
 import { formatISTTime, formatISTDate } from '../lib/serialUtils';
 import {
@@ -52,6 +53,7 @@ import {
   getDeviceNotificationPermission,
   isDeviceNotificationSupported
 } from '../lib/deviceNotifications';
+import { UserProfileModal } from './UserProfileModal';
 
 // Maximum upload file size: 25MB (to protect Supabase free tier storage quotas)
 const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -127,6 +129,23 @@ export const TeamChat: React.FC<TeamChatProps> = ({
   const [editIsPrivate, setEditIsPrivate] = useState(false);
   const [candidateMemberId, setCandidateMemberId] = useState('');
 
+  // User Profile Inspection Modal State
+  const [viewingProfile, setViewingProfile] = useState<Profile | null>(null);
+  const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
+
+  const handleOpenProfile = (profileOrId: Profile | string) => {
+    if (typeof profileOrId === 'string') {
+      const found = orgProfiles.find((p) => p.id === profileOrId) || (profileOrId === currentProfile.id ? currentProfile : null);
+      if (found) {
+        setViewingProfile(found);
+        setIsUserProfileModalOpen(true);
+      }
+    } else {
+      setViewingProfile(profileOrId);
+      setIsUserProfileModalOpen(true);
+    }
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -182,14 +201,14 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
   const isChannelCreator = activeChannelObj && (activeChannelObj.createdBy === currentProfile.id || isSuperOrHr);
 
-  // Sync settings modal values when opened
+  // Sync settings modal values ONLY when the modal is opened (avoids wiping typing on background polling tick)
   useEffect(() => {
-    if (activeChannelObj) {
+    if (isSettingsModalOpen && activeChannelObj) {
       setEditChannelName(activeChannelObj.name);
       setEditChannelDesc(activeChannelObj.description || '');
       setEditIsPrivate(Boolean(activeChannelObj.isPrivate));
     }
-  }, [activeChannelObj, isSettingsModalOpen]);
+  }, [isSettingsModalOpen]);
 
   // Filter messages for active channel
   const activeChannelMessages = chatMessages.filter((m) => {
@@ -485,18 +504,74 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
   const QUICK_EMOJIS = ['👍', '❤️', '🚀', '🎉', '🔥', '👀', '💯', '👏', '🙌', '💡'];
 
-  const filteredColleagues = orgProfiles
-    .filter((p) => p.id !== currentProfile.id)
-    .filter((p) => {
-      if (!searchContact.trim()) return true;
-      const q = searchContact.toLowerCase();
-      return (
-        `${p.firstName} ${p.lastName}`.toLowerCase().includes(q) ||
-        p.email.toLowerCase().includes(q) ||
-        (p.designation || '').toLowerCase().includes(q) ||
-        p.role.toLowerCase().includes(q)
-      );
+  // Set of colleague IDs with whom current user has an active direct message thread
+  const messagedColleagueIds = useMemo(() => {
+    const ids = new Set<string>();
+    chatMessages.forEach((m) => {
+      if (m.recipientId) {
+        if (m.senderId === currentProfile.id && m.recipientId) {
+          ids.add(m.recipientId);
+        } else if (m.recipientId === currentProfile.id && m.senderId) {
+          ids.add(m.senderId);
+        }
+      }
     });
+    return ids;
+  }, [chatMessages, currentProfile.id]);
+
+  // Timestamp of the latest message exchanged with each colleague
+  const colleagueLatestMsgTime = useMemo(() => {
+    const map = new Map<string, number>();
+    chatMessages.forEach((m) => {
+      if (m.recipientId) {
+        let otherId: string | null = null;
+        if (m.senderId === currentProfile.id) otherId = m.recipientId;
+        else if (m.recipientId === currentProfile.id) otherId = m.senderId;
+        if (otherId) {
+          const t = new Date(m.createdAt).getTime();
+          const curr = map.get(otherId) || 0;
+          if (t > curr) map.set(otherId, t);
+        }
+      }
+    });
+    return map;
+  }, [chatMessages, currentProfile.id]);
+
+  // Slack-style Direct Messages:
+  // 1. If searching, show any colleague whose name/email/role matches the query
+  // 2. If not searching, ONLY show colleagues with active message history or currently active DM
+  const displayedColleagues = useMemo(() => {
+    const isSearching = searchContact.trim().length > 0;
+    const q = searchContact.toLowerCase().trim();
+
+    return orgProfiles
+      .filter((p) => p.id !== currentProfile.id)
+      .filter((p) => {
+        if (isSearching) {
+          return (
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes(q) ||
+            p.email.toLowerCase().includes(q) ||
+            (p.designation || '').toLowerCase().includes(q) ||
+            p.role.toLowerCase().includes(q)
+          );
+        }
+        return messagedColleagueIds.has(p.id) || p.id === dmTargetProfileId;
+      })
+      .sort((a, b) => {
+        const timeA = colleagueLatestMsgTime.get(a.id) || 0;
+        const timeB = colleagueLatestMsgTime.get(b.id) || 0;
+        return timeB - timeA;
+      });
+  }, [
+    orgProfiles,
+    currentProfile.id,
+    searchContact,
+    messagedColleagueIds,
+    dmTargetProfileId,
+    colleagueLatestMsgTime
+  ]);
+
+  const filteredColleagues = displayedColleagues;
 
   // Sole standard channel is support; others are custom user-created channels
   const publicChannels = chatChannels.filter((c) => !c.isPrivate && c.type !== 'group');
@@ -612,10 +687,11 @@ export const TeamChat: React.FC<TeamChatProps> = ({
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-2.5 top-2.5" />
             <input
+              id="chat-contact-search"
               type="text"
               value={searchContact}
               onChange={(e) => setSearchContact(e.target.value)}
-              placeholder="Search colleagues or channels..."
+              placeholder="Search colleagues or channels to DM..."
               className="w-full pl-8 pr-3 py-1.5 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
             />
           </div>
@@ -742,84 +818,149 @@ export const TeamChat: React.FC<TeamChatProps> = ({
             </div>
           </div>
 
-          {/* Direct Messages with Colleagues */}
+          {/* Direct Messages with Colleagues (Slack Style) */}
           <div>
             <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center justify-between">
               <span>Direct Messages</span>
-              <span className="text-[9px] font-semibold text-[var(--text-muted)]">{filteredColleagues.length}</span>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[9px] font-semibold text-[var(--text-muted)]">{displayedColleagues.length}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const searchInput = document.getElementById('chat-contact-search') as HTMLInputElement | null;
+                    if (searchInput) {
+                      searchInput.focus();
+                      searchInput.scrollIntoView({ behavior: 'smooth' });
+                    }
+                  }}
+                  title="New Direct Message"
+                  className="text-blue-500 hover:text-blue-400 p-0.5 rounded hover:bg-[var(--bg-card)] transition flex items-center space-x-0.5 text-[10px] font-bold hover:underline"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>New</span>
+                </button>
+              </div>
             </div>
             <div className="space-y-0.5 mt-1">
-              {filteredColleagues.map((colleague) => {
-                const sortedIds = [currentProfile.id, colleague.id].sort();
-                const dmKey = `dm:${sortedIds[0]}:${sortedIds[1]}`;
-                const isActive = activeChatChannel === dmKey;
-                const unread = chatMessages.filter(
-                  (m) => m.senderId === colleague.id && m.recipientId === currentProfile.id
-                ).length;
+              {displayedColleagues.length === 0 ? (
+                <div className="px-3 py-3 text-center bg-[var(--bg-card)]/50 rounded-xl border border-dashed border-[var(--border-color)]">
+                  <p className="text-[11px] text-[var(--text-muted)] font-medium">
+                    {searchContact.trim()
+                      ? 'No matching colleagues found.'
+                      : 'No direct conversations yet.'}
+                  </p>
+                  {!searchContact.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const searchInput = document.getElementById('chat-contact-search') as HTMLInputElement | null;
+                        if (searchInput) {
+                          searchInput.focus();
+                          searchInput.scrollIntoView({ behavior: 'smooth' });
+                        }
+                      }}
+                      className="mt-1 text-[10px] text-blue-500 hover:underline font-bold"
+                    >
+                      + Search colleague to DM
+                    </button>
+                  )}
+                </div>
+              ) : (
+                displayedColleagues.map((colleague) => {
+                  const sortedIds = [currentProfile.id, colleague.id].sort();
+                  const dmKey = `dm:${sortedIds[0]}:${sortedIds[1]}`;
+                  const isActive = activeChatChannel === dmKey;
+                  const unread = chatMessages.filter(
+                    (m) => m.senderId === colleague.id && m.recipientId === currentProfile.id
+                  ).length;
 
-                return (
-                  <button
-                    key={colleague.id}
-                    onClick={() => handleSelectDm(colleague)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition text-left ${
-                      isActive
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2 truncate">
-                      <div className="relative shrink-0">
-                        <div
-                          className={`w-6 h-6 rounded-full text-[10px] font-bold flex items-center justify-center ${
-                            isActive
-                              ? 'bg-white/20 text-white'
-                              : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)]'
-                          }`}
-                        >
-                          {colleague.firstName[0]}
+                  return (
+                    <button
+                      key={colleague.id}
+                      onClick={() => handleSelectDm(colleague)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition text-left ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2 truncate">
+                        <div className="relative shrink-0">
+                          {colleague.avatarUrl && colleague.avatarUrl !== '/vedotrix-logo.png' ? (
+                            <img
+                              src={colleague.avatarUrl}
+                              alt={colleague.firstName}
+                              className="w-6 h-6 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div
+                              className={`w-6 h-6 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                                isActive
+                                  ? 'bg-white/20 text-white'
+                                  : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)]'
+                              }`}
+                            >
+                              {colleague.firstName[0]}
+                            </div>
+                          )}
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 absolute bottom-0 right-0 border-2 border-[var(--bg-card)]" />
                         </div>
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 absolute bottom-0 right-0 border-2 border-[var(--bg-card)]" />
+                        <div className="truncate">
+                          <span className="block truncate font-medium text-xs">
+                            {colleague.firstName} {colleague.lastName}
+                          </span>
+                          <span
+                            className={`block text-[9px] truncate ${
+                              isActive ? 'text-blue-100' : 'text-[var(--text-muted)]'
+                            }`}
+                          >
+                            {colleague.role} • {colleague.designation || 'Staff'}
+                          </span>
+                        </div>
                       </div>
-                      <div className="truncate">
-                        <span className="block truncate font-medium text-xs">
-                          {colleague.firstName} {colleague.lastName}
+                      {unread > 0 && !isActive && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[9px] font-bold shrink-0">
+                          {unread}
                         </span>
-                        <span
-                          className={`block text-[9px] truncate ${
-                            isActive ? 'text-blue-100' : 'text-[var(--text-muted)]'
-                          }`}
-                        >
-                          {colleague.role} • {colleague.designation || 'Staff'}
-                        </span>
-                      </div>
-                    </div>
-                    {unread > 0 && !isActive && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[9px] font-bold shrink-0">
-                        {unread}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
 
-        {/* Current User Footnote */}
-        <div className="p-3 border-t border-[var(--border-color)] bg-[var(--bg-card)] flex items-center justify-between shrink-0">
+        {/* Current User Footnote (Clickable to view/edit profile & photo) */}
+        <div
+          onClick={() => handleOpenProfile(currentProfile)}
+          className="p-3 border-t border-[var(--border-color)] bg-[var(--bg-card)] flex items-center justify-between shrink-0 cursor-pointer hover:bg-[var(--bg-card-subtle)] transition group/foot"
+          title="Click to view and edit your profile / photo"
+        >
           <div className="flex items-center space-x-2 truncate">
-            <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-500 font-bold text-xs flex items-center justify-center shrink-0 border border-blue-500/30">
-              {currentProfile.firstName[0]}
-            </div>
+            {currentProfile.avatarUrl && currentProfile.avatarUrl !== '/vedotrix-logo.png' ? (
+              <img
+                src={currentProfile.avatarUrl}
+                alt={currentProfile.firstName}
+                className="w-7 h-7 rounded-full object-cover shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-500 font-bold text-xs flex items-center justify-center shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition">
+                {currentProfile.firstName[0]}
+              </div>
+            )}
             <div className="truncate">
-              <span className="text-xs font-bold text-[var(--text-primary)] block truncate">
+              <span className="text-xs font-bold text-[var(--text-primary)] block truncate group-hover/foot:text-blue-500 transition">
                 {currentProfile.firstName} {currentProfile.lastName}
               </span>
               <span className="text-[10px] text-[var(--text-muted)] font-medium block uppercase tracking-wide truncate">
-                {currentProfile.role}
+                {currentProfile.role} • {currentProfile.designation || 'Staff'}
               </span>
             </div>
           </div>
+          <span className="text-[10px] font-semibold text-blue-500 opacity-0 group-hover/foot:opacity-100 transition shrink-0">
+            Edit
+          </span>
         </div>
       </div>
 
@@ -842,17 +983,29 @@ export const TeamChat: React.FC<TeamChatProps> = ({
             </button>
 
             {isDirectMessage && dmTargetProfile ? (
-              <div className="flex items-center space-x-2.5 truncate">
+              <div
+                onClick={() => handleOpenProfile(dmTargetProfile)}
+                className="flex items-center space-x-2.5 truncate cursor-pointer group/dmheader hover:opacity-90 transition"
+                title="Click to view colleague profile"
+              >
                 <div className="relative shrink-0">
-                  <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center border border-blue-500/30">
-                    {dmTargetProfile.firstName[0]}
-                    {dmTargetProfile.lastName?.[0] || ''}
-                  </div>
+                  {dmTargetProfile.avatarUrl && dmTargetProfile.avatarUrl !== '/vedotrix-logo.png' ? (
+                    <img
+                      src={dmTargetProfile.avatarUrl}
+                      alt={dmTargetProfile.firstName}
+                      className="w-8 h-8 rounded-full object-cover border border-blue-500/30 group-hover/dmheader:ring-2 group-hover/dmheader:ring-blue-400 transition"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center border border-blue-500/30 group-hover/dmheader:ring-2 group-hover/dmheader:ring-blue-400 transition">
+                      {dmTargetProfile.firstName[0]}
+                      {dmTargetProfile.lastName?.[0] || ''}
+                    </div>
+                  )}
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 absolute bottom-0 right-0 border-2 border-[var(--bg-card)]" />
                 </div>
                 <div className="truncate">
                   <div className="flex items-center space-x-1.5 truncate">
-                    <h3 className="text-sm font-bold text-[var(--text-primary)] truncate">
+                    <h3 className="text-sm font-bold text-[var(--text-primary)] group-hover/dmheader:text-blue-500 transition truncate">
                       {dmTargetProfile.firstName} {dmTargetProfile.lastName}
                     </h3>
                     <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-[var(--bg-card-subtle)] text-[var(--text-muted)] shrink-0 border border-[var(--border-color)]">
@@ -922,6 +1075,18 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                     {activeChannelObj.memberIds.length}
                   </span>
                 )}
+              </button>
+            )}
+
+            {/* Direct Message View Profile Button */}
+            {isDirectMessage && dmTargetProfile && (
+              <button
+                onClick={() => handleOpenProfile(dmTargetProfile)}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-[var(--border-color)] bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] text-[var(--text-primary)] text-xs font-semibold transition shadow-xs"
+                title="View Colleague Profile"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-blue-500" />
+                <span className="hidden sm:inline text-[11px]">Profile</span>
               </button>
             )}
 
@@ -1056,6 +1221,8 @@ export const TeamChat: React.FC<TeamChatProps> = ({
           ) : (
             displayedMessages.map((msg) => {
               const isMe = msg.senderId === currentProfile.id;
+              const senderProfile = orgProfiles.find((p) => p.id === msg.senderId) || (isMe ? currentProfile : null);
+              const avatar = senderProfile?.avatarUrl && senderProfile.avatarUrl !== '/vedotrix-logo.png' ? senderProfile.avatarUrl : msg.senderAvatar;
 
               return (
                 <div
@@ -1065,21 +1232,41 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   }`}
                 >
                   {/* Sender Avatar */}
-                  <div
-                    className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center shrink-0 border shadow-xs ${
-                      isMe
-                        ? 'bg-blue-600 text-white border-blue-700'
-                        : 'bg-gradient-to-tr from-slate-200 to-slate-100 text-slate-700 border-slate-300 dark:from-slate-700 dark:to-slate-800 dark:text-slate-200 dark:border-slate-600'
-                    }`}
-                  >
-                    {msg.senderName[0]}
-                  </div>
+                  {avatar && avatar !== '/vedotrix-logo.png' ? (
+                    <img
+                      src={avatar}
+                      alt={msg.senderName}
+                      onClick={() => handleOpenProfile(msg.senderId)}
+                      className="w-8 h-8 rounded-full object-cover shrink-0 border border-[var(--border-color)] cursor-pointer hover:ring-2 hover:ring-blue-400 transition"
+                      title={`View ${msg.senderName}'s Profile`}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenProfile(msg.senderId)}
+                      title={`View ${msg.senderName}'s Profile`}
+                      className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center shrink-0 border shadow-xs hover:ring-2 hover:ring-blue-400 transition ${
+                        isMe
+                          ? 'bg-blue-600 text-white border-blue-700'
+                          : 'bg-gradient-to-tr from-slate-200 to-slate-100 text-slate-700 border-slate-300 dark:from-slate-700 dark:to-slate-800 dark:text-slate-200 dark:border-slate-600'
+                      }`}
+                    >
+                      {msg.senderName[0]}
+                    </button>
+                  )}
 
                   {/* Bubble Content */}
                   <div className={`max-w-[85%] sm:max-w-lg ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
                     {/* Sender Meta */}
                     <div className="flex items-center space-x-1.5 mb-1 px-1 text-[11px]">
-                      <span className="font-bold text-[var(--text-primary)] text-[11px]">{msg.senderName}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenProfile(msg.senderId)}
+                        className="font-bold text-[var(--text-primary)] text-[11px] hover:underline hover:text-blue-500 transition cursor-pointer"
+                        title={`View ${msg.senderName}'s Profile`}
+                      >
+                        {msg.senderName}
+                      </button>
                       <span className="px-1.5 py-0.2 rounded text-[8px] font-bold uppercase bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border border-[var(--border-color)]">
                         {msg.senderRole}
                       </span>
@@ -1704,12 +1891,24 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                               key={member.id}
                               className="flex items-center justify-between p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] text-xs"
                             >
-                              <div className="flex items-center space-x-2.5 truncate">
-                                <span className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-500 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/30">
-                                  {member.firstName[0]}
-                                </span>
+                              <div
+                                onClick={() => handleOpenProfile(member)}
+                                className="flex items-center space-x-2.5 truncate cursor-pointer group/member hover:opacity-85 transition"
+                                title="Click to view colleague profile"
+                              >
+                                {member.avatarUrl && member.avatarUrl !== '/vedotrix-logo.png' ? (
+                                  <img
+                                    src={member.avatarUrl}
+                                    alt={member.firstName}
+                                    className="w-6 h-6 rounded-full object-cover shrink-0 border border-blue-500/30 group-hover/member:ring-2 group-hover/member:ring-blue-400 transition"
+                                  />
+                                ) : (
+                                  <span className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-500 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/30 group-hover/member:ring-2 group-hover/member:ring-blue-400 transition">
+                                    {member.firstName[0]}
+                                  </span>
+                                )}
                                 <div className="truncate">
-                                  <span className="font-bold text-[var(--text-primary)] block truncate">
+                                  <span className="font-bold text-[var(--text-primary)] block truncate group-hover/member:text-blue-500 transition">
                                     {member.firstName} {member.lastName}
                                   </span>
                                   <span className="text-[10px] text-[var(--text-muted)] block truncate">
@@ -1852,6 +2051,22 @@ export const TeamChat: React.FC<TeamChatProps> = ({
           </div>
         </div>
       )}
+
+      {/* Profile Details & Photo Upload Modal */}
+      <UserProfileModal
+        isOpen={isUserProfileModalOpen}
+        profile={viewingProfile}
+        onClose={() => {
+          setIsUserProfileModalOpen(false);
+          setViewingProfile(null);
+        }}
+        onStartDirectMessage={(userId) => {
+          const colleague = orgProfiles.find((p) => p.id === userId);
+          if (colleague) {
+            handleSelectDm(colleague);
+          }
+        }}
+      />
     </div>
   );
 };

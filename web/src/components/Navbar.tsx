@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { NotificationDropdown } from './NotificationDropdown';
 import { EditOrganizationModal } from './EditOrganizationModal';
+import { UserProfileModal } from './UserProfileModal';
 
 interface NavbarProps {
   onOpenVerifyModal: () => void;
@@ -57,6 +58,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   const [isEditOrgOpen, setIsEditOrgOpen] = useState(false);
+  const [isUserProfileOpen, setIsUserProfileOpen] = useState(false);
   const canManageOrg = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
 
   const themeOptions = [
@@ -260,12 +262,30 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                 <div className="py-1">
                   <button
+                    onClick={() => setIsUserProfileOpen(true)}
+                    className="w-full px-4 py-2 text-left text-xs text-blue-600 hover:bg-blue-50/50 flex items-center space-x-2 font-semibold"
+                  >
+                    <User className="w-3.5 h-3.5 text-blue-600" />
+                    <span>View / Edit Photo & Profile</span>
+                  </button>
+
+                  <button
                     onClick={() => setActiveTab('employees')}
                     className="w-full px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2"
                   >
                     <User className="w-3.5 h-3.5 text-slate-400" />
                     <span>My Profile & Team</span>
                   </button>
+
+                  {canManageOrg && (
+                    <button
+                      onClick={() => setIsEditOrgOpen(true)}
+                      className="w-full px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2"
+                    >
+                      <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Edit Organization & Address</span>
+                    </button>
+                  )}
 
                   {isVedotrixSuperadmin && (
                     <button
@@ -305,6 +325,13 @@ export const Navbar: React.FC<NavbarProps> = ({
       <EditOrganizationModal
         isOpen={isEditOrgOpen}
         onClose={() => setIsEditOrgOpen(false)}
+      />
+
+      {/* User Profile & Photo Upload Modal */}
+      <UserProfileModal
+        isOpen={isUserProfileOpen}
+        profile={currentProfile}
+        onClose={() => setIsUserProfileOpen(false)}
       />
     </header>
   );

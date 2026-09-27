@@ -24,6 +24,7 @@ import { LeaveManager } from './components/LeaveManager';
 import { MeetingsManager } from './components/MeetingsManager';
 import { NoticeBoardView } from './components/NoticeBoardView';
 import { TeamChat } from './components/TeamChat';
+import { DailyAttendanceTracker } from './components/DailyAttendanceTracker';
 import { OfferLetter } from './types';
 import { MessageSquare } from 'lucide-react';
 
@@ -40,6 +41,13 @@ const MainLayout: React.FC = () => {
     (window.location.hash === '#chat-popout' || window.location.hash === '#widget');
 
   const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
+
+  // Auto-close floating chat widget if navigating to full chat tab
+  React.useEffect(() => {
+    if (activeTab === 'chat' && isFloatingChatWidgetOpen) {
+      setIsFloatingChatWidgetOpen(false);
+    }
+  }, [activeTab, isFloatingChatWidgetOpen]);
 
   // Security Guard: Prevent non-Vedotrix organizations from ever seeing Super Controller Hub
   React.useEffect(() => {
@@ -148,6 +156,7 @@ const MainLayout: React.FC = () => {
                 onOpenStandup={() => setIsStandupOpen(true)}
               />
               <RegularizationApprovalQueue />
+              <DailyAttendanceTracker />
             </div>
           )}
 
@@ -217,8 +226,8 @@ const MainLayout: React.FC = () => {
       />
 
       {/* Floating Slack-Style Chat Widget Window */}
-      {isFloatingChatWidgetOpen && (
-        <div className="fixed bottom-4 right-4 z-50 w-[95vw] sm:w-[480px] h-[620px] max-h-[85vh] shadow-2xl rounded-2xl overflow-hidden border border-slate-200 bg-white flex flex-col animate-in slide-in-from-bottom-5 duration-200">
+      {isFloatingChatWidgetOpen && activeTab !== 'chat' && (
+        <div className="fixed bottom-0 md:bottom-4 right-0 md:right-4 z-50 w-full sm:w-[480px] h-[85vh] sm:h-[620px] shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden border border-[var(--border-color)] bg-[var(--bg-card)] flex flex-col animate-in slide-in-from-bottom-5 duration-200">
           <TeamChat
             isWidgetMode={true}
             onCloseWidget={() => setIsFloatingChatWidgetOpen(false)}
@@ -230,25 +239,32 @@ const MainLayout: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Chat Quick Launcher */}
-      {!isFloatingChatWidgetOpen && activeTab !== 'chat' && (
-        <button
-          onClick={() => setIsFloatingChatWidgetOpen(true)}
-          className="fixed bottom-20 md:bottom-6 right-6 z-40 px-4 py-2.5 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-xl flex items-center space-x-2 transition hover:scale-105 active:scale-95 border border-white/20"
-          title="Open Team Chat Floating Widget"
-        >
-          <div className="relative">
-            <MessageSquare className="w-4 h-4" />
-            <span className="w-2 h-2 rounded-full bg-emerald-400 absolute -top-0.5 -right-0.5" />
-          </div>
-          <span>Team Chat</span>
-          {chatUnreadCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-extrabold animate-pulse">
-              {chatUnreadCount}
-            </span>
-          )}
-        </button>
-      )}
+      {/* Floating Chat Quick Launcher: only when not in chat, widget closed, mobile menu closed, and no modals open */}
+      {!isFloatingChatWidgetOpen &&
+        activeTab !== 'chat' &&
+        !mobileMenuOpen &&
+        !isVerifyModalOpen &&
+        !isCreateOfferOpen &&
+        !viewingOffer &&
+        !regularizeAttendanceId &&
+        !isStandupOpen && (
+          <button
+            onClick={() => setIsFloatingChatWidgetOpen(true)}
+            className="fixed bottom-20 md:bottom-6 right-6 z-40 px-4 py-2.5 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-xl flex items-center space-x-2 transition hover:scale-105 active:scale-95 border border-white/20"
+            title="Open Team Chat Floating Widget"
+          >
+            <div className="relative">
+              <MessageSquare className="w-4 h-4" />
+              <span className="w-2 h-2 rounded-full bg-emerald-400 absolute -top-0.5 -right-0.5" />
+            </div>
+            <span>Team Chat</span>
+            {chatUnreadCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-extrabold animate-pulse">
+                {chatUnreadCount}
+              </span>
+            )}
+          </button>
+        )}
 
       {/* Reactive Toasts */}
       <ToastContainer />
