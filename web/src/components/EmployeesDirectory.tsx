@@ -43,9 +43,9 @@ export const EmployeesDirectory: React.FC = () => {
 
   const isTech = currentOrg.industry === 'Tech';
   const canManage =
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'superadmin' ||
-    currentProfile.role === 'hr';
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin' ||
+    currentProfile?.role === 'hr';
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');

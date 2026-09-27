@@ -38,27 +38,27 @@ export const TaskBoard: React.FC = () => {
   const isTech = currentOrg.industry === 'Tech';
 
   const canAssignAll =
-    currentProfile.role === 'superadmin' ||
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'hr';
+    currentProfile?.role === 'superadmin' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'hr';
 
   // Employees can assign only to employees managed by them, or self
   const assignableProfiles = canAssignAll
     ? orgProfiles
-    : orgProfiles.filter((p) => p.managerId === currentProfile.id || p.id === currentProfile.id);
+    : orgProfiles.filter((p) => p.managerId === currentProfile?.id || p.id === currentProfile?.id);
 
-  const [assignedTo, setAssignedTo] = useState(assignableProfiles[0]?.id || currentProfile.id);
+  const [assignedTo, setAssignedTo] = useState(assignableProfiles[0]?.id || currentProfile?.id || '');
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [dueDate, setDueDate] = useState('2026-09-30T18:00:00Z');
 
   const [taskFilter, setTaskFilter] = useState<'all' | 'my' | 'team'>('all');
   const directReportIds = new Set(
-    orgProfiles.filter((p) => p.managerId === currentProfile.id).map((p) => p.id)
+    orgProfiles.filter((p) => p.managerId === currentProfile?.id).map((p) => p.id)
   );
 
   const visibleTasks = tasks.filter((t) => {
-    if (taskFilter === 'my') return t.assignedTo === currentProfile.id;
-    if (taskFilter === 'team') return directReportIds.has(t.assignedTo) || t.assignedTo === currentProfile.id;
+    if (taskFilter === 'my') return t.assignedTo === currentProfile?.id;
+    if (taskFilter === 'team') return directReportIds.has(t.assignedTo) || t.assignedTo === currentProfile?.id;
     return true;
   });
 
@@ -76,8 +76,8 @@ export const TaskBoard: React.FC = () => {
     createTask({
       title: title.trim(),
       description: description.trim(),
-      assignedTo: assignedTo || currentProfile.id,
-      createdBy: currentProfile.id,
+      assignedTo: assignedTo || currentProfile?.id || '',
+      createdBy: currentProfile?.id || '',
       category: isTech ? 'tech' : 'marketing',
       status: 'todo',
       priority,
@@ -148,7 +148,7 @@ export const TaskBoard: React.FC = () => {
                 : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
             }`}
           >
-            Assigned to Me ({tasks.filter((t) => t.assignedTo === currentProfile.id).length})
+            Assigned to Me ({tasks.filter((t) => t.assignedTo === currentProfile?.id).length})
           </button>
           <button
             onClick={() => setTaskFilter('team')}
@@ -160,7 +160,7 @@ export const TaskBoard: React.FC = () => {
           >
             <span>My Team's Tasks</span>
             <span className="text-[10px] bg-slate-800 px-1.5 py-0.2 rounded ml-1">
-              {tasks.filter((t) => directReportIds.has(t.assignedTo) || t.assignedTo === currentProfile.id).length}
+              {tasks.filter((t) => directReportIds.has(t.assignedTo) || t.assignedTo === currentProfile?.id).length}
             </span>
           </button>
         </div>
@@ -395,8 +395,8 @@ export const TaskBoard: React.FC = () => {
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
                     {assignableProfiles.map((p) => {
-                      const isMe = p.id === currentProfile.id;
-                      const isDirectReport = p.managerId === currentProfile.id;
+                      const isMe = p.id === currentProfile?.id;
+                      const isDirectReport = p.managerId === currentProfile?.id;
                       return (
                         <option key={p.id} value={p.id}>
                           {isMe ? '👤 [Self] ' : isDirectReport ? '★ [My Report] ' : ''}

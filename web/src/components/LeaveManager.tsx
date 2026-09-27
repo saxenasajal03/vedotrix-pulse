@@ -38,15 +38,15 @@ export const LeaveManager: React.FC = () => {
   } = useApp();
 
   const canApprove =
-    currentProfile.role === 'manager' ||
-    currentProfile.role === 'hr' ||
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'superadmin';
+    currentProfile?.role === 'manager' ||
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin';
 
   const canManagePolicy =
-    currentProfile.role === 'superadmin' ||
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'hr';
+    currentProfile?.role === 'superadmin' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'hr';
 
   // Tabs matching reference screenshot
   const [activeTab, setActiveTab] = useState<'my_leaves' | 'team_leaves' | 'calendar' | 'policy'>('my_leaves');

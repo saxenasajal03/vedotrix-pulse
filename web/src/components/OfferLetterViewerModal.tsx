@@ -33,6 +33,12 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
   // Resolve the specific issuing organization from offer.orgId
   const issuingOrg = allOrganizations?.find((o) => o.id === offer.orgId) || currentOrg;
 
+  let isLocallyAccepted = false;
+  try {
+    isLocallyAccepted = localStorage.getItem(`vdx_offer_accepted_${offer.serialNumber}`) === 'true';
+  } catch {}
+  const isAccepted = offer.status === 'accepted' || isLocallyAccepted;
+
   const handleAccept = () => {
     acceptOfferLetter(offer.serialNumber);
   };
@@ -58,12 +64,12 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
             )}
             <span
               className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                offer.status === 'accepted'
+                isAccepted
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                   : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
               }`}
             >
-              Status: {offer.status}
+              Status: {isAccepted ? 'accepted' : offer.status}
             </span>
           </div>
 
@@ -261,7 +267,7 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
             </div>
 
             <div className="text-right">
-              {offer.status === 'accepted' ? (
+              {isAccepted ? (
                 <div className="border border-emerald-600 bg-emerald-50 p-2.5 rounded-lg inline-block text-left">
                   <p className="text-xs font-bold text-emerald-800 flex items-center">
                     <CheckCircle className="w-3.5 h-3.5 mr-1" /> Digitally Accepted by Candidate

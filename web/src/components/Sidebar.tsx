@@ -51,24 +51,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pendingApprovalsCount = accessRequests.filter(
     (r) =>
       r.status === 'pending' &&
-      (r.assignedApproverId === currentProfile.id ||
-        (currentProfile.role === 'owner' && r.orgId === currentOrg.id) ||
-        (currentProfile.role === 'superadmin' && isVedotrixSuperadmin))
+      (r.assignedApproverId === currentProfile?.id ||
+        (currentProfile?.role === 'owner' && r.orgId === currentOrg?.id) ||
+        (currentProfile?.role === 'superadmin' && isVedotrixSuperadmin))
   ).length;
 
   const pendingLeavesCount = leaveRequests.filter(
     (l) =>
       l.status === 'pending' &&
-      (l.assignedApproverId === currentProfile.id ||
-        (currentProfile.role === 'owner' && l.orgId === currentOrg.id) ||
-        (currentProfile.role === 'superadmin' && isVedotrixSuperadmin) ||
-        (currentProfile.role === 'hr' && l.orgId === currentOrg.id))
+      (l.assignedApproverId === currentProfile?.id ||
+        (currentProfile?.role === 'owner' && l.orgId === currentOrg?.id) ||
+        (currentProfile?.role === 'superadmin' && isVedotrixSuperadmin) ||
+        (currentProfile?.role === 'hr' && l.orgId === currentOrg?.id))
   ).length;
 
   const isHrOrSuperadmin =
-    currentProfile.role === 'hr' ||
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'superadmin' ||
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin' ||
     isVedotrixSuperadmin;
 
   // Exact navigation item list matching the reference image
@@ -143,7 +143,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleContactSupport = () => {
     addToast(
       'Support Team Alerted 🎧',
-      'Our 24/7 technical team has received your inquiry. We will contact you at ' + currentProfile.email,
+      'Our 24/7 technical team has received your inquiry. We will contact you at ' + (currentProfile?.email || 'your registered work email.'),
       'info'
     );
   };

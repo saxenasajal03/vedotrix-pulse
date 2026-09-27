@@ -35,9 +35,9 @@ export const PayrollManager: React.FC = () => {
   } = useApp();
 
   const canManage =
-    currentProfile.role === 'hr' ||
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'superadmin' ||
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin' ||
     isVedotrixSuperadmin;
 
   // Tabs matching reference screenshot

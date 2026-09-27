@@ -11,7 +11,7 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
 
   const todayStr = new Date().toISOString().split('T')[0];
   const hasSubmittedToday = standups.some(
-    (s) => s.employeeId === currentProfile.id && s.date === todayStr
+    (s) => s.employeeId === currentProfile?.id && s.date === todayStr
   );
 
   return (

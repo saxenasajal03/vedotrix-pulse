@@ -225,7 +225,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            Good Morning, {currentProfile.firstName}! 👋
+            Good Morning, {currentProfile?.firstName || 'Team Member'}! 👋
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Here's what's happening with your team today.

@@ -37,20 +37,28 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
   const { offerLetters, currentOrg, allOrganizations, currentProfile, acceptOfferLetter, addToast } = useApp();
 
   const canManage =
-    currentProfile.role === 'hr' ||
-    currentProfile.role === 'owner' ||
-    currentProfile.role === 'superadmin';
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin';
 
   // Find the offer letter issued to the currently logged-in user
   const myOffer = offerLetters.find(
     (o) =>
-      (o.employeeId && o.employeeId === currentProfile.id) ||
-      o.candidateEmail.toLowerCase() === currentProfile.email.toLowerCase()
+      (o.employeeId && o.employeeId === currentProfile?.id) ||
+      (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile.email.toLowerCase())
   );
 
   const myOfferOrg = myOffer
     ? allOrganizations?.find((o) => o.id === myOffer.orgId) || currentOrg
     : currentOrg;
+
+  let isMyOfferLocallyAccepted = false;
+  try {
+    if (myOffer) {
+      isMyOfferLocallyAccepted = localStorage.getItem(`vdx_offer_accepted_${myOffer.serialNumber}`) === 'true';
+    }
+  } catch {}
+  const isMyOfferAccepted = Boolean(myOffer && (myOffer.status === 'accepted' || isMyOfferLocallyAccepted));
 
   const [activeTab, setActiveTab] = useState<'all' | 'my_offer'>(
     canManage ? 'all' : 'my_offer'
@@ -153,7 +161,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                   <span className="text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-3 py-1 rounded-lg">
                     {myOffer.serialNumber}
                   </span>
-                  {myOffer.status === 'accepted' ? (
+                  {isMyOfferAccepted ? (
                     <span className="inline-flex items-center space-x-1 text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-lg">
                       <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                       <span>Accepted</span>
@@ -268,7 +276,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                   </button>
                 </div>
 
-                {myOffer.status === 'accepted' ? (
+                {isMyOfferAccepted ? (
                   <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <span>✓ Offer Digitally Accepted</span>
@@ -291,7 +299,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
               </div>
               <h3 className="text-sm font-bold text-white">No Offer Letter Linked to Your Account</h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-                Your HR administrator has not linked an official offer letter to your employee profile ({currentProfile.email}) yet. Once created, your full compensation contract and digital verification will appear here.
+                Your HR administrator has not linked an official offer letter to your employee profile ({currentProfile?.email || 'your account'}) yet. Once created, your full compensation contract and digital verification will appear here.
               </p>
             </div>
           )}

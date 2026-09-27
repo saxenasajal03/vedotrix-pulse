@@ -334,32 +334,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         if (!errOffers && cloudOffers) {
-          const mappedOffers: OfferLetter[] = cloudOffers.map((o: any) => ({
-            id: o.id,
-            orgId: o.org_id,
-            serialNumber: o.serial_number,
-            candidateName: o.candidate_name,
-            candidateEmail: o.candidate_email,
-            candidatePhone: o.candidate_phone || '',
-            designation: o.designation,
-            department: o.department,
-            joiningDate: o.joining_date,
-            annualCtc: o.annual_ctc !== null && o.annual_ctc !== undefined ? Number(o.annual_ctc) : 0,
-            basicMonthly: o.basic_monthly !== null && o.basic_monthly !== undefined ? Number(o.basic_monthly) : 0,
-            hraMonthly: o.hra_monthly !== null && o.hra_monthly !== undefined ? Number(o.hra_monthly) : 0,
-            specialAllowance: o.special_allowance !== null && o.special_allowance !== undefined ? Number(o.special_allowance) : 0,
-            status: o.status,
-            verificationToken: o.verification_token,
-            pdfUrl: o.pdf_url,
-            securityCode: o.security_code,
-            hrDepartment: o.hr_department,
-            managerId: o.manager_id || undefined,
-            employeeId: o.employee_id || undefined,
-            issuedBy: o.issued_by || '00000000-0000-0000-0000-000000000003',
-            hrVerifiedAt: o.hr_verified_at,
-            candidateAcceptedAt: o.candidate_accepted_at,
-            createdAt: o.created_at
-          }));
+          const mappedOffers: OfferLetter[] = cloudOffers.map((o: any) => {
+            let isLocalAccepted = false;
+            try {
+              isLocalAccepted = localStorage.getItem(`vdx_offer_accepted_${o.serial_number}`) === 'true';
+            } catch {}
+            const effectiveStatus = (o.status === 'accepted' || isLocalAccepted) ? 'accepted' : o.status;
+            return {
+              id: o.id,
+              orgId: o.org_id,
+              serialNumber: o.serial_number,
+              candidateName: o.candidate_name,
+              candidateEmail: o.candidate_email,
+              candidatePhone: o.candidate_phone || '',
+              designation: o.designation,
+              department: o.department,
+              joiningDate: o.joining_date,
+              annualCtc: o.annual_ctc !== null && o.annual_ctc !== undefined ? Number(o.annual_ctc) : 0,
+              basicMonthly: o.basic_monthly !== null && o.basic_monthly !== undefined ? Number(o.basic_monthly) : 0,
+              hraMonthly: o.hra_monthly !== null && o.hra_monthly !== undefined ? Number(o.hra_monthly) : 0,
+              specialAllowance: o.special_allowance !== null && o.special_allowance !== undefined ? Number(o.special_allowance) : 0,
+              status: effectiveStatus,
+              verificationToken: o.verification_token,
+              pdfUrl: o.pdf_url,
+              securityCode: o.security_code,
+              hrDepartment: o.hr_department,
+              managerId: o.manager_id || undefined,
+              employeeId: o.employee_id || undefined,
+              issuedBy: o.issued_by || '00000000-0000-0000-0000-000000000003',
+              hrVerifiedAt: o.hr_verified_at,
+              candidateAcceptedAt: o.candidate_accepted_at || (effectiveStatus === 'accepted' ? (o.created_at || new Date().toISOString()) : undefined),
+              createdAt: o.created_at
+            };
+          });
           setOfferLetters(mappedOffers);
         }
 
@@ -685,31 +692,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
   };
 
-  const currentOrg = organizations.find((o) => o.id === currentOrgId) || organizations[0];
-  const orgProfiles = profiles.filter((p) => p.orgId === currentOrgId);
-  const currentProfile = orgProfiles.find((p) => p.id === currentProfileId) || profiles.find((p) => p.id === currentProfileId) || orgProfiles[0] || profiles[0];
+  const fallbackOrg: Organization = {
+    id: currentOrgId || '00000000-0000-0000-0000-000000000001',
+    name: 'Vedotrix Technologies Global',
+    slug: 'vedotrix',
+    orgCode: 'VDX',
+    industry: 'Tech',
+    website: 'https://vedotrix.com',
+    address: 'Vedotrix Corporate Tower, Bangalore, India',
+    phone: '+91 80 4400 9900',
+    logoUrl: '/vedotrix-logo.png',
+    status: 'active',
+    settings: {
+      workHoursPerDay: 8,
+      gracePeriodMins: 15,
+      wfhAllowed: true,
+      halfDayThresholdHours: 4.5,
+      leavePolicy: {
+        casualTotal: 12,
+        sickTotal: 10,
+        privilegeTotal: 15
+      }
+    }
+  };
+
+  const defaultFallbackProfile: Profile = {
+    id: currentProfileId || '00000000-0000-0000-0000-000000000003',
+    orgId: currentOrgId || '00000000-0000-0000-0000-000000000001',
+    email: 'user@vedotrix.com',
+    firstName: 'User',
+    lastName: '',
+    role: 'employee',
+    designation: 'Staff',
+    department: 'General',
+    joiningDate: '2026-01-01',
+    baseSalary: 0,
+    avatarUrl: '/vedotrix-logo.png',
+    isActive: true,
+    modulesAccess: ['attendance', 'tasks', 'standups', 'offers', 'leaves']
+  };
+
+  const currentOrg = organizations.find((o) => o.id === currentOrgId) || organizations[0] || fallbackOrg;
+  const orgProfiles = profiles.filter((p) => p.orgId === currentOrg?.id);
+  const currentProfile: Profile =
+    orgProfiles.find((p) => p.id === currentProfileId) ||
+    profiles.find((p) => p.id === currentProfileId) ||
+    orgProfiles[0] ||
+    profiles[0] ||
+    defaultFallbackProfile;
   
   // Office locations strictly for active tenant with fallback
-  const officeLocations = officeLocationsList.filter((o) => o.orgId === currentOrgId);
+  const officeLocations = officeLocationsList.filter((o) => o.orgId === currentOrg?.id);
   const effectiveOfficeLocations: OfficeLocation[] = officeLocations.length > 0 ? officeLocations : [
     {
       id: '00000000-0000-0000-0000-000000000002',
-      orgId: currentOrgId,
-      name: `${currentOrg.name} Head Office`,
+      orgId: currentOrg?.id || '00000000-0000-0000-0000-000000000001',
+      name: `${currentOrg?.name || 'Corporate'} Head Office`,
       latitude: 12.9352,
       longitude: 77.6946,
       radiusMeters: 200,
-      address: currentOrg.address || 'Corporate Headquarters',
+      address: currentOrg?.address || 'Corporate Headquarters',
       isActive: true
     }
   ];
 
   // Strictly identify Vedotrix Root Superadmin
-  const isVedotrixSuperadmin =
-    currentProfile.role === 'superadmin' &&
-    (currentProfile.orgId === '00000000-0000-0000-0000-000000000001' ||
-     currentProfile.email.toLowerCase() === 'admin@vedotrix.com' ||
-     currentProfile.email.toLowerCase() === 'sajalsaxenagola@gmail.com');
+  const isVedotrixSuperadmin = Boolean(
+    isAuthenticated &&
+    currentProfile?.role === 'superadmin' &&
+    (currentProfile?.orgId === '00000000-0000-0000-0000-000000000001' ||
+     currentProfile?.email?.toLowerCase() === 'admin@vedotrix.com' ||
+     currentProfile?.email?.toLowerCase() === 'sajalsaxenagola@gmail.com')
+  );
 
   // Filter notifications strictly to current user / role / tenant
   const userNotifications = notifications.filter((n) => {
@@ -720,13 +774,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. Direct user targeting
     if (n.recipientId) {
-      return n.recipientId === currentProfile.id;
+      return n.recipientId === currentProfile?.id;
     }
 
     // 3. Role targeting
     if (n.recipientRole && n.recipientRole !== 'all') {
-      if (currentProfile.role === n.recipientRole) return true;
-      if (n.recipientRole === 'hr' && (currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || isVedotrixSuperadmin)) {
+      if (currentProfile?.role === n.recipientRole) return true;
+      if (n.recipientRole === 'hr' && (currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || isVedotrixSuperadmin)) {
         return true;
       }
       return false;
@@ -734,11 +788,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 4. Category defaults
     if (n.category === 'payroll') {
-      return currentProfile.role === 'hr' || currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || isVedotrixSuperadmin;
+      return currentProfile?.role === 'hr' || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || isVedotrixSuperadmin;
     }
 
     if (n.category === 'offer') {
-      return currentProfile.role === 'hr' || currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || isVedotrixSuperadmin;
+      return currentProfile?.role === 'hr' || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || isVedotrixSuperadmin;
     }
 
     return true;
@@ -1360,6 +1414,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const acceptOfferLetter = (serialNumber: string): boolean => {
     let found = false;
+    try {
+      localStorage.setItem(`vdx_offer_accepted_${serialNumber}`, 'true');
+    } catch {}
+
     setOfferLetters((prev) =>
       prev.map((off) => {
         if (off.serialNumber === serialNumber) {
@@ -1380,7 +1438,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         client.from('offer_letters').update({
           status: 'accepted',
           candidate_accepted_at: new Date().toISOString()
-        }).eq('serial_number', serialNumber);
+        }).eq('serial_number', serialNumber).then(({ error }) => {
+          if (error) console.error('Supabase update offer status error:', error);
+        });
       } catch (e) {}
 
       addToast('Offer Accepted 🎉', `Offer ${serialNumber} was officially accepted by candidate!`, 'success');
@@ -2162,28 +2222,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         officeLocations: effectiveOfficeLocations,
         offerLetters: isVedotrixSuperadmin
           ? offerLetters
-          : (currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin')
-          ? offerLetters.filter((o) => o.orgId === currentOrg.id)
+          : (currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin')
+          ? offerLetters.filter((o) => o.orgId === currentOrg?.id)
           : offerLetters.filter(
               (o) =>
-                o.orgId === currentOrg.id &&
-                ((o.employeeId && o.employeeId === currentProfile.id) ||
-                  o.candidateEmail?.toLowerCase() === currentProfile.email?.toLowerCase())
+                o.orgId === currentOrg?.id &&
+                ((o.employeeId && o.employeeId === currentProfile?.id) ||
+                  o.candidateEmail?.toLowerCase() === currentProfile?.email?.toLowerCase())
             ),
-        allOfferLetters: (isVedotrixSuperadmin || currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin')
-          ? (isVedotrixSuperadmin ? offerLetters : offerLetters.filter((o) => o.orgId === currentOrg.id))
+        allOfferLetters: (isVedotrixSuperadmin || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin')
+          ? (isVedotrixSuperadmin ? offerLetters : offerLetters.filter((o) => o.orgId === currentOrg?.id))
           : offerLetters.filter(
               (o) =>
-                o.orgId === currentOrg.id &&
-                ((o.employeeId && o.employeeId === currentProfile.id) ||
-                  o.candidateEmail?.toLowerCase() === currentProfile.email?.toLowerCase())
+                o.orgId === currentOrg?.id &&
+                ((o.employeeId && o.employeeId === currentProfile?.id) ||
+                  o.candidateEmail?.toLowerCase() === currentProfile?.email?.toLowerCase())
             ),
-        attendanceRecords: attendanceRecords.filter((a) => a.orgId === currentOrg.id),
-        tasks: tasks.filter((t) => t.orgId === currentOrg.id),
-        standups: standups.filter((s) => s.orgId === currentOrg.id),
-        payrollRecords: (isVedotrixSuperadmin || currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin')
-          ? payrollRecords.filter((p) => p.orgId === currentOrg.id)
-          : payrollRecords.filter((p) => p.orgId === currentOrg.id && p.employeeId === currentProfile.id),
+        attendanceRecords: attendanceRecords.filter((a) => a.orgId === currentOrg?.id),
+        tasks: tasks.filter((t) => t.orgId === currentOrg?.id),
+        standups: standups.filter((s) => s.orgId === currentOrg?.id),
+        payrollRecords: (isVedotrixSuperadmin || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin')
+          ? payrollRecords.filter((p) => p.orgId === currentOrg?.id)
+          : payrollRecords.filter((p) => p.orgId === currentOrg?.id && p.employeeId === currentProfile?.id),
         createOfferLetter,
         acceptOfferLetter,
         verifyOfferLetterByHr,

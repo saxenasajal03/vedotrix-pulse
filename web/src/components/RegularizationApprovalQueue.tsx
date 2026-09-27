@@ -40,8 +40,8 @@ export const RegularizationApprovalQueue: React.FC = () => {
           // 2. HR role
           // 3. Org Owner
           // 4. Superadmin
-          const isAssignedManager = emp?.managerId === currentProfile.id;
-          const canApprove = isAssignedManager || currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin';
+          const isAssignedManager = emp?.managerId === currentProfile?.id;
+          const canApprove = isAssignedManager || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin';
 
           return (
             <div key={req.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
