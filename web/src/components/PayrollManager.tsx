@@ -168,7 +168,7 @@ export const PayrollManager: React.FC = () => {
         )}
       </div>
 
-      {/* 2. Tabs matching reference screenshot: Overview | Salary Slips | Deductions | Settings */}
+      {/* 2. Tabs matching reference screenshot */}
       <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
         <button
           onClick={() => setActiveTab('overview')}
@@ -190,36 +190,42 @@ export const PayrollManager: React.FC = () => {
         >
           Salary Slips
         </button>
-        <button
-          onClick={() => setActiveTab('deductions')}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
-            activeTab === 'deductions'
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
-          }`}
-        >
-          Deductions
-        </button>
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
-            activeTab === 'settings'
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
-          }`}
-        >
-          Settings
-        </button>
+        {canManage && (
+          <>
+            <button
+              onClick={() => setActiveTab('deductions')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
+                activeTab === 'deductions'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
+              }`}
+            >
+              Deductions
+            </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
+                activeTab === 'settings'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
+              }`}
+            >
+              Settings
+            </button>
+          </>
+        )}
       </div>
 
       {/* 3. Top Metrics Row matching reference screenshot */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Total Payroll Big Card */}
+        {/* Total Payroll / My Net Pay Big Card */}
         <div className="lg:col-span-6 bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-500 font-medium">
-                Total Payroll ({new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'short' })} {selectedYear})
+                {canManage
+                  ? `Total Payroll (${new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'short' })} ${selectedYear})`
+                  : `My Monthly Net Pay (${new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'short' })} ${selectedYear})`}
               </span>
               <div className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600">
                 <span>{new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'short' })} {selectedYear}</span>
@@ -227,10 +233,16 @@ export const PayrollManager: React.FC = () => {
               </div>
             </div>
             <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
-              {formatCurrency(totalPayrollAmount)}
+              {canManage
+                ? formatCurrency(totalPayrollAmount)
+                : formatCurrency(monthRecords.find((p) => p.employeeId === currentProfile.id)?.netSalary || 0)}
             </div>
             <span className="text-[11px] font-semibold text-emerald-600 mt-1 inline-block">
-              {paidCount} Disbursed • {pendingCount} Pending
+              {canManage
+                ? `${paidCount} Disbursed • ${pendingCount} Pending`
+                : (monthRecords.find((p) => p.employeeId === currentProfile.id)?.payoutStatus === 'paid'
+                    ? 'Disbursed to Bank Account 🚀'
+                    : 'Payout Processing / Awaiting Transfer')}
             </span>
           </div>
 
@@ -247,36 +259,54 @@ export const PayrollManager: React.FC = () => {
           )}
         </div>
 
-        {/* 3 Right Stat Cards matching screenshot: Total Employees | Paid | Pending */}
+        {/* 3 Right Stat Cards: Total Employees ONLY for HR & Superadmin */}
         <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Total Employees */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
-            <span className="text-xs text-slate-500 font-medium">Total Employees</span>
-            <div className="text-2xl font-extrabold text-slate-900 font-mono my-2">
-              {totalEmployeesCount}
+          {canManage ? (
+            /* Total Employees Card - Strictly restricted to HR & Superadmin / Owner */
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+              <span className="text-xs text-slate-500 font-medium">Total Employees</span>
+              <div className="text-2xl font-extrabold text-slate-900 font-mono my-2">
+                {totalEmployeesCount}
+              </div>
+              <span className="text-[11px] text-slate-400">Headcount</span>
             </div>
-            <span className="text-[11px] text-slate-400">Headcount</span>
-          </div>
+          ) : (
+            /* Personal Present Days Card for regular employees */
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+              <span className="text-xs text-slate-500 font-medium">Present Days</span>
+              <div className="text-2xl font-extrabold text-blue-600 font-mono my-2">
+                {monthRecords.find((p) => p.employeeId === currentProfile.id)?.presentDays || 0} / {monthRecords.find((p) => p.employeeId === currentProfile.id)?.workingDays || 30}
+              </div>
+              <span className="text-[11px] text-slate-400">Attendance Logged</span>
+            </div>
+          )}
 
-          {/* Paid */}
+          {/* Paid / Status */}
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
-            <span className="text-xs text-slate-500 font-medium">Paid</span>
+            <span className="text-xs text-slate-500 font-medium">{canManage ? 'Paid' : 'Payout Status'}</span>
             <div className="text-2xl font-extrabold text-emerald-600 font-mono my-2">
-              {paidCount}
+              {canManage
+                ? paidCount
+                : (monthRecords.find((p) => p.employeeId === currentProfile.id)?.payoutStatus === 'paid' ? 'PAID' : 'PENDING')}
             </div>
             <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 w-fit">
-              <CheckCircle2 className="w-3 h-3 mr-1" /> Complete
+              <CheckCircle2 className="w-3 h-3 mr-1" /> {canManage ? 'Completed' : 'Verified'}
             </span>
           </div>
 
-          {/* Pending */}
+          {/* Pending / Deductions */}
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col justify-between">
-            <span className="text-xs text-slate-500 font-medium">Pending</span>
+            <span className="text-xs text-slate-500 font-medium">{canManage ? 'Pending' : 'Deductions & LOP'}</span>
             <div className="text-2xl font-extrabold text-amber-600 font-mono my-2">
-              {pendingCount}
+              {canManage
+                ? pendingCount
+                : formatCurrency(
+                    (monthRecords.find((p) => p.employeeId === currentProfile.id)?.deductions || 0) +
+                    (monthRecords.find((p) => p.employeeId === currentProfile.id)?.lopDeduction || 0)
+                  )}
             </div>
             <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 w-fit">
-              <Clock className="w-3 h-3 mr-1" /> Pending
+              <Clock className="w-3 h-3 mr-1" /> {canManage ? 'Pending' : 'TDS & LOP'}
             </span>
           </div>
         </div>

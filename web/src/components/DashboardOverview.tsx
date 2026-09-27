@@ -230,7 +230,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     });
 
   [...tasks]
-    .filter((t) => canViewEmployeeActivity(t.assignedTo) || t.assignedBy === currentProfile?.id)
+    .filter((t) => canViewEmployeeActivity(t.assignedTo) || t.createdBy === currentProfile?.id)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 2)
     .forEach((t) => {

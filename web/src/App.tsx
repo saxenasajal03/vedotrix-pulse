@@ -23,10 +23,11 @@ import { EmployeesDirectory } from './components/EmployeesDirectory';
 import { LeaveManager } from './components/LeaveManager';
 import { MeetingsManager } from './components/MeetingsManager';
 import { NoticeBoardView } from './components/NoticeBoardView';
+import { TeamChat } from './components/TeamChat';
 import { OfferLetter } from './types';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, isVedotrixSuperadmin } = useApp();
+  const { isAuthenticated, isVedotrixSuperadmin, currentProfile, orgProfiles } = useApp();
   const [activeTab, setActiveTab] = useState<string>(() => {
     return isVedotrixSuperadmin ? 'superadmin' : 'dashboard';
   });
@@ -39,6 +40,21 @@ const MainLayout: React.FC = () => {
       setActiveTab('dashboard');
     }
   }, [isVedotrixSuperadmin, activeTab]);
+
+  // Security Guard: Restrict Employee Directory to top leadership and managers with direct reports
+  const isTopLeadership =
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin' ||
+    isVedotrixSuperadmin;
+  const managedEmployeesCount = orgProfiles.filter((p) => p.managerId === currentProfile?.id).length;
+  const canAccessEmployees = isTopLeadership || managedEmployeesCount > 0;
+
+  React.useEffect(() => {
+    if (activeTab === 'employees' && !canAccessEmployees) {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, canAccessEmployees]);
 
   // Modal States
   const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
@@ -66,7 +82,7 @@ const MainLayout: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f4f7fe] text-slate-800 flex font-['Plus_Jakarta_Sans',sans-serif]">
+    <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex font-['Plus_Jakarta_Sans',sans-serif] transition-colors duration-200">
       {/* 1. Responsive Sidebar: Fixed Dark Navy on Left */}
       <Sidebar
         activeTab={activeTab}
@@ -77,7 +93,7 @@ const MainLayout: React.FC = () => {
       />
 
       {/* 2. Main Work Area (Header + Tab Page Content) */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen bg-[#f4f7fe]">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen bg-[var(--bg-page)] transition-colors duration-200">
         {/* Top Navbar */}
         <Navbar
           onOpenVerifyModal={() => handleOpenVerify()}
@@ -121,6 +137,7 @@ const MainLayout: React.FC = () => {
 
           {activeTab === 'tasks' && <TaskBoard />}
           {activeTab === 'employees' && <EmployeesDirectory />}
+          {activeTab === 'chat' && <TeamChat />}
 
           {activeTab === 'standups' && (
             <StandupsView onOpenSubmitModal={() => setIsStandupOpen(true)} />

@@ -20,7 +20,8 @@ import {
   LeaveBalance,
   OrganizationAdminCredentials,
   MeetingEvent,
-  NoticeItem
+  NoticeItem,
+  ChatMessage
 } from '../types';
 import {
   INITIAL_ORGS,
@@ -172,6 +173,13 @@ interface AppContextType {
   notices: NoticeItem[];
   createNotice: (data: Omit<NoticeItem, 'id' | 'orgId' | 'createdAt'>) => Promise<NoticeItem>;
   deleteNotice: (noticeId: string) => void;
+
+  // Organizational Live Chat (Supabase DB)
+  chatMessages: ChatMessage[];
+  sendChatMessage: (message: string, channel: string, recipientId?: string) => Promise<ChatMessage>;
+  addChatReaction: (messageId: string, emoji: string) => Promise<void>;
+  activeChatChannel: string;
+  setActiveChatChannel: (channel: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -342,6 +350,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: new Date().toISOString(),
         isPinned: true,
         createdAt: new Date().toISOString()
+      }
+    ];
+  });
+
+  // Organizational Live Chat State (Supabase DB synced)
+  const [activeChatChannel, setActiveChatChannel] = useState<string>('general');
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_chat_messages');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [
+      {
+        id: 'msg-1',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        senderId: '00000000-0000-0000-0000-000000000003',
+        senderName: 'Sajal Saxena',
+        senderRole: 'superadmin',
+        senderAvatar: '/vedotrix-logo.png',
+        channel: 'general',
+        message: 'Welcome everyone to Vedotrix Pulse! Multi-tenant security, IST time synchronization, and our live corporate chat are now active. 🚀',
+        reactions: [{ emoji: '🚀', count: 3, userIds: ['00000000-0000-0000-0000-000000000003'] }],
+        createdAt: new Date(Date.now() - 3600000).toISOString()
+      },
+      {
+        id: 'msg-2',
+        orgId: '00000000-0000-0000-0000-000000000001',
+        senderId: '00000000-0000-0000-0000-000000000003',
+        senderName: 'HR Administration',
+        senderRole: 'hr',
+        senderAvatar: '/vedotrix-logo.png',
+        channel: 'general',
+        message: 'Please review the updated holiday calendar on the Corporate Notice Board. Attendance regularizations can be raised directly from the dashboard.',
+        reactions: [{ emoji: '👍', count: 2, userIds: [] }],
+        createdAt: new Date(Date.now() - 1800000).toISOString()
       }
     ];
   });
@@ -624,6 +667,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     syncFromLiveSupabase();
   }, []);
+
+  // Live Supabase Polling for Chat Messages
+  useEffect(() => {
+    let isMounted = true;
+    const syncChatFromSupabase = async () => {
+      try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+          .from('chat_messages')
+          .select('*')
+          .eq('org_id', currentOrgId)
+          .order('created_at', { ascending: true });
+
+        if (!error && data && data.length > 0 && isMounted) {
+          const mapped: ChatMessage[] = data.map((m: any) => ({
+            id: m.id,
+            orgId: m.org_id,
+            senderId: m.sender_id,
+            senderName: m.sender_name,
+            senderRole: m.sender_role,
+            senderAvatar: m.sender_avatar,
+            channel: m.channel,
+            recipientId: m.recipient_id || undefined,
+            message: m.message,
+            reactions: Array.isArray(m.reactions) ? m.reactions : [],
+            isPinned: m.is_pinned ?? false,
+            createdAt: m.created_at
+          }));
+
+          setChatMessages((prev) => {
+            const map = new Map(prev.map((msg) => [msg.id, msg]));
+            mapped.forEach((msg) => map.set(msg.id, msg));
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+          });
+        }
+      } catch (err) {}
+    };
+
+    syncChatFromSupabase();
+    const interval = setInterval(syncChatFromSupabase, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [currentOrgId]);
 
   // Secure Authentication Logic with Supabase pgcrypto Bcrypt RPC
   const login = async (email: string, pass: string): Promise<{ success: boolean; message: string }> => {
@@ -2404,6 +2494,108 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Notice Removed', 'The notice has been removed.', 'info');
   };
 
+  // Organizational Live Chat Handlers (Supabase DB synced)
+  const sendChatMessage = async (
+    messageText: string,
+    channelName: string,
+    recipientId?: string
+  ): Promise<ChatMessage> => {
+    const newMsg: ChatMessage = {
+      id: generateUUID(),
+      orgId: currentOrg.id,
+      senderId: currentProfile.id,
+      senderName: `${currentProfile.firstName} ${currentProfile.lastName}`.trim(),
+      senderRole: currentProfile.role,
+      senderAvatar: currentProfile.avatarUrl || '/vedotrix-logo.png',
+      channel: channelName,
+      recipientId: recipientId || undefined,
+      message: messageText.trim(),
+      reactions: [],
+      createdAt: new Date().toISOString()
+    };
+
+    setChatMessages((prev) => {
+      const updated = [...prev, newMsg];
+      try {
+        localStorage.setItem('vdx_chat_messages', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_messages').insert([{
+        id: newMsg.id,
+        org_id: newMsg.orgId,
+        sender_id: newMsg.senderId,
+        sender_name: newMsg.senderName,
+        sender_role: newMsg.senderRole,
+        sender_avatar: newMsg.senderAvatar,
+        channel: newMsg.channel,
+        recipient_id: newMsg.recipientId || null,
+        message: newMsg.message,
+        reactions: newMsg.reactions || [],
+        created_at: newMsg.createdAt
+      }]);
+    } catch (e) {
+      console.warn('Supabase chat insert warning (using local store):', e);
+    }
+
+    if (recipientId) {
+      addNotification(
+        `New Message from ${newMsg.senderName}`,
+        newMsg.message.length > 50 ? `${newMsg.message.slice(0, 50)}...` : newMsg.message,
+        'system',
+        'chat',
+        { recipientId }
+      );
+    }
+
+    return newMsg;
+  };
+
+  const addChatReaction = async (messageId: string, emoji: string) => {
+    let targetReactions: any[] = [];
+    setChatMessages((prev) => {
+      const updated = prev.map((msg) => {
+        if (msg.id !== messageId) return msg;
+        const currentReactions = msg.reactions || [];
+        const existing = currentReactions.find((r) => r.emoji === emoji);
+        let nextReactions;
+        if (existing) {
+          if (existing.userIds.includes(currentProfile.id)) {
+            nextReactions = currentReactions
+              .map((r) =>
+                r.emoji === emoji
+                  ? { ...r, count: r.count - 1, userIds: r.userIds.filter((u) => u !== currentProfile.id) }
+                  : r
+              )
+              .filter((r) => r.count > 0);
+          } else {
+            nextReactions = currentReactions.map((r) =>
+              r.emoji === emoji
+                ? { ...r, count: r.count + 1, userIds: [...r.userIds, currentProfile.id] }
+                : r
+            );
+          }
+        } else {
+          nextReactions = [...currentReactions, { emoji, count: 1, userIds: [currentProfile.id] }];
+        }
+        targetReactions = nextReactions;
+        return { ...msg, reactions: nextReactions };
+      });
+      try {
+        localStorage.setItem('vdx_chat_messages', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_messages').update({ reactions: targetReactions }).eq('id', messageId);
+    } catch (e) {}
+  };
+
   const isSuperOrHr = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
   const directReportIds = new Set(profiles.filter((p) => p.orgId === currentOrg.id && p.managerId === currentProfile?.id).map((p) => p.id));
 
@@ -2420,6 +2612,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const scopedNotices = notices.filter((n) => isVedotrixSuperadmin || n.orgId === currentOrg.id);
+
+  // Scoped Chat Messages
+  const scopedChatMessages = chatMessages.filter((m) => {
+    if (m.orgId !== currentOrg.id && !isVedotrixSuperadmin) return false;
+    if (m.recipientId) {
+      if (isSuperOrHr) return true;
+      return m.senderId === currentProfile.id || m.recipientId === currentProfile.id;
+    }
+    return true;
+  });
 
   return (
     <AppContext.Provider
@@ -2510,7 +2712,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateMeetingStatus,
         notices: scopedNotices,
         createNotice,
-        deleteNotice
+        deleteNotice,
+        chatMessages: scopedChatMessages,
+        sendChatMessage,
+        addChatReaction,
+        activeChatChannel,
+        setActiveChatChannel
       }}
     >
       {children}

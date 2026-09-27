@@ -38,14 +38,18 @@ export const EmployeesDirectory: React.FC = () => {
     updateProfile,
     updateEmployeeManager,
     createTask,
+    isVedotrixSuperadmin,
     addToast
   } = useApp();
 
   const isTech = currentOrg.industry === 'Tech';
-  const canManage =
+  const isTopLeadership =
     currentProfile?.role === 'owner' ||
     currentProfile?.role === 'superadmin' ||
-    currentProfile?.role === 'hr';
+    currentProfile?.role === 'hr' ||
+    isVedotrixSuperadmin;
+
+  const canManage = isTopLeadership;
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -140,10 +144,14 @@ export const EmployeesDirectory: React.FC = () => {
 
   // Direct reports of current user
   const directReports = orgProfiles.filter((p) => p.managerId === currentProfile.id);
+  const canAccessEmployees = isTopLeadership || directReports.length > 0;
+
+  // Baseline pool of employees: Top leadership manages all org profiles, managers only view their direct reports
+  const baseProfiles = isTopLeadership ? orgProfiles : directReports;
 
   // Filtered employees list
-  const filteredProfiles = orgProfiles.filter((p) => {
-    if (tabFilter === 'my_team' && p.managerId !== currentProfile.id && p.id !== currentProfile.id) {
+  const filteredProfiles = baseProfiles.filter((p) => {
+    if (isTopLeadership && tabFilter === 'my_team' && p.managerId !== currentProfile.id && p.id !== currentProfile.id) {
       return false;
     }
     if (deptFilter !== 'all' && p.department !== deptFilter) {
@@ -280,14 +288,32 @@ export const EmployeesDirectory: React.FC = () => {
     }
   };
 
+  if (!canAccessEmployees) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center shadow-xs max-w-lg mx-auto my-12">
+        <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+          <Shield className="w-6 h-6 text-slate-500" />
+        </div>
+        <h3 className="text-base font-bold text-slate-800">Restricted Section</h3>
+        <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+          Employee workforce management is strictly reserved for organization top leadership (Owner, HR, Superadmin) and reporting managers who have direct reports assigned to them.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       {/* 1. Header & Actions matching Employee Management screenshot */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Employee Management</h1>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+            {isTopLeadership ? 'Employee Management' : 'My Managed Team'}
+          </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage your workforce, hierarchical reporting, and PR deliverables for {currentOrg.name}.
+            {isTopLeadership
+              ? `Manage your workforce, hierarchical reporting, and PR deliverables for ${currentOrg.name}.`
+              : 'Manage performance, task assignments, and review deliverables for your direct reports.'}
           </p>
         </div>
 
@@ -359,17 +385,19 @@ export const EmployeesDirectory: React.FC = () => {
             <option value="inactive">Inactive</option>
           </select>
 
-          {/* My Team Tab */}
-          <button
-            onClick={() => setTabFilter(tabFilter === 'all' ? 'my_team' : 'all')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
-              tabFilter === 'my_team'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            My Reports ({directReports.length})
-          </button>
+          {/* My Team Tab - Only for top leadership */}
+          {isTopLeadership && (
+            <button
+              onClick={() => setTabFilter(tabFilter === 'all' ? 'my_team' : 'all')}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                tabFilter === 'my_team'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              My Reports ({directReports.length})
+            </button>
+          )}
         </div>
       </div>
 

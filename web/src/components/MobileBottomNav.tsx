@@ -4,7 +4,8 @@ import {
   Home,
   Users,
   CalendarDays,
-  Menu
+  Menu,
+  MessageSquare
 } from 'lucide-react';
 
 interface MobileBottomNavProps {
@@ -18,7 +19,16 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   setActiveTab,
   onOpenMobileMenu
 }) => {
-  const { orgProfiles, leaveRequests } = useApp();
+  const { orgProfiles, leaveRequests, currentProfile, isVedotrixSuperadmin } = useApp();
+
+  const isTopLeadership =
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin' ||
+    isVedotrixSuperadmin;
+
+  const managedEmployeesCount = orgProfiles.filter((p) => p.managerId === currentProfile?.id).length;
+  const canAccessEmployees = isTopLeadership || managedEmployeesCount > 0;
 
   const pendingLeaves = leaveRequests.filter((l) => l.status === 'pending').length;
 
@@ -29,12 +39,19 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       icon: Home,
       badge: null
     },
-    {
-      id: 'employees',
-      label: 'Employees',
-      icon: Users,
-      badge: `${orgProfiles.length}`
-    },
+    canAccessEmployees
+      ? {
+          id: 'employees',
+          label: isTopLeadership ? 'Employees' : 'Team',
+          icon: Users,
+          badge: isTopLeadership ? `${orgProfiles.length}` : `${managedEmployeesCount}`
+        }
+      : {
+          id: 'chat',
+          label: 'Chat',
+          icon: MessageSquare,
+          badge: null
+        },
     {
       id: 'leaves',
       label: 'Leave',

@@ -17,7 +17,8 @@ import {
   ShieldCheck,
   Crown,
   Video,
-  Megaphone
+  Megaphone,
+  MessageSquare
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -47,6 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     leaveRequests,
     meetings,
     notices,
+    chatMessages,
     addToast
   } = useApp();
 
@@ -75,6 +77,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     currentProfile?.role === 'superadmin' ||
     isVedotrixSuperadmin;
 
+  const isTopLeadership = isHrOrSuperadmin;
+  const managedEmployeesCount = orgProfiles.filter((p) => p.managerId === currentProfile?.id).length;
+  const canAccessEmployees = isTopLeadership || managedEmployeesCount > 0;
+
   // Exact navigation item list matching the reference image & requirements
   const navItems = [
     {
@@ -83,12 +89,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: LayoutDashboard,
       badge: null
     },
-    {
-      id: 'employees',
-      label: 'Employees',
-      icon: Users,
-      badge: `${orgProfiles.length}`
-    },
+    ...(canAccessEmployees
+      ? [
+          {
+            id: 'employees',
+            label: isTopLeadership ? 'Employees' : 'My Team',
+            icon: Users,
+            badge: `${isTopLeadership ? orgProfiles.length : managedEmployeesCount}`
+          }
+        ]
+      : []),
     {
       id: 'attendance',
       label: 'Attendance',
@@ -106,6 +116,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Payroll',
       icon: Banknote,
       badge: isHrOrSuperadmin ? null : 'Slips'
+    },
+    {
+      id: 'chat',
+      label: 'Team Chat',
+      icon: MessageSquare,
+      badge: null
     },
     {
       id: 'meetings',

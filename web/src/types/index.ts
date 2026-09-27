@@ -285,7 +285,7 @@ export interface MeetingEvent {
   description?: string;
   date: string; // YYYY-MM-DD
   startTime: string; // HH:mm
-  endTime: string; // HH:mm
+  endTime?: string; // HH:mm
   isOnline: boolean;
   meetingUrl?: string; // e.g. Google Meet, Zoom, Teams
   location?: string; // e.g. Conference Room A
@@ -299,7 +299,7 @@ export interface MeetingEvent {
 }
 
 export type NoticeCategory = 'announcement' | 'policy' | 'holiday' | 'urgent' | 'event';
-export type NoticePriority = 'high' | 'medium' | 'low';
+export type NoticePriority = 'critical' | 'high' | 'medium' | 'low';
 
 export interface NoticeItem {
   id: string;
@@ -315,4 +315,28 @@ export interface NoticeItem {
   attachmentUrl?: string;
   isPinned?: boolean;
   createdAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  orgId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRole;
+  senderAvatar?: string;
+  channel: string; // e.g. 'general', 'engineering', 'operations', 'announcements', or 'dm:<id1>:<id2>'
+  recipientId?: string;
+  message: string;
+  reactions?: Array<{ emoji: string; count: number; userIds: string[] }>;
+  isPinned?: boolean;
+  createdAt: string;
+}
+
+export interface ChatChannel {
+  id: string;
+  name: string;
+  description: string;
+  isPrivate?: boolean;
+  type: 'channel' | 'dm';
+  unreadCount?: number;
 }
