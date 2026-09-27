@@ -24,7 +24,7 @@ import {
   ShieldCheck,
   Plus
 } from 'lucide-react';
-import { formatCurrency, formatSalaryOrStipend } from '../lib/serialUtils';
+import { formatCurrency, formatSalaryOrStipend, getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 
 interface DashboardOverviewProps {
   onOpenCreateOffer: () => void;
@@ -79,22 +79,111 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     setShowPassword(true);
   };
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  // 100% Dynamic KPI computations strictly from Supabase live state (No fake fallbacks)
+  const todayStr = getTodayISTDateString();
+  const totalEmployees = orgProfiles.length;
   const todayPunches = attendanceRecords.filter((a) => a.date === todayStr);
   const presentCount = todayPunches.filter((a) => a.status === 'present' || a.status === 'regularized').length;
+  const halfDayCount = todayPunches.filter((a) => a.status === 'half_day').length;
   const onLeaveCount = leaveRequests.filter((l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr).length;
+  const absentCount = Math.max(0, totalEmployees - (presentCount + halfDayCount + onLeaveCount));
 
-  const totalEmployeesDisplay = orgProfiles.length > 0 ? orgProfiles.length : 124;
-  const presentDisplay = presentCount > 0 ? presentCount : 108;
-  const onLeaveDisplay = onLeaveCount > 0 ? onLeaveCount : 8;
-  const attendanceRate = Math.round((presentDisplay / totalEmployeesDisplay) * 100);
-  const onLeaveRate = Math.max(1, Math.round((onLeaveDisplay / totalEmployeesDisplay) * 100));
+  const attendanceRate = totalEmployees > 0 ? Math.round(((presentCount + halfDayCount * 0.5) / totalEmployees) * 100) : 0;
+  const onLeaveRate = totalEmployees > 0 ? Math.round((onLeaveCount / totalEmployees) * 100) : 0;
 
   const pendingApprovalsCount =
     leaveRequests.filter((l) => l.status === 'pending').length +
     attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length +
     accessRequests.filter((r) => r.status === 'pending').length;
-  const pendingApprovalsDisplay = pendingApprovalsCount > 0 ? pendingApprovalsCount : 6;
+
+  // Dynamic 7-day attendance trend data strictly from records
+  const last7Days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const label = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
+    const count = attendanceRecords.filter((a) => a.date === dateStr && (a.status === 'present' || a.status === 'regularized')).length;
+    return { dateStr, label, count };
+  });
+
+  const maxChartCount = Math.max(...last7Days.map((d) => d.count), totalEmployees, 5);
+  const chartPoints = last7Days.map((d, index) => {
+    const x = 30 + index * (265 / 6);
+    const normalizedY = maxChartCount > 0 ? d.count / maxChartCount : 0;
+    const y = 120 - normalizedY * 95;
+    return { x, y, count: d.count, label: d.label };
+  });
+
+  const pathD = chartPoints.reduce((acc, pt, idx) => {
+    return idx === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`;
+  }, '');
+  const areaD = `${pathD} L ${chartPoints[chartPoints.length - 1].x} 120 L ${chartPoints[0].x} 120 Z`;
+
+  // Dynamic Recent Activities derived strictly from real Supabase tenant rows
+  const dynamicActivities: Array<{
+    id: string;
+    title: string;
+    time: string;
+    color: string;
+    icon: any;
+  }> = [];
+
+  [...attendanceRecords]
+    .filter((a) => a.checkInTime)
+    .sort((a, b) => new Date(b.checkInTime!).getTime() - new Date(a.checkInTime!).getTime())
+    .slice(0, 3)
+    .forEach((a) => {
+      const emp = orgProfiles.find((p) => p.id === a.employeeId);
+      dynamicActivities.push({
+        id: `att-${a.id}`,
+        title: `${emp ? `${emp.firstName} ${emp.lastName}` : 'Employee'} marked attendance`,
+        time: `${formatISTTime(a.checkInTime!)} IST`,
+        color: 'bg-emerald-100 text-emerald-600',
+        icon: CheckCircle2
+      });
+    });
+
+  [...leaveRequests]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 2)
+    .forEach((l) => {
+      const emp = orgProfiles.find((p) => p.id === l.employeeId);
+      dynamicActivities.push({
+        id: `leave-${l.id}`,
+        title: `${emp ? `${emp.firstName} ${emp.lastName}` : 'Employee'} applied for ${l.leaveType} leave`,
+        time: formatISTDate(l.startDate),
+        color: 'bg-rose-100 text-rose-600',
+        icon: Calendar
+      });
+    });
+
+  [...tasks]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 2)
+    .forEach((t) => {
+      dynamicActivities.push({
+        id: `task-${t.id}`,
+        title: `Task assigned: ${t.title}`,
+        time: formatISTDate(t.createdAt),
+        color: 'bg-blue-100 text-blue-600',
+        icon: FileText
+      });
+    });
+
+  [...offerLetters]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 2)
+    .forEach((o) => {
+      dynamicActivities.push({
+        id: `offer-${o.id}`,
+        title: `Offer letter ${o.serialNumber} issued for ${o.candidateName}`,
+        time: formatISTDate(o.createdAt),
+        color: 'bg-indigo-100 text-indigo-600',
+        icon: UserPlus
+      });
+    });
+
+  const recentActivities = dynamicActivities.slice(0, 5);
 
   const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,45 +218,6 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     setAssignedManagerId('');
     setBaseSalary('0');
   };
-
-  // Recent Activities List matching reference screenshot
-  const recentActivities = [
-    {
-      id: 'act-1',
-      title: 'Riya Sharma applied for leave',
-      time: '2 hours ago',
-      color: 'bg-rose-100 text-rose-600',
-      icon: Calendar
-    },
-    {
-      id: 'act-2',
-      title: 'Amit Verma joined the team',
-      time: '4 hours ago',
-      color: 'bg-blue-100 text-blue-600',
-      icon: Users
-    },
-    {
-      id: 'act-3',
-      title: 'Payroll processed for September 2026',
-      time: '6 hours ago',
-      color: 'bg-emerald-100 text-emerald-600',
-      icon: Banknote
-    },
-    {
-      id: 'act-4',
-      title: 'Leave request approved (Karan Mehta)',
-      time: '8 hours ago',
-      color: 'bg-amber-100 text-amber-600',
-      icon: CheckCircle2
-    },
-    {
-      id: 'act-5',
-      title: 'New employee onboarding (Neha Singh)',
-      time: '10 hours ago',
-      color: 'bg-indigo-100 text-indigo-600',
-      icon: UserPlus
-    }
-  ];
 
   return (
     <div className="space-y-6">
@@ -212,12 +262,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div>
               <span className="text-xs text-slate-500 font-medium block">Total Employees</span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {totalEmployeesDisplay}
+                {totalEmployees}
               </div>
             </div>
           </div>
           <div className="mt-3 flex items-center text-[11px] font-semibold text-emerald-600">
-            <span className="inline-flex items-center">↑ 12% vs last month</span>
+            <span className="inline-flex items-center">{totalEmployees} Active in {currentOrg.orgCode}</span>
           </div>
         </div>
 
@@ -228,14 +278,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <CalendarCheck className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs text-slate-500 font-medium block">Present Today</span>
+              <span className="text-xs text-slate-500 font-medium block">Present Today (IST)</span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {presentDisplay}
+                {presentCount}
               </div>
             </div>
           </div>
           <div className="mt-3 flex items-center text-[11px] font-semibold text-emerald-600">
-            <span>{attendanceRate}% attendance</span>
+            <span>{attendanceRate}% attendance rate</span>
           </div>
         </div>
 
@@ -248,7 +298,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div>
               <span className="text-xs text-slate-500 font-medium block">On Leave</span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {onLeaveDisplay}
+                {onLeaveCount}
               </div>
             </div>
           </div>
@@ -266,7 +316,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div>
               <span className="text-xs text-slate-500 font-medium block">Pending Approvals</span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {pendingApprovalsDisplay}
+                {pendingApprovalsCount}
               </div>
             </div>
           </div>
@@ -286,13 +336,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <h2 className="text-sm font-bold text-slate-900">Attendance Overview</h2>
             </div>
             <div className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600">
-              <span>Last 7 Days</span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              <span>Past 7 Days (IST)</span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 py-4 items-center">
-            {/* Left: Curved Trend Line Chart */}
+            {/* Left: Dynamic 7-Day Trend Line Chart */}
             <div className="md:col-span-7 flex flex-col justify-between">
               <div className="h-44 w-full relative">
                 {/* SVG Line Graph */}
@@ -306,60 +355,59 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
                   {/* Grid Lines */}
                   <line x1="0" y1="120" x2="320" y2="120" stroke="#f1f5f9" strokeWidth="1" />
-                  <line x1="0" y1="80" x2="320" y2="80" stroke="#f1f5f9" strokeWidth="1" />
-                  <line x1="0" y1="40" x2="320" y2="40" stroke="#f1f5f9" strokeWidth="1" />
+                  <line x1="0" y1="72" x2="320" y2="72" stroke="#f1f5f9" strokeWidth="1" />
+                  <line x1="0" y1="25" x2="320" y2="25" stroke="#f1f5f9" strokeWidth="1" />
 
                   {/* Y-Axis Labels */}
                   <text x="5" y="118" fill="#94a3b8" fontSize="9" fontFamily="sans-serif">0</text>
-                  <text x="5" y="78" fill="#94a3b8" fontSize="9" fontFamily="sans-serif">50</text>
-                  <text x="5" y="38" fill="#94a3b8" fontSize="9" fontFamily="sans-serif">100</text>
-                  <text x="5" y="12" fill="#94a3b8" fontSize="9" fontFamily="sans-serif">150</text>
+                  <text x="5" y="70" fill="#94a3b8" fontSize="9" fontFamily="sans-serif">{Math.round(maxChartCount * 0.5)}</text>
+                  <text x="5" y="23" fill="#94a3b8" fontSize="9" fontFamily="sans-serif">{maxChartCount}</text>
 
-                  {/* Shaded Area Fill */}
+                  {/* Dynamic Shaded Area Fill */}
                   <path
-                    d="M 30 95 C 65 90, 85 80, 115 65 C 145 50, 175 58, 205 60 C 235 62, 265 48, 295 40 L 295 120 L 30 120 Z"
+                    d={areaD}
                     fill="url(#areaGradient)"
                   />
 
-                  {/* Smooth Line Stroke */}
+                  {/* Dynamic Smooth Line Stroke */}
                   <path
-                    d="M 30 95 C 65 90, 85 80, 115 65 C 145 50, 175 58, 205 60 C 235 62, 265 48, 295 40"
+                    d={pathD}
                     fill="none"
                     stroke="#2563eb"
                     strokeWidth="2.5"
                     strokeLinecap="round"
                   />
 
-                  {/* Data Points */}
-                  <circle cx="30" cy="95" r="3.5" fill="#ffffff" stroke="#2563eb" strokeWidth="2" />
-                  <circle cx="75" cy="88" r="3" fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" />
-                  <circle cx="115" cy="65" r="3" fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" />
-                  <circle cx="160" cy="54" r="3" fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" />
-                  <circle cx="205" cy="60" r="3" fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" />
-                  <circle cx="250" cy="52" r="3" fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" />
-                  <circle cx="295" cy="40" r="4" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
+                  {/* Dynamic Data Points */}
+                  {chartPoints.map((pt, idx) => (
+                    <circle
+                      key={idx}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={idx === chartPoints.length - 1 ? 4.5 : 3}
+                      fill={idx === chartPoints.length - 1 ? '#2563eb' : '#ffffff'}
+                      stroke="#2563eb"
+                      strokeWidth={idx === chartPoints.length - 1 ? 2.5 : 1.5}
+                    />
+                  ))}
                 </svg>
 
-                {/* X-Axis Dates */}
+                {/* Dynamic X-Axis Dates */}
                 <div className="flex justify-between text-[9px] text-slate-400 font-medium px-2 pt-1">
-                  <span>11 Sep</span>
-                  <span>12 Sep</span>
-                  <span>13 Sep</span>
-                  <span>14 Sep</span>
-                  <span>15 Sep</span>
-                  <span>16 Sep</span>
-                  <span>17 Sep</span>
+                  {chartPoints.map((pt, idx) => (
+                    <span key={idx}>{pt.label}</span>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* Right: Donut Chart with Legend */}
+            {/* Right: Dynamic Donut Chart with Live Legend */}
             <div className="md:col-span-5 flex flex-col items-center justify-center">
               <div className="relative w-32 h-32 flex items-center justify-center">
                 <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                   {/* Background track */}
                   <circle cx="50" cy="50" r="38" stroke="#f1f5f9" strokeWidth="10" fill="none" />
-                  {/* Present Track (87%) */}
+                  {/* Present Track */}
                   <circle
                     cx="50"
                     cy="50"
@@ -367,11 +415,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                     stroke="#2563eb"
                     strokeWidth="10"
                     fill="none"
-                    strokeDasharray="238.7"
-                    strokeDashoffset="31"
+                    strokeDasharray="238.76"
+                    strokeDashoffset={238.76 - 238.76 * (totalEmployees > 0 ? presentCount / totalEmployees : 0)}
                     strokeLinecap="round"
                   />
-                  {/* Absent Track (7%) */}
+                  {/* On Leave Track */}
                   <circle
                     cx="50"
                     cy="50"
@@ -379,51 +427,39 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                     stroke="#f59e0b"
                     strokeWidth="10"
                     fill="none"
-                    strokeDasharray="238.7"
-                    strokeDashoffset="220"
-                    strokeLinecap="round"
-                  />
-                  {/* Half Day Track (6%) */}
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="38"
-                    stroke="#fb923c"
-                    strokeWidth="10"
-                    fill="none"
-                    strokeDasharray="238.7"
-                    strokeDashoffset="205"
+                    strokeDasharray="238.76"
+                    strokeDashoffset={238.76 - 238.76 * (totalEmployees > 0 ? onLeaveCount / totalEmployees : 0)}
                     strokeLinecap="round"
                   />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                  <span className="text-xl font-extrabold text-slate-900 leading-tight">87%</span>
-                  <span className="text-[10px] text-slate-400 font-semibold">Present</span>
+                  <span className="text-xl font-extrabold text-slate-900 leading-tight">{attendanceRate}%</span>
+                  <span className="text-[10px] text-slate-400 font-semibold">Present Today</span>
                 </div>
               </div>
 
-              {/* Legend matching reference screenshot */}
+              {/* Dynamic Legend */}
               <div className="w-full space-y-1.5 mt-3 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center text-slate-600">
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-600 mr-2" />
                     Present
                   </span>
-                  <span className="font-bold text-slate-800">108</span>
+                  <span className="font-bold text-slate-800">{presentCount}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center text-slate-600">
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-500 mr-2" />
-                    Absent
+                    On Leave
                   </span>
-                  <span className="font-bold text-slate-800">9</span>
+                  <span className="font-bold text-slate-800">{onLeaveCount}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center text-slate-600">
-                    <span className="w-2.5 h-2.5 rounded-full bg-orange-400 mr-2" />
-                    Half Day
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-300 mr-2" />
+                    Pending / Out
                   </span>
-                  <span className="font-bold text-slate-800">7</span>
+                  <span className="font-bold text-slate-800">{absentCount}</span>
                 </div>
               </div>
             </div>
@@ -447,20 +483,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
 
             <div className="divide-y divide-slate-100 mt-2">
-              {recentActivities.map((act) => {
-                const Icon = act.icon;
-                return (
-                  <div key={act.id} className="py-2.5 flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-full ${act.color} flex items-center justify-center shrink-0`}>
-                      <Icon className="w-3.5 h-3.5" />
+              {recentActivities.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 text-xs">
+                  <p className="font-semibold text-slate-500">No activities logged yet.</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Live events like attendance punches and requests will appear here.</p>
+                </div>
+              ) : (
+                recentActivities.map((act) => {
+                  const Icon = act.icon;
+                  return (
+                    <div key={act.id} className="py-2.5 flex items-center space-x-3">
+                      <div className={`w-8 h-8 rounded-full ${act.color} flex items-center justify-center shrink-0`}>
+                        <Icon className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-slate-800 truncate">{act.title}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{act.time}</p>
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-slate-800 truncate">{act.title}</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">{act.time}</p>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

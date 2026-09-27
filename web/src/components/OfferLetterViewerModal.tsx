@@ -13,7 +13,7 @@ import {
   Lock,
   ExternalLink
 } from 'lucide-react';
-import { formatCurrency } from '../lib/serialUtils';
+import { formatCurrency, formatISTDateTime } from '../lib/serialUtils';
 
 interface OfferLetterViewerModalProps {
   offer: OfferLetter | null;
@@ -267,7 +267,7 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
                     <CheckCircle className="w-3.5 h-3.5 mr-1" /> Digitally Accepted by Candidate
                   </p>
                   <p className="text-[10px] text-emerald-700 font-mono mt-0.5">
-                    Timestamp: {new Date(offer.candidateAcceptedAt || offer.createdAt).toLocaleString()}
+                    IST Timestamp: {formatISTDateTime(offer.candidateAcceptedAt || offer.createdAt)}
                   </p>
                 </div>
               ) : (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   MapPin,
@@ -9,9 +9,10 @@ import {
   Navigation,
   Compass,
   FileEdit,
-  ArrowRight
+  ShieldCheck
 } from 'lucide-react';
 import { calculateHaversineDistance, formatDistance } from '../lib/geoUtils';
+import { formatISTTime, getTodayISTDateString } from '../lib/serialUtils';
 
 interface GeoAttendanceCardProps {
   onRequestRegularization: (attendanceId: string) => void;
@@ -89,8 +90,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
 
   const handlePunch = () => {
     const res = punchAttendance(userLat, userLong, !isInsideFence, currentDistance, activeOfficeAddress);
-    if (res.success && todayRecord && !todayRecord.checkOutTime) {
-      // Just checked out! Prompt for EOD Standup
+    if (res.success) {
       onOpenStandup();
     }
   };
@@ -106,7 +106,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           <div className="min-w-0">
             <h3 className="text-sm sm:text-base font-bold text-white truncate">Smart Office Presence & Geo Attendance</h3>
             <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-              Assigned Office: <span className="text-cyan-400 font-semibold">{activeOffice.name}</span>
+              Assigned Office: <span className="text-cyan-400 font-semibold">{activeOffice.name}</span> • Timezone: <span className="text-emerald-400 font-semibold">IST (UTC+5:30)</span>
             </p>
           </div>
         </div>
@@ -122,7 +122,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           {isInsideFence ? (
             <>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Office Location Matched</span>
+              <span>Office Geofence Matched</span>
             </>
           ) : (
             <>
@@ -198,43 +198,38 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
       )}
 
       {/* Today's Punch Action Box */}
-      <div className="bg-gradient-to-r from-slate-900 to-indigo-950/30 p-5 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950/20 to-slate-900 p-5 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-            Today's Punch Status
+            Today's Attendance Status ({getTodayISTDateString()} IST)
           </span>
           <div className="flex items-center space-x-2 mt-1">
             <div
               className={`w-2.5 h-2.5 rounded-full ${
                 !todayRecord
                   ? 'bg-slate-500'
-                  : !todayRecord.checkOutTime
-                  ? 'bg-emerald-400 animate-pulse'
-                  : 'bg-indigo-400'
+                  : 'bg-emerald-400'
               }`}
             />
             <span className="text-base font-bold text-white">
               {!todayRecord
-                ? 'Not Checked In'
-                : !todayRecord.checkOutTime
-                ? 'Currently Checked In'
-                : 'Checked Out for Today'}
+                ? 'Not Recorded Today'
+                : '✓ Attendance Recorded for Today (IST)'}
             </span>
           </div>
 
           {todayRecord && (
-            <div className="text-xs text-slate-400 space-x-3 mt-1.5">
+            <div className="text-xs text-slate-400 space-x-3 mt-1.5 flex flex-wrap items-center gap-y-1">
               <span>
-                In: <strong className="text-white">{new Date(todayRecord.checkInTime!).toLocaleTimeString()}</strong>
+                Punched In: <strong className="text-emerald-400">{formatISTTime(todayRecord.checkInTime!)} IST</strong>
               </span>
-              {todayRecord.checkOutTime && (
-                <span>
-                  Out: <strong className="text-white">{new Date(todayRecord.checkOutTime).toLocaleTimeString()}</strong>
-                </span>
-              )}
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                <ShieldCheck className="w-3 h-3 mr-1 text-emerald-400" />
+                Present • Checkout Not Required
+              </span>
               {todayRecord.totalHours > 0 && (
                 <span>
-                  Hours: <strong className="text-cyan-400 font-mono">{todayRecord.totalHours} hrs</strong>
+                  Standard Shift: <strong className="text-cyan-400 font-mono">{todayRecord.totalHours} hrs</strong>
                 </span>
               )}
             </div>
@@ -248,23 +243,22 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           )}
         </div>
 
-        {/* Punch Button & Regularization CTA */}
+        {/* Punch Button & Status */}
         <div className="flex items-center space-x-3 w-full sm:w-auto">
-          {(!todayRecord || !todayRecord.checkOutTime) ? (
+          {!todayRecord ? (
             <button
               onClick={handlePunch}
-              className={`w-full sm:w-auto justify-center px-6 py-3.5 rounded-xl text-xs font-bold text-white transition shadow-lg flex items-center space-x-2 ${
-                !todayRecord
-                  ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
-                  : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/30'
-              }`}
+              className="w-full sm:w-auto justify-center px-6 py-3.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/30 transition flex items-center space-x-2"
             >
               <Clock className="w-4 h-4" />
-              <span>{!todayRecord ? 'Punch In (Check-In)' : 'Punch Out (Check-Out)'}</span>
+              <span>Punch In (Mark Present - IST)</span>
             </button>
           ) : (
-            <div className="text-right space-y-1">
-              <span className="text-xs text-emerald-400 font-semibold block">Attendance Complete</span>
+            <div className="flex flex-col sm:items-end space-y-1.5 w-full sm:w-auto">
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Marked Present for Today</span>
+              </div>
               {todayRecord.regularizationStatus === 'none' && (
                 <button
                   onClick={() => onRequestRegularization(todayRecord.id)}

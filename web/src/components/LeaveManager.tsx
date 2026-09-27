@@ -14,9 +14,14 @@ import {
   UploadCloud,
   X,
   Search,
-  Check
+  Check,
+  Sliders,
+  Shield,
+  Save,
+  RefreshCw
 } from 'lucide-react';
 import { uploadFileToStorage } from '../lib/storage';
+import { getTodayISTDateString } from '../lib/serialUtils';
 
 export const LeaveManager: React.FC = () => {
   const {
@@ -28,6 +33,7 @@ export const LeaveManager: React.FC = () => {
     resolveLeaveRequest,
     cancelLeaveRequest,
     getLeaveBalance,
+    updateOrganization,
     addToast
   } = useApp();
 
@@ -37,16 +43,51 @@ export const LeaveManager: React.FC = () => {
     currentProfile.role === 'owner' ||
     currentProfile.role === 'superadmin';
 
+  const canManagePolicy =
+    currentProfile.role === 'superadmin' ||
+    currentProfile.role === 'owner' ||
+    currentProfile.role === 'hr';
+
   // Tabs matching reference screenshot
-  const [activeTab, setActiveTab] = useState<'my_leaves' | 'team_leaves' | 'calendar'>('my_leaves');
+  const [activeTab, setActiveTab] = useState<'my_leaves' | 'team_leaves' | 'calendar' | 'policy'>('my_leaves');
+
+  // Policy Settings Form State (Configured by Organization Superadmin)
+  const [policyCasual, setPolicyCasual] = useState(currentOrg.settings?.leavePolicy?.casualTotal ?? 12);
+  const [policySick, setPolicySick] = useState(currentOrg.settings?.leavePolicy?.sickTotal ?? 10);
+  const [policyPrivilege, setPolicyPrivilege] = useState(currentOrg.settings?.leavePolicy?.privilegeTotal ?? 15);
+  const [policyWorkHours, setPolicyWorkHours] = useState(currentOrg.settings?.workHoursPerDay ?? 8);
+  const [policyHalfDay, setPolicyHalfDay] = useState(currentOrg.settings?.halfDayThresholdHours ?? 4.5);
+  const [policyGrace, setPolicyGrace] = useState(currentOrg.settings?.gracePeriodMins ?? 15);
+  const [policyWfh, setPolicyWfh] = useState(currentOrg.settings?.wfhAllowed ?? true);
+  const [isSavingPolicy, setIsSavingPolicy] = useState(false);
+
+  const handleSavePolicy = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingPolicy(true);
+    await updateOrganization(currentOrg.id, {
+      settings: {
+        ...currentOrg.settings,
+        workHoursPerDay: Number(policyWorkHours),
+        halfDayThresholdHours: Number(policyHalfDay),
+        gracePeriodMins: Number(policyGrace),
+        wfhAllowed: Boolean(policyWfh),
+        leavePolicy: {
+          casualTotal: Number(policyCasual),
+          sickTotal: Number(policySick),
+          privilegeTotal: Number(policyPrivilege)
+        }
+      }
+    });
+    setIsSavingPolicy(false);
+  };
 
   // Modals
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
 
   // Apply Form State
   const [leaveType, setLeaveType] = useState<LeaveType>('casual');
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(getTodayISTDateString());
+  const [endDate, setEndDate] = useState(getTodayISTDateString());
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [halfDaySession, setHalfDaySession] = useState<'first_half' | 'second_half'>('first_half');
   const [reason, setReason] = useState('');
@@ -146,7 +187,7 @@ export const LeaveManager: React.FC = () => {
   const totalRemaining = Math.max(0, totalEntitled - totalUsed);
 
   // Today on leave
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayISTDateString();
   const onLeaveToday = leaveRequests.filter(
     (l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr
   );
@@ -178,7 +219,7 @@ export const LeaveManager: React.FC = () => {
           <div>
             <span className="text-xs text-slate-500 font-medium block">Total Leave</span>
             <div className="text-2xl font-extrabold text-slate-900 mt-1">
-              {totalEntitled || 28}
+              {totalEntitled}
             </div>
             <span className="text-[11px] text-slate-400 mt-0.5 block">Annual Entitlement</span>
           </div>
@@ -192,14 +233,14 @@ export const LeaveManager: React.FC = () => {
           <div>
             <span className="text-xs text-slate-500 font-medium block">Used</span>
             <div className="text-2xl font-extrabold text-slate-900 mt-1">
-              {totalUsed || 14}
+              {totalUsed}
             </div>
             <span className="text-[11px] text-amber-600 font-medium mt-0.5 block">
-              {Math.round((totalUsed / (totalEntitled || 28)) * 100)}% of quota consumed
+              {totalEntitled > 0 ? Math.round((totalUsed / totalEntitled) * 100) : 0}% of quota consumed
             </span>
           </div>
           <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center font-bold text-xs border border-amber-100">
-            {totalUsed || 14}d
+            {totalUsed}d
           </div>
         </div>
 
@@ -208,14 +249,14 @@ export const LeaveManager: React.FC = () => {
           <div>
             <span className="text-xs text-slate-500 font-medium block">Remaining</span>
             <div className="text-2xl font-extrabold text-emerald-600 mt-1">
-              {totalRemaining || 14}
+              {totalRemaining}
             </div>
             <span className="text-[11px] text-emerald-600 font-medium mt-0.5 block">
-              {Math.round((totalRemaining / (totalEntitled || 28)) * 100)}% available balance
+              {totalEntitled > 0 ? Math.round((totalRemaining / totalEntitled) * 100) : 0}% available balance
             </span>
           </div>
           <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs border border-emerald-100">
-            {totalRemaining || 14}d
+            {totalRemaining}d
           </div>
         </div>
       </div>
@@ -262,22 +303,226 @@ export const LeaveManager: React.FC = () => {
             </span>
           )}
         </button>
+
+        {canManagePolicy && (
+          <button
+            onClick={() => setActiveTab('policy')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 ${
+              activeTab === 'policy'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Leave Policy & Quotas</span>
+          </button>
+        )}
       </div>
 
-      {/* 4. Recent Leave Requests Table matching reference screenshot */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="text-xs font-bold text-slate-800">
-            {activeTab === 'my_leaves'
-              ? 'My Applied Leaves'
-              : activeTab === 'team_leaves'
-              ? 'Team Leave Requests & Approvals'
-              : 'Leave Schedule Calendar'}
-          </h2>
-          <span className="text-[11px] text-slate-400">
-            Showing latest entries
-          </span>
+      {/* 4. Tab Content: Policy vs Leave Requests Table */}
+      {activeTab === 'policy' ? (
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-6 space-y-6">
+          <div className="border-b border-slate-100 pb-4 flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Organization Leave Policies & Shift Rules</h2>
+                <p className="text-xs text-slate-500">
+                  Configured by Superadmin for <span className="font-semibold text-slate-700">{currentOrg.name}</span> ({currentOrg.orgCode})
+                </p>
+              </div>
+            </div>
+            <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+              Active Policy
+            </span>
+          </div>
+
+          <form onSubmit={handleSavePolicy} className="space-y-6">
+            <div>
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">
+                Annual Employee Leave Quotas
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Casual Leave (CL) Quota
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      value={policyCasual}
+                      onChange={(e) => setPolicyCasual(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-xs text-slate-500 font-semibold">days/yr</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Short planned or personal leaves</span>
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Sick Leave (SL) Quota
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      value={policySick}
+                      onChange={(e) => setPolicySick(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-xs text-slate-500 font-semibold">days/yr</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Medical and health emergency leaves</span>
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Privilege Leave (PL) Quota
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      value={policyPrivilege}
+                      onChange={(e) => setPolicyPrivilege(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-xs text-slate-500 font-semibold">days/yr</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Earned and annual privilege time-off</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">
+                Working Shift & Presence Conditions
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Standard Work Shift
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="4"
+                      max="12"
+                      value={policyWorkHours}
+                      onChange={(e) => setPolicyWorkHours(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-xs text-slate-500 font-semibold">hours</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Daily full-day working hours requirement</span>
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Half-Day Threshold
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="2"
+                      max="8"
+                      value={policyHalfDay}
+                      onChange={(e) => setPolicyHalfDay(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-xs text-slate-500 font-semibold">hours</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Minimum hours needed for half-day credit</span>
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Check-In Grace Period
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      value={policyGrace}
+                      onChange={(e) => setPolicyGrace(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-xs text-slate-500 font-semibold">mins</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Grace window before late mark</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">
+                  Allow Work From Home (WFH)
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  When enabled, employees can punch in remotely subject to manager approval
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={policyWfh}
+                  onChange={(e) => setPolicyWfh(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                <span className="ml-2 text-xs font-bold text-slate-700">
+                  {policyWfh ? 'Allowed' : 'Disabled'}
+                </span>
+              </label>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-100">
+              <button
+                type="submit"
+                disabled={isSavingPolicy}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center space-x-2"
+              >
+                {isSavingPolicy ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving to Supabase...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Save Policy & Rules</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
         </div>
+      ) : (
+        /* 4. Recent Leave Requests Table matching reference screenshot */
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="text-xs font-bold text-slate-800">
+              {activeTab === 'my_leaves'
+                ? 'My Applied Leaves'
+                : activeTab === 'team_leaves'
+                ? 'Team Leave Requests & Approvals'
+                : 'Leave Schedule Calendar'}
+            </h2>
+            <span className="text-[11px] text-slate-400">
+              Showing latest entries
+            </span>
+          </div>
 
         {/* Display list based on tab */}
         {(() => {
@@ -420,6 +665,7 @@ export const LeaveManager: React.FC = () => {
           );
         })()}
       </div>
+      )}
 
       {/* 5. Modal: Apply for Leave */}
       {isApplyModalOpen && (

@@ -43,8 +43,8 @@ export const PayrollManager: React.FC = () => {
   // Tabs matching reference screenshot
   const [activeTab, setActiveTab] = useState<'overview' | 'salary_slips' | 'deductions' | 'settings'>('overview');
 
-  const [selectedMonth, setSelectedMonth] = useState(8);
-  const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [activePayslip, setActivePayslip] = useState<PayrollRecord | null>(null);
 
   // Edit / Custom Deductions Modal State
@@ -73,9 +73,9 @@ export const PayrollManager: React.FC = () => {
     .reduce((sum, r) => sum + r.netSalary, 0);
 
   const totalPayrollAmount = totalDisbursed + totalPending;
-  const totalEmployeesCount = orgProfiles.length > 0 ? orgProfiles.length : 124;
-  const paidCount = monthRecords.filter((p) => p.payoutStatus === 'paid').length || 118;
-  const pendingCount = monthRecords.filter((p) => p.payoutStatus === 'pending').length || 6;
+  const totalEmployeesCount = orgProfiles.length;
+  const paidCount = monthRecords.filter((p) => p.payoutStatus === 'paid').length;
+  const pendingCount = monthRecords.filter((p) => p.payoutStatus === 'pending').length;
 
   const handleDownloadCsv = () => {
     if (!canManage) return;
@@ -219,18 +219,18 @@ export const PayrollManager: React.FC = () => {
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-500 font-medium">
-                Total Payroll (September 2026)
+                Total Payroll ({new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'short' })} {selectedYear})
               </span>
               <div className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600">
-                <span>Sep 2026</span>
+                <span>{new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'short' })} {selectedYear}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
               </div>
             </div>
             <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
-              {totalPayrollAmount > 0 ? formatCurrency(totalPayrollAmount) : '₹ 6,48,000'}
+              {formatCurrency(totalPayrollAmount)}
             </div>
             <span className="text-[11px] font-semibold text-emerald-600 mt-1 inline-block">
-              ↑ 5% vs last month
+              {paidCount} Disbursed • {pendingCount} Pending
             </span>
           </div>
 

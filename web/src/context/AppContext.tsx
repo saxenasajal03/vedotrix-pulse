@@ -32,7 +32,7 @@ import {
   INITIAL_NOTIFICATIONS,
   INITIAL_BROADCASTS
 } from '../lib/mockData';
-import { generateVerificationToken, generateUUID } from '../lib/serialUtils';
+import { generateVerificationToken, generateUUID, getTodayISTDateString, formatISTTime, formatISTDateTime } from '../lib/serialUtils';
 import {
   getStoredSupabaseConfig,
   saveSupabaseConfig,
@@ -73,6 +73,8 @@ interface AppContextType {
   orgProfiles: Profile[];
   allProfiles: Profile[];
   createProfile: (profileData: Omit<Profile, 'id'>) => Promise<Profile>;
+  updateProfile: (profileId: string, updates: Partial<Profile>) => Promise<void>;
+  updateOrganization: (orgId: string, updates: Partial<Organization>) => Promise<void>;
   switchOrganization: (orgId: string) => void;
   switchRole: (role: UserRole) => void;
   
@@ -169,22 +171,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   // Clean stale local storage caches to make sure live Supabase DB is the absolute single source of truth
-  const DB_CACHE_VERSION = 'vdx_db_v5_leaves_active';
   useEffect(() => {
-    if (localStorage.getItem('vdx_db_version') !== DB_CACHE_VERSION) {
-      console.log('Upgrading local cache to direct live Supabase DB single source of truth...');
-      localStorage.removeItem('vdx_organizations');
-      localStorage.removeItem('vdx_profiles');
-      localStorage.removeItem('vdx_office_locations');
-      localStorage.removeItem('vdx_offers');
-      localStorage.removeItem('vdx_attendance');
-      localStorage.removeItem('vdx_tasks');
-      localStorage.removeItem('vdx_standups');
-      localStorage.removeItem('vdx_payroll');
-      localStorage.removeItem('vdx_access_requests');
-      localStorage.removeItem('vdx_leave_requests');
-      localStorage.setItem('vdx_db_version', DB_CACHE_VERSION);
-    }
+    const keysToClean = [
+      'vdx_organizations', 'vdx_profiles', 'vdx_office_locations',
+      'vdx_offers', 'vdx_attendance', 'vdx_tasks', 'vdx_standups',
+      'vdx_payroll', 'vdx_access_requests', 'vdx_leave_requests'
+    ];
+    keysToClean.forEach((k) => localStorage.removeItem(k));
   }, []);
 
   // Theme state
@@ -212,12 +205,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Supabase Config State
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(getStoredSupabaseConfig());
 
-  // Load Orgs (Clean production master)
-  const [organizations, setOrganizations] = useState<Organization[]>(() => {
-    const saved = localStorage.getItem('vdx_organizations');
-    return saved ? JSON.parse(saved) : INITIAL_ORGS;
-  });
-
+  // Direct Supabase-synced state (clean zero-mock baseline)
+  const [organizations, setOrganizations] = useState<Organization[]>(INITIAL_ORGS);
   const [currentOrgId, setCurrentOrgId] = useState<string>(() => {
     return localStorage.getItem('vdx_current_org_id') || '00000000-0000-0000-0000-000000000001';
   });
@@ -225,76 +214,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem('vdx_current_profile_id') || '00000000-0000-0000-0000-000000000003';
   });
   
-  const [profiles, setProfiles] = useState<Profile[]>(() => {
-    const saved = localStorage.getItem('vdx_profiles');
-    return saved ? JSON.parse(saved) : INITIAL_PROFILES;
-  });
-
-  const [officeLocationsList, setOfficeLocationsList] = useState<OfficeLocation[]>(() => {
-    const saved = localStorage.getItem('vdx_office_locations');
-    return saved ? JSON.parse(saved) : INITIAL_OFFICES;
-  });
-
-  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>(() => {
-    const saved = localStorage.getItem('vdx_access_requests');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [offerLetters, setOfferLetters] = useState<OfferLetter[]>(() => {
-    const saved = localStorage.getItem('vdx_offers');
-    return saved ? JSON.parse(saved) : INITIAL_OFFERS;
-  });
-
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
-    const saved = localStorage.getItem('vdx_attendance');
-    return saved ? JSON.parse(saved) : INITIAL_ATTENDANCE;
-  });
-
-  const [tasks, setTasks] = useState<TaskItem[]>(() => {
-    const saved = localStorage.getItem('vdx_tasks');
-    return saved ? JSON.parse(saved) : INITIAL_TASKS;
-  });
-
-  const [standups, setStandups] = useState<DailyStandup[]>(() => {
-    const saved = localStorage.getItem('vdx_standups');
-    return saved ? JSON.parse(saved) : INITIAL_STANDUPS;
-  });
-
-  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>(() => {
-    const saved = localStorage.getItem('vdx_payroll');
-    return saved ? JSON.parse(saved) : INITIAL_PAYROLL;
-  });
-
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
-    const saved = localStorage.getItem('vdx_leave_requests');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [notifications, setNotifications] = useState<InAppNotification[]>(() => {
-    const saved = localStorage.getItem('vdx_notifications');
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
-  });
-
-  const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>(() => {
-    const saved = localStorage.getItem('vdx_broadcasts');
-    return saved ? JSON.parse(saved) : INITIAL_BROADCASTS;
-  });
-
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [officeLocationsList, setOfficeLocationsList] = useState<OfficeLocation[]>([]);
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
+  const [offerLetters, setOfferLetters] = useState<OfferLetter[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [standups, setStandups] = useState<DailyStandup[]>([]);
+  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>([]);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
 
-  // Persistent storage sync
-  useEffect(() => {
-    localStorage.setItem('vdx_organizations', JSON.stringify(organizations));
-  }, [organizations]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_profiles', JSON.stringify(profiles));
-  }, [profiles]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_office_locations', JSON.stringify(officeLocationsList));
-  }, [officeLocationsList]);
-
+  // Only sync session pointers to local storage
   useEffect(() => {
     localStorage.setItem('vdx_current_org_id', currentOrgId);
   }, [currentOrgId]);
@@ -302,42 +235,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem('vdx_current_profile_id', currentProfileId);
   }, [currentProfileId]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_access_requests', JSON.stringify(accessRequests));
-  }, [accessRequests]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_offers', JSON.stringify(offerLetters));
-  }, [offerLetters]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_attendance', JSON.stringify(attendanceRecords));
-  }, [attendanceRecords]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_tasks', JSON.stringify(tasks));
-  }, [tasks]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_standups', JSON.stringify(standups));
-  }, [standups]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_payroll', JSON.stringify(payrollRecords));
-  }, [payrollRecords]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_leave_requests', JSON.stringify(leaveRequests));
-  }, [leaveRequests]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
-    localStorage.setItem('vdx_broadcasts', JSON.stringify(broadcasts));
-  }, [broadcasts]);
 
   // LIVE SUPABASE CLOUD SYNC ON MOUNT - Loads directly from connected Supabase PostgreSQL
   useEffect(() => {
@@ -400,13 +297,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setOrganizations(mappedOrgs);
         }
 
-        if (cloudProfiles && cloudProfiles.length > 0) {
+        if (!errProf && cloudProfiles) {
           const mappedProfiles: Profile[] = cloudProfiles.map((p: any) => ({
             id: p.id,
             orgId: p.org_id,
             email: p.email,
             firstName: p.first_name,
             lastName: p.last_name || '',
+            phone: p.phone || '',
             role: p.role,
             designation: p.designation || 'Team Member',
             department: p.department || 'Operations',
@@ -421,7 +319,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setProfiles(mappedProfiles);
         }
 
-        if (cloudOffices && cloudOffices.length > 0) {
+        if (!errOff && cloudOffices) {
           const mappedOffices: OfficeLocation[] = cloudOffices.map((l: any) => ({
             id: l.id,
             orgId: l.org_id,
@@ -435,7 +333,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setOfficeLocationsList(mappedOffices);
         }
 
-        if (cloudOffers && cloudOffers.length > 0) {
+        if (!errOffers && cloudOffers) {
           const mappedOffers: OfferLetter[] = cloudOffers.map((o: any) => ({
             id: o.id,
             orgId: o.org_id,
@@ -465,7 +363,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setOfferLetters(mappedOffers);
         }
 
-        if (cloudAttendance && cloudAttendance.length > 0) {
+        if (!errAtt && cloudAttendance) {
           const mappedAtt: AttendanceRecord[] = cloudAttendance.map((a: any) => ({
             id: a.id,
             orgId: a.org_id,
@@ -491,7 +389,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setAttendanceRecords(mappedAtt);
         }
 
-        if (cloudTasks && cloudTasks.length > 0) {
+        if (!errTasks && cloudTasks) {
           const mappedTasks: TaskItem[] = cloudTasks.map((t: any) => ({
             id: t.id,
             orgId: t.org_id,
@@ -515,7 +413,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setTasks(mappedTasks);
         }
 
-        if (cloudStandups && cloudStandups.length > 0) {
+        if (!errStandups && cloudStandups) {
           const mappedStandups: DailyStandup[] = cloudStandups.map((s: any) => ({
             id: s.id,
             orgId: s.org_id,
@@ -530,7 +428,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setStandups(mappedStandups);
         }
 
-        if (cloudRequests && cloudRequests.length > 0) {
+        if (!errReqs && cloudRequests) {
           const mappedRequests: AccessRequest[] = cloudRequests.map((r: any) => ({
             id: r.id,
             orgId: r.org_id,
@@ -547,7 +445,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setAccessRequests(mappedRequests);
         }
 
-        if (cloudPayroll && cloudPayroll.length > 0) {
+        if (!errPay && cloudPayroll) {
           const mappedPayroll: PayrollRecord[] = cloudPayroll.map((p: any) => ({
             id: p.id,
             orgId: p.org_id,
@@ -572,7 +470,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setPayrollRecords(mappedPayroll);
         }
 
-        if (cloudLeaves && cloudLeaves.length > 0) {
+        if (!errLeaves && cloudLeaves) {
           const mappedLeaves: LeaveRequest[] = cloudLeaves.map((l: any) => ({
             id: l.id,
             orgId: l.org_id,
@@ -1249,6 +1147,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Hierarchy Updated 👥', `${emp?.firstName} now reports to ${mgr ? `${mgr.firstName} ${mgr.lastName}` : 'Management directly'}.`, 'info');
   };
 
+  const updateProfile = async (profileId: string, updates: Partial<Profile>): Promise<void> => {
+    setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, ...updates } : p)));
+
+    try {
+      const client = getSupabaseClient();
+      const supabaseUpdates: any = {};
+      if (updates.firstName !== undefined) supabaseUpdates.first_name = updates.firstName;
+      if (updates.lastName !== undefined) supabaseUpdates.last_name = updates.lastName;
+      if (updates.email !== undefined) supabaseUpdates.email = updates.email;
+      if (updates.phone !== undefined) supabaseUpdates.phone = updates.phone;
+      if (updates.role !== undefined) supabaseUpdates.role = updates.role;
+      if (updates.designation !== undefined) supabaseUpdates.designation = updates.designation;
+      if (updates.department !== undefined) supabaseUpdates.department = updates.department;
+      if (updates.baseSalary !== undefined) supabaseUpdates.base_salary = updates.baseSalary;
+      if (updates.isActive !== undefined) supabaseUpdates.is_active = updates.isActive;
+      if (updates.managerId !== undefined) {
+        supabaseUpdates.manager_id = updates.managerId && updates.managerId.length === 36 ? updates.managerId : null;
+      }
+      if (updates.modulesAccess !== undefined) supabaseUpdates.modules_access = updates.modulesAccess;
+      if (updates.avatarUrl !== undefined) supabaseUpdates.avatar_url = updates.avatarUrl;
+
+      const { error } = await client.from('profiles').update(supabaseUpdates).eq('id', profileId);
+      if (error) console.error('Supabase profile update error:', error);
+      else console.log('Profile updated in Supabase');
+    } catch (e) {
+      console.warn('Profile Supabase update failed:', e);
+    }
+
+    addToast('Profile Updated', 'Employee details have been successfully saved.', 'success');
+  };
+
+  const updateOrganization = async (orgId: string, updates: Partial<Organization>): Promise<void> => {
+    setOrganizations((prev) => prev.map((o) => (o.id === orgId ? { ...o, ...updates } : o)));
+
+    try {
+      const client = getSupabaseClient();
+      const supabaseUpdates: any = {};
+      if (updates.name !== undefined) supabaseUpdates.name = updates.name;
+      if (updates.slug !== undefined) supabaseUpdates.slug = updates.slug;
+      if (updates.orgCode !== undefined) supabaseUpdates.org_code = updates.orgCode;
+      if (updates.industry !== undefined) supabaseUpdates.industry = updates.industry;
+      if (updates.website !== undefined) supabaseUpdates.website = updates.website;
+      if (updates.address !== undefined) supabaseUpdates.address = updates.address;
+      if (updates.phone !== undefined) supabaseUpdates.phone = updates.phone;
+      if (updates.logoUrl !== undefined) supabaseUpdates.logo_url = updates.logoUrl;
+      if (updates.settings !== undefined) supabaseUpdates.settings = updates.settings;
+
+      const { error } = await client.from('organizations').update(supabaseUpdates).eq('id', orgId);
+      if (error) console.error('Supabase organization update error:', error);
+      else console.log('Organization updated in Supabase');
+    } catch (e) {
+      console.warn('Organization Supabase update failed:', e);
+    }
+
+    addToast('Organization Updated', 'Organization configuration and policies saved.', 'success');
+  };
+
   const toggleOrganizationStatus = (orgId: string) => {
     setOrganizations((prev) =>
       prev.map((o) => {
@@ -1455,7 +1410,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- ATTENDANCE ---
   const getTodayAttendance = (): AttendanceRecord | undefined => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayISTDateString();
     return attendanceRecords.find(
       (a) => a.orgId === currentOrg.id && a.employeeId === currentProfile.id && a.date === todayStr
     );
@@ -1468,9 +1423,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     distanceMeters: number = 0,
     officeAddress?: string
   ) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayISTDateString();
     const existing = getTodayAttendance();
     const resolvedAddress = officeAddress || currentOrg.address || 'Corporate Headquarters';
+
+    if (existing) {
+      addToast(
+        'Attendance Recorded Today (IST) ✓',
+        `Your punch is already active for today (${todayStr}) as ${existing.status.toUpperCase()}. Checkout not needed.`,
+        'info'
+      );
+      return { success: true, message: 'Attendance already recorded for today', record: existing };
+    }
 
     const requiresApproval = isRemote || distanceMeters > 150;
     const regularizationStatus: RegularizationStatus = requiresApproval ? 'pending' : 'none';
@@ -1481,113 +1445,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? 'Work From Home (WFH) - Presence Approval Required'
       : (distanceMeters > 150 ? `Location Outside Office Geofence (${Math.round(distanceMeters)}m away) - Presence Approval Required` : undefined);
 
-    if (!existing) {
-      const newId = generateUUID();
-      const newRecord: AttendanceRecord = {
+    const newId = generateUUID();
+    const nowIso = new Date().toISOString();
+    const workHours = currentOrg.settings?.workHoursPerDay || 8;
+    const newRecord: AttendanceRecord = {
+      id: newId,
+      orgId: currentOrg.id,
+      employeeId: currentProfile.id,
+      date: todayStr,
+      checkInTime: nowIso,
+      checkInLat: lat,
+      checkInLong: long,
+      distanceMeters,
+      officeAddress: resolvedAddress,
+      status: 'present',
+      isRemote,
+      approvalStatus,
+      regularizationStatus,
+      regularizationReason,
+      totalHours: workHours
+    };
+
+    setAttendanceRecords((prev) => [newRecord, ...prev]);
+
+    try {
+      const client = getSupabaseClient();
+      client.from('attendance').insert({
         id: newId,
-        orgId: currentOrg.id,
-        employeeId: currentProfile.id,
-        date: todayStr,
-        checkInTime: new Date().toISOString(),
-        checkInLat: lat,
-        checkInLong: long,
-        distanceMeters,
-        officeAddress: resolvedAddress,
-        status: 'present',
-        isRemote,
-        approvalStatus,
-        regularizationStatus,
-        regularizationReason,
-        totalHours: 0
-      };
-
-      setAttendanceRecords((prev) => [newRecord, ...prev]);
-
-      try {
-        const client = getSupabaseClient();
-        client.from('attendance').insert({
-          id: newId,
-          org_id: currentOrg.id,
-          employee_id: currentProfile.id,
-          date: newRecord.date,
-          check_in_time: newRecord.checkInTime,
-          check_in_lat: lat,
-          check_in_long: long,
-          distance_meters: distanceMeters,
-          office_address: resolvedAddress,
-          status: newRecord.status,
-          is_remote: isRemote,
-          approval_status: approvalStatus,
-          regularization_status: regularizationStatus,
-          regularization_reason: regularizationReason || null
-        }).then(({ error }) => {
-          if (error) console.error('Supabase attendance check-in error:', error);
-          else console.log('Attendance check-in saved to Supabase!');
-        });
-      } catch (e) {
-        console.error('Attendance insert error:', e);
-      }
-
-      if (requiresApproval) {
-        addToast(
-          'Punched In (Presence Approval Required) 📍',
-          isRemote
-            ? 'Work From Home logged. Sent to your assigned Manager / HR for presence approval.'
-            : `Location outside office address (${resolvedAddress}). Sent to Manager / HR for approval.`,
-          'warning'
-        );
-        addNotification(
-          'Presence Approval Needed 📍',
-          `${currentProfile.firstName} ${currentProfile.lastName} punched in from outside office / WFH. Approval needed.`,
-          'attendance',
-          'attendance'
-        );
-      } else {
-        addToast('Office Check-In Verified 📍', `Verified at ${resolvedAddress}`, 'success');
-        addNotification('Attendance Check-In 📍', `Punched in successfully at ${resolvedAddress}`, 'attendance', 'attendance');
-      }
-
-      return { success: true, message: 'Checked in successfully', record: newRecord };
-    } else if (!existing.checkOutTime) {
-      const checkInDate = new Date(existing.checkInTime!).getTime();
-      const now = Date.now();
-      const hours = Math.round(((now - checkInDate) / (1000 * 60 * 60)) * 100) / 100;
-      const totalHours = Math.max(hours, 0.5);
-      const newStatus = hours >= (currentOrg.settings?.halfDayThresholdHours || 4.5) ? 'present' : 'half_day';
-
-      const updatedRecord: AttendanceRecord = {
-        ...existing,
-        checkOutTime: new Date().toISOString(),
-        checkOutLat: lat,
-        checkOutLong: long,
-        totalHours,
-        status: newStatus
-      };
-
-      setAttendanceRecords((prev) => prev.map((a) => (a.id === existing.id ? updatedRecord : a)));
-
-      try {
-        const client = getSupabaseClient();
-        client.from('attendance').update({
-          check_out_time: updatedRecord.checkOutTime,
-          check_out_lat: lat,
-          check_out_long: long,
-          total_hours: totalHours,
-          status: newStatus
-        }).eq('id', existing.id).then(({ error }) => {
-          if (error) console.error('Supabase attendance check-out error:', error);
-          else console.log('Attendance check-out updated in Supabase!');
-        });
-      } catch (e) {
-        console.error('Attendance check-out error:', e);
-      }
-
-      addToast('Check-Out Recorded 🏁', `Checked out. Duration: ${totalHours} hrs. Remember your EOD Standup!`, 'info');
-      addNotification('Attendance Check-Out 🏁', `Checked out. Remember to log your daily standup!`, 'attendance', 'standups');
-      return { success: true, message: 'Checked out successfully', record: updatedRecord };
-    } else {
-      return { success: false, message: 'Already completed attendance for today', record: existing };
+        org_id: currentOrg.id,
+        employee_id: currentProfile.id,
+        date: newRecord.date,
+        check_in_time: newRecord.checkInTime,
+        check_in_lat: lat,
+        check_in_long: long,
+        distance_meters: distanceMeters,
+        office_address: resolvedAddress,
+        status: newRecord.status,
+        is_remote: isRemote,
+        approval_status: approvalStatus,
+        regularization_status: regularizationStatus,
+        regularization_reason: regularizationReason || null,
+        total_hours: workHours
+      }).then(({ error }) => {
+        if (error) console.error('Supabase attendance check-in error:', error);
+        else console.log('Attendance check-in saved to Supabase!');
+      });
+    } catch (e) {
+      console.error('Attendance insert error:', e);
     }
+
+    if (requiresApproval) {
+      addToast(
+        'Punched In (Presence Approval Required) 📍',
+        isRemote
+          ? 'Work From Home logged. Sent to your assigned Manager / HR for presence approval.'
+          : `Location outside office address (${resolvedAddress}). Sent to Manager / HR for approval.`,
+        'warning'
+      );
+      addNotification(
+        'Presence Approval Needed 📍',
+        `${currentProfile.firstName} ${currentProfile.lastName} punched in from outside office / WFH. Approval needed.`,
+        'attendance',
+        'attendance'
+      );
+    } else {
+      addToast('Attendance Recorded 📍', `Verified at ${resolvedAddress} (${formatISTTime(nowIso)} IST). Checkout not needed.`, 'success');
+      addNotification('Attendance Recorded 📍', `Punched in successfully at ${resolvedAddress} (${formatISTTime(nowIso)} IST)`, 'attendance', 'attendance');
+    }
+
+    return { success: true, message: 'Attendance recorded successfully', record: newRecord };
   };
 
   const requestRegularization = (attendanceId: string, reason: string) => {
@@ -1980,10 +1906,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .filter((l) => l.leaveType === 'unpaid')
       .reduce((sum, l) => sum + Number(l.totalDays), 0);
 
+    const leavePolicy = currentOrg.settings?.leavePolicy || {
+      casualTotal: 12,
+      sickTotal: 10,
+      privilegeTotal: 15
+    };
+    const casualTotal = leavePolicy.casualTotal ?? 12;
+    const sickTotal = leavePolicy.sickTotal ?? 10;
+    const privilegeTotal = leavePolicy.privilegeTotal ?? 15;
+
     return {
-      casual: { total: 12, used: casualUsed, remaining: Math.max(0, 12 - casualUsed) },
-      sick: { total: 10, used: sickUsed, remaining: Math.max(0, 10 - sickUsed) },
-      privilege: { total: 15, used: privilegeUsed, remaining: Math.max(0, 15 - privilegeUsed) },
+      casual: { total: casualTotal, used: casualUsed, remaining: Math.max(0, casualTotal - casualUsed) },
+      sick: { total: sickTotal, used: sickUsed, remaining: Math.max(0, sickTotal - sickUsed) },
+      privilege: { total: privilegeTotal, used: privilegeUsed, remaining: Math.max(0, privilegeTotal - privilegeUsed) },
       unpaid: { used: unpaidUsed }
     };
   };
@@ -2215,6 +2150,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         orgProfiles,
         allProfiles: profiles,
         createProfile,
+        updateProfile,
+        updateOrganization,
         switchOrganization,
         switchRole,
         createOrganization,

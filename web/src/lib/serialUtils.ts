@@ -66,3 +66,73 @@ export function generateUUID(): string {
   });
 }
 
+/**
+ * Returns today's date in Indian Standard Time (Asia/Kolkata, UTC+5:30) as YYYY-MM-DD
+ */
+export function getTodayISTDateString(): string {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(new Date());
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+}
+
+/**
+ * Formats time in Indian Standard Time (hh:mm a IST)
+ */
+export function formatISTTime(dateStrOrIso?: string): string {
+  if (!dateStrOrIso) return '';
+  try {
+    const d = new Date(dateStrOrIso);
+    return d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Formats date in Indian Standard Time (DD MMM YYYY)
+ */
+export function formatISTDate(dateStrOrIso?: string): string {
+  if (!dateStrOrIso) return '';
+  try {
+    const d = new Date(dateStrOrIso);
+    return d.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  } catch {
+    return dateStrOrIso;
+  }
+}
+
+/**
+ * Formats date and time in Indian Standard Time
+ */
+export function formatISTDateTime(dateStrOrIso?: string): string {
+  if (!dateStrOrIso) return '';
+  try {
+    const d = new Date(dateStrOrIso);
+    return d.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    });
+  } catch {
+    return dateStrOrIso;
+  }
+}
+

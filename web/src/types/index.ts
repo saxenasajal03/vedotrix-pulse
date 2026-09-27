@@ -26,6 +26,11 @@ export interface Organization {
     gracePeriodMins: number;
     wfhAllowed: boolean;
     halfDayThresholdHours: number;
+    leavePolicy?: {
+      casualTotal: number;
+      sickTotal: number;
+      privilegeTotal: number;
+    };
   };
 }
 

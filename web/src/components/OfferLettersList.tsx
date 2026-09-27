@@ -268,7 +268,12 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                   </button>
                 </div>
 
-                {myOffer.status === 'issued' && (
+                {myOffer.status === 'accepted' ? (
+                  <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>✓ Offer Digitally Accepted</span>
+                  </div>
+                ) : myOffer.status === 'issued' ? (
                   <button
                     onClick={() => handleAcceptOffer(myOffer.serialNumber)}
                     className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-extrabold transition shadow-lg shadow-emerald-600/30"
@@ -276,7 +281,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                     <Check className="w-4 h-4" />
                     <span>Digitally Sign & Accept Offer</span>
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           ) : (
