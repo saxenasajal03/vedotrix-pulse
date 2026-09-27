@@ -1,19 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { 
-  Building2, 
-  UserCheck, 
-  ShieldCheck, 
+import {
+  Search,
+  Building2,
+  ShieldCheck,
   ChevronDown,
-  Moon,
-  Sun,
-  Palette,
-  Crown,
   LogOut,
   Menu,
-  X
+  X,
+  Crown,
+  User,
+  Settings
 } from 'lucide-react';
-import { UserRole, ThemeMode } from '../types';
 import { NotificationDropdown } from './NotificationDropdown';
 
 interface NavbarProps {
@@ -37,170 +35,174 @@ export const Navbar: React.FC<NavbarProps> = ({
     switchOrganization,
     currentProfile,
     isVedotrixSuperadmin,
-    theme,
-    setTheme,
     logout
   } = useApp();
 
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchTerm.trim()) {
+      setActiveTab('employees');
+    }
+  };
+
   return (
-    <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 transition-colors">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-2">
-          {/* Brand Logo & Hamburger */}
-          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
-            {/* Mobile Hamburger Button */}
-            <button
-              onClick={onToggleMobileMenu}
-              className="p-2 -ml-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 md:hidden transition shrink-0"
-              aria-label="Toggle Navigation Menu"
-            >
-              {mobileOpen ? <X className="w-5 h-5 text-cyan-400" /> : <Menu className="w-5 h-5" />}
-            </button>
+    <header className="sticky top-0 z-20 bg-white border-b border-slate-200/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] h-16">
+      <div className="w-full h-full px-4 sm:px-8 flex items-center justify-between gap-3">
+        {/* Left: Mobile Toggle & Global Search Bar */}
+        <div className="flex items-center space-x-3 flex-1 max-w-xl">
+          {/* Mobile Hamburger Toggle */}
+          <button
+            onClick={onToggleMobileMenu}
+            className="p-2 -ml-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 md:hidden transition shrink-0"
+            aria-label="Toggle Navigation Menu"
+          >
+            {mobileOpen ? <X className="w-5 h-5 text-blue-600" /> : <Menu className="w-5 h-5" />}
+          </button>
 
-            {/* Brand Logo & Title */}
-            <div
-              className="flex items-center space-x-2.5 cursor-pointer min-w-0"
-              onClick={() => setActiveTab('dashboard')}
-            >
-              <div className="relative group shrink-0">
-                <img
-                  src={isVedotrixSuperadmin ? '/vedotrix-logo.png' : (currentOrg.logoUrl || '/vedotrix-logo.png')}
-                  alt={isVedotrixSuperadmin ? 'Vedotrix Technologies' : currentOrg.name}
-                  className="w-9 h-9 sm:w-10 sm:h-10 object-contain rounded-xl p-0.5 bg-slate-900 border border-cyan-500/40 shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition"
-                  onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
-                />
-                <div className={`absolute -bottom-1 -right-1 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full border-2 border-slate-900 ${isVedotrixSuperadmin ? 'bg-cyan-400' : 'bg-emerald-400'}`} />
-              </div>
+          {/* Search bar matching reference screenshot */}
+          <form onSubmit={handleSearchSubmit} className="relative w-full max-w-md">
+            <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search employees, departments, or anything..."
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-full text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition shadow-inner"
+            />
+          </form>
+        </div>
 
-              <div className="min-w-0">
-                <div className="flex items-center space-x-1.5">
-                  <span className="font-extrabold text-base sm:text-lg tracking-tight text-white truncate">
-                    {isVedotrixSuperadmin ? (
-                      <>Vedotrix <span className="text-cyan-400">Pulse</span></>
-                    ) : (
-                      currentOrg.name
-                    )}
-                  </span>
-                  {isVedotrixSuperadmin ? (
-                    <span className="hidden sm:inline-flex text-[9px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-1.5 py-0.5 rounded-full items-center space-x-1 shrink-0">
-                      <Crown className="w-2.5 h-2.5 mr-0.5" />
-                      <span>SUPER CONTROLLER</span>
-                    </span>
-                  ) : (
-                    <span className="hidden sm:inline-flex text-[9px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.5 rounded-full items-center shrink-0">
-                      <span>{currentOrg.orgCode}</span>
-                    </span>
-                  )}
-                </div>
-                <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 truncate">
-                  {isVedotrixSuperadmin ? (
-                    <>Designed & Managed by <span className="text-cyan-400 font-semibold">Vedotrix Technologies</span></>
-                  ) : (
-                    <>Enterprise Workspace • <span className="text-cyan-400 font-semibold">Vedotrix Pulse</span></>
-                  )}
-                </p>
-              </div>
+        {/* Right: Actions, Notifications & User Profile */}
+        <div className="flex items-center space-x-2 sm:space-x-4 shrink-0">
+          {/* Tenant Switcher Pill */}
+          <div className="relative hidden lg:block">
+            <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700 hover:bg-slate-100 transition cursor-pointer">
+              <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="font-semibold text-xs text-slate-800 max-w-[130px] truncate">
+                {currentOrg.name}
+              </span>
+              <span className="font-mono text-[10px] text-slate-400 font-bold">
+                {currentOrg.orgCode}
+              </span>
+              {isVedotrixSuperadmin && <ChevronDown className="w-3 h-3 text-slate-400" />}
             </div>
+            {isVedotrixSuperadmin && (
+              <select
+                value={currentOrg.id}
+                onChange={(e) => switchOrganization(e.target.value)}
+                aria-label="Switch Active Organization"
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              >
+                {availableOrgs.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name} ({org.orgCode}) {org.id === '00000000-0000-0000-0000-000000000001' ? '★ ROOT' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
-          {/* Quick Actions & Controls */}
-          <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
-            {/* SuperAdmin Quick Tab Button (Strictly Vedotrix Parental Master Only) */}
-            {isVedotrixSuperadmin && (
-              <button
-                onClick={() => setActiveTab('superadmin')}
-                className={`hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-extrabold rounded-lg transition border ${
-                  activeTab === 'superadmin'
-                    ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-lg shadow-cyan-500/30'
-                    : 'bg-cyan-950/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-900/40'
-                }`}
-              >
-                <Crown className="w-3.5 h-3.5" />
-                <span>Super Controller</span>
-              </button>
-            )}
+          {/* Quick Verification Button */}
+          <button
+            onClick={onOpenVerifyModal}
+            className="hidden sm:inline-flex items-center space-x-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition shadow-xs"
+            title="Verify offer letters by serial code"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>Verify</span>
+          </button>
 
-            {/* Public Verification Quick Button */}
+          {/* In-App Notifications Dropdown */}
+          <NotificationDropdown onNavigateTab={(tab) => setActiveTab(tab)} />
+
+          {/* User Profile Pill matching screenshot */}
+          <div className="relative">
             <button
-              onClick={onOpenVerifyModal}
-              className="inline-flex items-center space-x-1 px-2 sm:px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-all shadow-sm"
-              title="Verify any offer letter by serial number"
+              onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+              className="flex items-center space-x-2.5 pl-2 py-1 pr-1.5 rounded-full hover:bg-slate-50 transition border border-transparent hover:border-slate-200"
             >
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="hidden sm:inline">Verify</span>
-            </button>
-
-            {/* In-App Notifications Center */}
-            <NotificationDropdown onNavigateTab={(tab) => setActiveTab(tab)} />
-
-            {/* Multi-Theme Switcher Dropdown */}
-            <div className="relative group">
-              <div
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 border border-slate-700/80 cursor-pointer flex items-center space-x-1"
-                title="Change UI Theme"
-              >
-                {theme === 'cyber-dark' && <Moon className="w-4 h-4 text-cyan-400" />}
-                {theme === 'midnight' && <Palette className="w-4 h-4 text-indigo-400" />}
-                {theme === 'corporate-light' && <Sun className="w-4 h-4 text-amber-400" />}
-                <select
-                  value={theme}
-                  onChange={(e) => setTheme(e.target.value as ThemeMode)}
-                  aria-label="Select Theme Mode"
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                >
-                  <option value="cyber-dark">Cyber Dark (Vedotrix Neon)</option>
-                  <option value="midnight">Midnight Blue (Deep Navy)</option>
-                  <option value="corporate-light">Corporate Light (White)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Tenant Switcher (Vedotrix Superadmin Only) or Fixed Org Badge */}
-            <div className="relative hidden sm:block">
-              <div className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200">
-                <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span className="font-bold text-xs text-white max-w-[150px] truncate">
-                  {currentOrg.name}
-                </span>
-                <span className="font-semibold text-[10px] bg-slate-700 text-indigo-300 px-1.5 py-0.5 rounded">
-                  {currentOrg.orgCode}
-                </span>
-                {isVedotrixSuperadmin && (
-                  <>
-                    <select
-                      value={currentOrg.id}
-                      onChange={(e) => switchOrganization(e.target.value)}
-                      aria-label="Select Active Organization"
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                    >
-                      {availableOrgs.map((org) => (
-                        <option key={org.id} value={org.id}>
-                          {org.name} ({org.orgCode}) {org.id === '00000000-0000-0000-0000-000000000001' ? '★ ROOT' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="w-3 h-3 text-slate-400" />
-                  </>
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-xs flex items-center justify-center shadow-xs overflow-hidden border border-slate-200">
+                {currentProfile.avatarUrl && currentProfile.avatarUrl !== '/vedotrix-logo.png' ? (
+                  <img
+                    src={currentProfile.avatarUrl}
+                    alt={currentProfile.firstName}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span>{currentProfile.firstName[0]}{currentProfile.lastName[0]}</span>
                 )}
               </div>
-            </div>
-
-            {/* Authenticated User Badge */}
-            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-slate-200">
-              <UserCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-              <span className="font-bold text-[9px] sm:text-[10px] bg-indigo-950 border border-indigo-500/40 text-cyan-300 px-1.5 py-0.5 rounded uppercase">
-                {currentProfile.role}
-              </span>
-            </div>
-
-            {/* Logout Action Button */}
-            <button
-              onClick={() => logout()}
-              className="p-2 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-700/80 hover:border-rose-500/40 transition"
-              title="Secure Log Out"
-            >
-              <LogOut className="w-4 h-4" />
+              <div className="hidden sm:block text-left leading-tight">
+                <span className="text-xs font-bold text-slate-900 block truncate max-w-[120px]">
+                  {currentProfile.firstName} {currentProfile.lastName}
+                </span>
+                <span className="text-[10px] text-slate-500 font-medium capitalize block truncate max-w-[120px]">
+                  {currentProfile.role === 'owner' || currentProfile.role === 'superadmin'
+                    ? 'Admin'
+                    : currentProfile.designation || currentProfile.role}
+                </span>
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden sm:block" />
             </button>
+
+            {/* Profile Dropdown Menu */}
+            {isProfileMenuOpen && (
+              <div
+                className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150"
+                onClick={() => setIsProfileMenuOpen(false)}
+              >
+                <div className="px-4 py-2.5 border-b border-slate-100">
+                  <p className="text-xs font-bold text-slate-900">
+                    {currentProfile.firstName} {currentProfile.lastName}
+                  </p>
+                  <p className="text-[11px] text-slate-500 truncate">{currentProfile.email}</p>
+                  <span className="inline-block mt-1 text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    {currentProfile.role}
+                  </span>
+                </div>
+
+                <div className="py-1">
+                  <button
+                    onClick={() => setActiveTab('employees')}
+                    className="w-full px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2"
+                  >
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    <span>My Profile & Team</span>
+                  </button>
+
+                  {isVedotrixSuperadmin && (
+                    <button
+                      onClick={() => setActiveTab('superadmin')}
+                      className="w-full px-4 py-2 text-left text-xs text-blue-700 hover:bg-blue-50 flex items-center space-x-2 font-semibold"
+                    >
+                      <Crown className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Super Controller Hub</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => setActiveTab('access_requests')}
+                    className="w-full px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2"
+                  >
+                    <Settings className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Preferences & Approvals</span>
+                  </button>
+                </div>
+
+                <div className="pt-1 border-t border-slate-100">
+                  <button
+                    onClick={() => logout()}
+                    className="w-full px-4 py-2 text-left text-xs text-rose-600 hover:bg-rose-50 flex items-center space-x-2 font-semibold"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

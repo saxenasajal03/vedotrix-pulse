@@ -2,19 +2,20 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import {
   LayoutDashboard,
-  FileCheck2,
-  MapPin,
-  KanbanSquare,
+  Users,
   Clock,
+  CalendarDays,
   Banknote,
-  ShieldCheck,
-  Building,
-  Sparkles,
-  Crown,
+  TrendingUp,
+  Briefcase,
+  GraduationCap,
+  FileSpreadsheet,
+  Settings,
+  Headphones,
   X,
   ChevronRight,
-  Users,
-  CalendarCheck
+  ShieldCheck,
+  Crown
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -41,7 +42,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     tasks,
     accessRequests,
     orgProfiles,
-    leaveRequests
+    leaveRequests,
+    addToast
   } = useApp();
 
   const pendingRegularizations = attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length;
@@ -63,71 +65,73 @@ export const Sidebar: React.FC<SidebarProps> = ({
         (currentProfile.role === 'hr' && l.orgId === currentOrg.id))
   ).length;
 
+  const isHrOrSuperadmin =
+    currentProfile.role === 'hr' ||
+    currentProfile.role === 'owner' ||
+    currentProfile.role === 'superadmin' ||
+    isVedotrixSuperadmin;
+
+  // Exact navigation item list matching the reference image
   const navItems = [
-    ...(isVedotrixSuperadmin
-      ? [
-          {
-            id: 'superadmin',
-            label: 'Super Controller Hub',
-            icon: Crown,
-            badge: 'MASTER',
-            color: 'text-cyan-400'
-          }
-        ]
-      : []),
     {
       id: 'dashboard',
-      label: 'Dashboard Overview',
+      label: 'Dashboard',
       icon: LayoutDashboard,
       badge: null
     },
     {
-      id: 'offers',
-      label: 'Offer Letters & Verification',
-      icon: FileCheck2,
-      badge: pendingOffers > 0 ? `${pendingOffers} Active` : null
+      id: 'employees',
+      label: 'Employees',
+      icon: Users,
+      badge: `${orgProfiles.length}`
     },
     {
       id: 'attendance',
-      label: 'Geo-Fenced Attendance',
-      icon: MapPin,
-      badge: pendingRegularizations > 0 && (currentProfile.role === 'hr' || currentProfile.role === 'owner') ? `${pendingRegularizations} Regs` : null
-    },
-    {
-      id: 'tasks',
-      label: currentOrg.industry === 'Tech' ? 'Tech Sprints & Git' : 'Campaigns & ROAS',
-      icon: KanbanSquare,
-      badge: `${tasks.length} Tasks`
-    },
-    {
-      id: 'employees',
-      label: 'Workforce & Employees',
-      icon: Users,
-      badge: `${orgProfiles.length} Staff`
-    },
-    {
-      id: 'standups',
-      label: 'Daily EOD Standups',
+      label: 'Attendance',
       icon: Clock,
-      badge: null
-    },
-    {
-      id: 'payroll',
-      label: 'Payroll & Disbursals',
-      icon: Banknote,
-      badge: 'Auto'
+      badge: pendingRegularizations > 0 && isHrOrSuperadmin ? `${pendingRegularizations}` : null
     },
     {
       id: 'leaves',
-      label: 'Leave & Time-Off',
-      icon: CalendarCheck,
-      badge: pendingLeavesCount > 0 ? `${pendingLeavesCount} New` : null
+      label: 'Leave',
+      icon: CalendarDays,
+      badge: pendingLeavesCount > 0 ? `${pendingLeavesCount}` : null
+    },
+    {
+      id: 'payroll',
+      label: 'Payroll',
+      icon: Banknote,
+      badge: isHrOrSuperadmin ? null : 'Slips'
+    },
+    {
+      id: 'tasks',
+      label: 'Performance',
+      icon: TrendingUp,
+      badge: `${tasks.length}`
+    },
+    {
+      id: 'offers',
+      label: 'Recruitment',
+      icon: Briefcase,
+      badge: pendingOffers > 0 && isHrOrSuperadmin ? `${pendingOffers}` : null
+    },
+    {
+      id: 'standups',
+      label: 'Training & Development',
+      icon: GraduationCap,
+      badge: null
     },
     {
       id: 'access_requests',
-      label: 'Access & Hierarchy',
-      icon: ShieldCheck,
-      badge: pendingApprovalsCount > 0 ? `${pendingApprovalsCount} Req` : null
+      label: 'Reports',
+      icon: FileSpreadsheet,
+      badge: pendingApprovalsCount > 0 ? `${pendingApprovalsCount}` : null
+    },
+    {
+      id: isVedotrixSuperadmin ? 'superadmin' : 'access_requests',
+      label: 'Settings',
+      icon: Settings,
+      badge: isVedotrixSuperadmin ? 'MASTER' : null
     }
   ];
 
@@ -136,52 +140,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (onCloseMobile) onCloseMobile();
   };
 
+  const handleContactSupport = () => {
+    addToast(
+      'Support Team Alerted 🎧',
+      'Our 24/7 technical team has received your inquiry. We will contact you at ' + currentProfile.email,
+      'info'
+    );
+  };
+
   const renderNavContent = (isMobileView = false) => (
-    <div className="flex flex-col justify-between h-full">
-      <div className="p-4 space-y-5 overflow-y-auto">
-        {/* Mobile Header with Close Button */}
-        {isMobileView && (
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-            <div className="flex items-center space-x-2 min-w-0">
-              <img
-                src={currentOrg.logoUrl || '/vedotrix-logo.png'}
-                alt={currentOrg.name}
-                className="w-7 h-7 object-contain rounded-lg shrink-0 p-0.5 bg-slate-900 border border-slate-700"
-                onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
-              />
-              <span className="font-extrabold text-sm text-white truncate">
-                {currentOrg.name}
-              </span>
+    <div className="flex flex-col justify-between h-full bg-[#0b1329] text-white select-none">
+      <div className="p-5 space-y-6 overflow-y-auto">
+        {/* Brand Header */}
+        <div className="flex items-center justify-between">
+          <div
+            onClick={() => handleTabClick('dashboard')}
+            className="flex items-center space-x-3 cursor-pointer group"
+          >
+            {/* Logo Icon */}
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/25 shrink-0 group-hover:scale-105 transition-transform">
+              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="8" cy="8" r="3" />
+                <path d="M4 17c0-2.2 1.8-4 4-4s4 1.8 4 4v1H4v-1z" />
+                <circle cx="16" cy="11" r="2.5" />
+                <path d="M13.5 18c0-1.7 1.3-3 3-3s3 1.3 3 3v1h-6v-1z" opacity="0.8" />
+              </svg>
             </div>
+            <div>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-lg font-extrabold text-white tracking-tight leading-none">
+                  HRMS
+                </span>
+                {isVedotrixSuperadmin && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    MASTER
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium tracking-tight mt-0.5">
+                People. Process. Progress.
+              </p>
+            </div>
+          </div>
+
+          {isMobileView && (
             <button
               onClick={onCloseMobile}
-              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white shrink-0 ml-2"
-              aria-label="Close Navigation"
+              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
             >
               <X className="w-4 h-4" />
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Organization Card */}
-        <div className="p-3.5 rounded-xl bg-gradient-to-br from-slate-800/80 to-slate-900 border border-slate-700/60 shadow-inner">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-lg bg-slate-950 text-indigo-400 flex items-center justify-center font-bold text-xs border border-indigo-500/30 overflow-hidden shrink-0 p-1">
-              <img
-                src={currentOrg.logoUrl || '/vedotrix-logo.png'}
-                alt={currentOrg.name}
-                className="w-full h-full object-contain"
-                onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
-              />
-            </div>
-            <div className="overflow-hidden min-w-0">
-              <h2 className="text-xs font-bold text-white truncate">{currentOrg.name}</h2>
-              <span className="inline-flex items-center text-[10px] text-cyan-400 font-medium truncate">
-                <Sparkles className="w-3 h-3 mr-1 shrink-0" />
-                <span className="truncate">{currentOrg.industry} ({currentOrg.orgCode})</span>
-              </span>
-            </div>
+        {/* Current Org Indicator Pill */}
+        <div className="px-3 py-2 rounded-xl bg-slate-900/90 border border-slate-800/80 flex items-center justify-between text-xs">
+          <div className="flex items-center space-x-2 truncate">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="font-semibold text-slate-200 truncate">{currentOrg.name}</span>
           </div>
+          <span className="text-[10px] font-mono text-slate-400 font-bold ml-1 shrink-0">
+            {currentOrg.orgCode}
+          </span>
         </div>
 
         {/* Navigation Menu */}
@@ -191,76 +211,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const isActive = activeTab === item.id;
             return (
               <button
-                key={item.id}
+                key={item.label}
                 onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 ${
                   isActive
-                    ? 'bg-gradient-to-r from-cyan-600 via-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/30 font-bold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
                 }`}
               >
                 <div className="flex items-center space-x-3 min-w-0">
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : item.color || 'text-slate-400'}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                   <span className="truncate">{item.label}</span>
                 </div>
-                {item.badge ? (
+                {item.badge && (
                   <span
-                    className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full shrink-0 ml-2 ${
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2 ${
                       isActive
-                        ? 'bg-indigo-700 text-indigo-100'
-                        : item.id === 'superadmin'
-                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                        : 'bg-slate-800 text-indigo-300 border border-indigo-500/20'
+                        ? 'bg-blue-700/80 text-white'
+                        : 'bg-slate-800 text-slate-300 border border-slate-700'
                     }`}
                   >
                     {item.badge}
                   </span>
-                ) : (
-                  isMobileView && <ChevronRight className="w-3.5 h-3.5 text-slate-600 shrink-0" />
                 )}
               </button>
             );
           })}
         </nav>
-
-        {/* Quick Verification Widget */}
-        <div className="pt-2">
-          <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 space-y-2">
-            <div className="flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="text-xs font-bold">Public Verification</span>
-            </div>
-            <p className="text-[11px] text-slate-300 leading-relaxed">
-              Verify candidate credentials instantly using cryptographic serial codes.
-            </p>
-            <button
-              onClick={() => {
-                onOpenVerifyModal();
-                if (onCloseMobile) onCloseMobile();
-              }}
-              className="w-full py-2 px-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-sm"
-            >
-              Open Serial Verifier
-            </button>
-          </div>
-        </div>
       </div>
 
-      {/* Footer Branding with Official Logo */}
-      <div className="p-4 border-t border-slate-800 bg-slate-950/60 shrink-0">
-        <div className="flex items-center space-x-3">
-          <img
-            src="/vedotrix-logo.png"
-            alt="Vedotrix Logo"
-            className="w-8 h-8 object-contain rounded-lg p-0.5 bg-slate-900 border border-cyan-500/30 shrink-0"
-          />
-          <div className="min-w-0">
-            <p className="text-[10px] text-slate-400">Designed & Managed by</p>
-            <p className="text-xs font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400 truncate">
-              Vedotrix Technologies
+      {/* Bottom Section: Support Card & Org branding */}
+      <div className="p-4 space-y-3 border-t border-slate-800/80">
+        {/* Exact Need Help Card from Screenshot */}
+        <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900 to-[#0e172e] border border-slate-800 text-center space-y-2 shadow-inner">
+          <div className="w-9 h-9 mx-auto rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center border border-blue-500/20">
+            <Headphones className="w-4 h-4 text-blue-400" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-white">Need Help?</h4>
+            <p className="text-[10px] text-slate-400 leading-snug mt-0.5">
+              Our support team is here 24/7.
             </p>
           </div>
+          <button
+            onClick={handleContactSupport}
+            className="w-full py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition border border-slate-700"
+          >
+            Contact Support
+          </button>
         </div>
+
+        {/* Verification Shortcut */}
+        <button
+          onClick={() => {
+            onOpenVerifyModal();
+            if (onCloseMobile) onCloseMobile();
+          }}
+          className="w-full flex items-center justify-center space-x-1.5 py-1.5 text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30 rounded-lg transition border border-emerald-500/20"
+        >
+          <ShieldCheck className="w-3.5 h-3.5" />
+          <span>Verify Offer / Credentials</span>
+        </button>
       </div>
     </div>
   );
@@ -268,7 +279,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* 1. Desktop Persistent Sidebar */}
-      <aside className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 flex-col shrink-0 min-h-[calc(100vh-4rem)] transition-colors">
+      <aside className="hidden md:flex w-64 bg-[#0b1329] border-r border-slate-800/80 flex-col shrink-0 h-screen sticky top-0 z-30 transition-colors">
         {renderNavContent(false)}
       </aside>
 
@@ -278,15 +289,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
       >
-        {/* Dark Backdrop */}
         <div
           className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity"
           onClick={onCloseMobile}
         />
-
-        {/* Slide-over Panel */}
         <div
-          className={`fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-slate-900 border-r border-slate-800 shadow-2xl transform transition-transform duration-300 ease-in-out ${
+          className={`fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-[#0b1329] border-r border-slate-800 shadow-2xl transform transition-transform duration-300 ease-in-out ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >

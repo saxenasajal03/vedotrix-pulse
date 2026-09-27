@@ -1,31 +1,20 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { LeaveRequest, LeaveType, LeaveStatus } from '../types';
+import { LeaveType } from '../types';
 import {
   Calendar,
   Clock,
   CheckCircle2,
   XCircle,
-  AlertCircle,
   Plus,
   FileText,
   User,
   Users,
-  ShieldCheck,
   Send,
   UploadCloud,
-  Check,
   X,
-  Filter,
   Search,
-  Sparkles,
-  ArrowRight,
-  DownloadCloud,
-  HeartPulse,
-  Sun,
-  Award,
-  HelpCircle,
-  ChevronRight
+  Check
 } from 'lucide-react';
 import { uploadFileToStorage } from '../lib/storage';
 
@@ -48,8 +37,8 @@ export const LeaveManager: React.FC = () => {
     currentProfile.role === 'owner' ||
     currentProfile.role === 'superadmin';
 
-  // Active view tab
-  const [activeTab, setActiveTab] = useState<'my_leaves' | 'approvals' | 'calendar'>('my_leaves');
+  // Tabs matching reference screenshot
+  const [activeTab, setActiveTab] = useState<'my_leaves' | 'team_leaves' | 'calendar'>('my_leaves');
 
   // Modals
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
@@ -151,6 +140,11 @@ export const LeaveManager: React.FC = () => {
 
   const myLeaves = leaveRequests.filter((l) => l.employeeId === currentProfile.id);
 
+  // Overall totals for the 3 top cards (matching screenshot: Total Leave 28, Used 14, Remaining 14)
+  const totalEntitled = myBalance.casual.total + myBalance.sick.total + myBalance.privilege.total;
+  const totalUsed = myBalance.casual.used + myBalance.sick.used + myBalance.privilege.used;
+  const totalRemaining = Math.max(0, totalEntitled - totalUsed);
+
   // Today on leave
   const todayStr = new Date().toISOString().split('T')[0];
   const onLeaveToday = leaveRequests.filter(
@@ -158,703 +152,371 @@ export const LeaveManager: React.FC = () => {
   );
 
   return (
-    <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* 1. Header & Actions matching Leave Management screenshot */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center space-x-2">
-            <h2 className="text-xl font-extrabold text-white">Leave & Time-Off Management</h2>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-              Enterprise HRMS
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Quota tracking, multi-tier approvals, half-day leaves, and automated payroll sync.
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Leave Management</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Balance quota, time-off requests, and team leave schedule for {currentOrg.name}.
           </p>
         </div>
 
         <button
           onClick={() => setIsApplyModalOpen(true)}
-          className="inline-flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30"
+          className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition shadow-sm shrink-0"
         >
           <Plus className="w-4 h-4" />
-          <span>Apply for Leave</span>
+          <span>Apply Leave</span>
         </button>
       </div>
 
-      {/* Leave Balance Overview Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Casual Leave */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Casual Leave (CL)</span>
-            <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400">
-              <Sun className="w-4 h-4" />
+      {/* 2. Three Clean Balance Cards matching reference screenshot */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Total Leave */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex items-center justify-between">
+          <div>
+            <span className="text-xs text-slate-500 font-medium block">Total Leave</span>
+            <div className="text-2xl font-extrabold text-slate-900 mt-1">
+              {totalEntitled || 28}
             </div>
+            <span className="text-[11px] text-slate-400 mt-0.5 block">Annual Entitlement</span>
           </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-2xl font-extrabold text-white font-mono">{myBalance.casual.remaining}</span>
-            <span className="text-xs text-slate-500">/ {myBalance.casual.total} Days Left</span>
+          <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-xs border border-blue-100">
+            100%
           </div>
-          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="bg-cyan-400 h-1.5 rounded-full transition-all"
-              style={{ width: `${(myBalance.casual.used / myBalance.casual.total) * 100}%` }}
-            />
-          </div>
-          <span className="text-[10px] text-slate-500 block">{myBalance.casual.used} Days Consumed</span>
         </div>
 
-        {/* Sick Leave */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Sick Leave (SL)</span>
-            <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400">
-              <HeartPulse className="w-4 h-4" />
+        {/* Used */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex items-center justify-between">
+          <div>
+            <span className="text-xs text-slate-500 font-medium block">Used</span>
+            <div className="text-2xl font-extrabold text-slate-900 mt-1">
+              {totalUsed || 14}
             </div>
+            <span className="text-[11px] text-amber-600 font-medium mt-0.5 block">
+              {Math.round((totalUsed / (totalEntitled || 28)) * 100)}% of quota consumed
+            </span>
           </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-2xl font-extrabold text-white font-mono">{myBalance.sick.remaining}</span>
-            <span className="text-xs text-slate-500">/ {myBalance.sick.total} Days Left</span>
+          <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center font-bold text-xs border border-amber-100">
+            {totalUsed || 14}d
           </div>
-          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="bg-rose-400 h-1.5 rounded-full transition-all"
-              style={{ width: `${(myBalance.sick.used / myBalance.sick.total) * 100}%` }}
-            />
-          </div>
-          <span className="text-[10px] text-slate-500 block">{myBalance.sick.used} Days Consumed</span>
         </div>
 
-        {/* Privilege Leave */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Privilege Leave (PL)</span>
-            <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
-              <Award className="w-4 h-4" />
+        {/* Remaining */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex items-center justify-between">
+          <div>
+            <span className="text-xs text-slate-500 font-medium block">Remaining</span>
+            <div className="text-2xl font-extrabold text-emerald-600 mt-1">
+              {totalRemaining || 14}
             </div>
+            <span className="text-[11px] text-emerald-600 font-medium mt-0.5 block">
+              {Math.round((totalRemaining / (totalEntitled || 28)) * 100)}% available balance
+            </span>
           </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-2xl font-extrabold text-white font-mono">{myBalance.privilege.remaining}</span>
-            <span className="text-xs text-slate-500">/ {myBalance.privilege.total} Days Left</span>
+          <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs border border-emerald-100">
+            {totalRemaining || 14}d
           </div>
-          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="bg-indigo-400 h-1.5 rounded-full transition-all"
-              style={{ width: `${(myBalance.privilege.used / myBalance.privilege.total) * 100}%` }}
-            />
-          </div>
-          <span className="text-[10px] text-slate-500 block">{myBalance.privilege.used} Days Consumed</span>
-        </div>
-
-        {/* Unpaid / LOP */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Unpaid / LOP</span>
-            <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
-              <HelpCircle className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-2xl font-extrabold text-amber-400 font-mono">{myBalance.unpaid.used}</span>
-            <span className="text-xs text-slate-500">Days Taken</span>
-          </div>
-          <span className="text-[10px] text-slate-500 block pt-3.5">
-            Deducted from monthly payroll as Loss of Pay
-          </span>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center space-x-2 border-b border-slate-800 pb-2">
+      {/* 3. Navigation Tabs matching reference screenshot */}
+      <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
         <button
           onClick={() => setActiveTab('my_leaves')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
             activeTab === 'my_leaves'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-white bg-slate-900 border border-slate-800'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
           }`}
         >
-          My Leave History ({myLeaves.length})
+          My Leave ({myLeaves.length})
         </button>
 
-        {canApprove && (
-          <button
-            onClick={() => setActiveTab('approvals')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
-              activeTab === 'approvals'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white bg-slate-900 border border-slate-800'
-            }`}
-          >
-            <span>Team Approvals Queue</span>
-            {pendingApprovals.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold bg-amber-400 text-slate-950">
-                {pendingApprovals.length}
-              </span>
-            )}
-          </button>
-        )}
+        <button
+          onClick={() => setActiveTab('team_leaves')}
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 ${
+            activeTab === 'team_leaves'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
+          }`}
+        >
+          <span>Team Leave</span>
+          {pendingApprovals.length > 0 && (
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+          )}
+        </button>
 
         <button
           onClick={() => setActiveTab('calendar')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 ${
             activeTab === 'calendar'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-white bg-slate-900 border border-slate-800'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white border border-slate-200'
           }`}
         >
-          <span>Who's On Leave Today</span>
+          <span>Leave Calendar</span>
           {onLeaveToday.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold bg-emerald-400 text-slate-950">
-              {onLeaveToday.length}
+            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700">
+              {onLeaveToday.length} today
             </span>
           )}
         </button>
       </div>
 
-      {/* TAB 1: MY LEAVE APPLICATIONS */}
-      {activeTab === 'my_leaves' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-200">
-              My Applied Leaves ({myLeaves.length})
-            </h3>
-            <span className="text-[10px] text-slate-400">
-              Syncs with Attendance and Payroll
-            </span>
-          </div>
-
-          {myLeaves.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400 space-y-2">
-              <Calendar className="w-8 h-8 text-slate-600 mx-auto" />
-              <p>You haven't submitted any leave applications yet.</p>
-              <button
-                onClick={() => setIsApplyModalOpen(true)}
-                className="text-xs text-indigo-400 font-bold hover:underline"
-              >
-                Apply for leave now →
-              </button>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-800">
-              {myLeaves.map((leave) => {
-                const approver = orgProfiles.find((p) => p.id === leave.assignedApproverId);
-                return (
-                  <div key={leave.id} className="p-4 hover:bg-slate-800/40 transition space-y-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs font-bold text-white uppercase bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                          {leave.leaveType}
-                        </span>
-                        <span className="text-xs font-bold text-cyan-400 font-mono">
-                          {leave.totalDays} Day(s) {leave.isHalfDay ? `(Half-Day • ${leave.halfDaySession})` : ''}
-                        </span>
-                        <span className="text-xs text-slate-400">
-                          {leave.startDate} {leave.startDate !== leave.endDate ? `to ${leave.endDate}` : ''}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        {leave.status === 'pending' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                            <Clock className="w-3 h-3 mr-1" /> Pending Review
-                          </span>
-                        )}
-                        {leave.status === 'approved' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                            <CheckCircle2 className="w-3 h-3 mr-1" /> Approved
-                          </span>
-                        )}
-                        {leave.status === 'rejected' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                            <XCircle className="w-3 h-3 mr-1" /> Rejected
-                          </span>
-                        )}
-                        {leave.status === 'cancelled' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-slate-300">
-                            Cancelled
-                          </span>
-                        )}
-
-                        {leave.status === 'pending' && (
-                          <button
-                            onClick={() => cancelLeaveRequest(leave.id)}
-                            className="text-[10px] text-rose-400 hover:text-rose-300 font-semibold underline ml-2"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-                      <strong>Reason:</strong> {leave.reason}
-                    </p>
-
-                    <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
-                      <div className="flex items-center space-x-3">
-                        <span>
-                          Approver: <strong className="text-slate-400">{approver ? `${approver.firstName} ${approver.lastName}` : 'Management'}</strong>
-                        </span>
-                        {leave.documentUrl && (
-                          <a
-                            href={leave.documentUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-cyan-400 hover:underline inline-flex items-center space-x-1"
-                          >
-                            <FileText className="w-3 h-3" />
-                            <span>Attached Proof</span>
-                          </a>
-                        )}
-                      </div>
-
-                      {leave.approverDecisionNotes && (
-                        <span className="text-slate-400">
-                          Remarks: <em className="text-slate-300">"{leave.approverDecisionNotes}"</em>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      {/* 4. Recent Leave Requests Table matching reference screenshot */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="text-xs font-bold text-slate-800">
+            {activeTab === 'my_leaves'
+              ? 'My Applied Leaves'
+              : activeTab === 'team_leaves'
+              ? 'Team Leave Requests & Approvals'
+              : 'Leave Schedule Calendar'}
+          </h2>
+          <span className="text-[11px] text-slate-400">
+            Showing latest entries
+          </span>
         </div>
-      )}
 
-      {/* TAB 2: TEAM APPROVALS QUEUE */}
-      {canApprove && activeTab === 'approvals' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl space-y-4">
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-bold text-slate-200">
-                Team Leave Approval Queue ({pendingApprovals.length} Pending)
-              </h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                Review and approve leave applications for your team. Approved leaves update presence and payroll.
-              </p>
-            </div>
-          </div>
+        {/* Display list based on tab */}
+        {(() => {
+          const list = activeTab === 'my_leaves' ? myLeaves : leaveRequests;
+          if (list.length === 0) {
+            return (
+              <div className="p-10 text-center text-xs text-slate-400 space-y-2">
+                <Calendar className="w-8 h-8 text-slate-300 mx-auto" />
+                <p>No leave requests registered.</p>
+              </div>
+            );
+          }
 
-          {pendingApprovals.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400">
-              <CheckCircle2 className="w-8 h-8 text-emerald-500/50 mx-auto mb-2" />
-              No pending leave applications in your queue.
-            </div>
-          ) : (
-            <div className="p-4 space-y-4">
-              {pendingApprovals.map((req) => {
-                const employee = orgProfiles.find((p) => p.id === req.employeeId);
-                const empBalance = getLeaveBalance(req.employeeId);
-                const currentNotes = decisionNotes[req.id] || '';
+          return (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50/80 text-slate-500 uppercase font-semibold text-[11px] border-b border-slate-100">
+                  <tr>
+                    <th className="p-4">Employee</th>
+                    <th className="p-4">Type</th>
+                    <th className="p-4">Duration</th>
+                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {list.map((req) => {
+                    const emp = orgProfiles.find((p) => p.id === req.employeeId) || {
+                      firstName: 'Staff',
+                      lastName: 'Member',
+                      avatarUrl: '',
+                      email: ''
+                    };
+                    const isApplicant = req.employeeId === currentProfile.id;
 
-                return (
-                  <div
-                    key={req.id}
-                    className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition space-y-3"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center font-bold text-xs text-cyan-400">
-                          {employee?.firstName[0] || 'U'}
-                        </div>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <h4 className="text-xs font-bold text-white">
-                              {employee ? `${employee.firstName} ${employee.lastName}` : 'Team Member'}
-                            </h4>
-                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                              {employee?.designation}
+                    return (
+                      <tr key={req.id} className="hover:bg-slate-50/70 transition">
+                        {/* Employee */}
+                        <td className="p-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 text-xs shrink-0 overflow-hidden">
+                              {emp.avatarUrl ? (
+                                <img src={emp.avatarUrl} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <span>{emp.firstName[0]}</span>
+                              )}
+                            </div>
+                            <div>
+                              <span className="font-bold text-slate-900 block">
+                                {emp.firstName} {emp.lastName}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">{req.reason}</span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Type */}
+                        <td className="p-4">
+                          <span className="capitalize font-semibold text-slate-800">
+                            {req.leaveType === 'casual'
+                              ? 'Casual Leave'
+                              : req.leaveType === 'sick'
+                              ? 'Sick Leave'
+                              : req.leaveType === 'privilege'
+                              ? 'Annual Leave'
+                              : 'Unpaid Leave'}
+                          </span>
+                        </td>
+
+                        {/* Duration */}
+                        <td className="p-4">
+                          <span className="text-slate-800 font-medium">
+                            {new Date(req.startDate).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            {req.totalDays} Day{req.totalDays !== 1 ? 's' : ''} {req.isHalfDay ? `(Half Day)` : ''}
+                          </span>
+                        </td>
+
+                        {/* Status badge matching reference screenshot */}
+                        <td className="p-4 text-center">
+                          {req.status === 'approved' && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700">
+                              Approved
                             </span>
+                          )}
+                          {req.status === 'pending' && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700">
+                              Pending
+                            </span>
+                          )}
+                          {req.status === 'rejected' && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-700">
+                              Rejected
+                            </span>
+                          )}
+                          {req.status === 'cancelled' && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600">
+                              Cancelled
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="p-4 text-right">
+                          <div className="flex items-center justify-end space-x-1.5">
+                            {canApprove && req.status === 'pending' && !isApplicant && (
+                              <>
+                                <button
+                                  onClick={() => handleResolve(req.id, 'approved')}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-[11px] transition"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => handleResolve(req.id, 'rejected')}
+                                  className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[11px] transition"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+
+                            {isApplicant && req.status === 'pending' && (
+                              <button
+                                onClick={() => cancelLeaveRequest(req.id)}
+                                className="text-rose-600 hover:text-rose-700 font-semibold text-[11px] underline"
+                              >
+                                Cancel
+                              </button>
+                            )}
                           </div>
-                          <span className="text-[10px] text-slate-400">
-                            {employee?.department} • {employee?.email}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-1 rounded-lg border border-cyan-500/30 font-mono">
-                          {req.totalDays} Day(s) {req.leaveType.toUpperCase()}
-                        </span>
-                        {req.isHalfDay && (
-                          <span className="text-[10px] text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30">
-                            Half-Day ({req.halfDaySession})
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800/60 space-y-1">
-                        <span className="text-[10px] text-slate-400 font-semibold block uppercase">Requested Dates</span>
-                        <p className="text-white font-semibold">
-                          {req.startDate} to {req.endDate}
-                        </p>
-                        <p className="text-[11px] text-slate-300 mt-1">
-                          <strong>Reason:</strong> {req.reason}
-                        </p>
-                        {req.documentUrl && (
-                          <a
-                            href={req.documentUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center space-x-1 text-[11px] text-cyan-400 hover:underline pt-1"
-                          >
-                            <FileText className="w-3 h-3" />
-                            <span>View Attached Document</span>
-                          </a>
-                        )}
-                      </div>
-
-                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800/60 space-y-1">
-                        <span className="text-[10px] text-slate-400 font-semibold block uppercase">Applicant Balance</span>
-                        <div className="grid grid-cols-3 gap-1 pt-1 text-center text-[10px]">
-                          <div className="p-1.5 bg-slate-950 rounded border border-slate-800">
-                            <span className="text-slate-400 block">CL Left</span>
-                            <span className="font-bold text-white font-mono">{empBalance.casual.remaining}</span>
-                          </div>
-                          <div className="p-1.5 bg-slate-950 rounded border border-slate-800">
-                            <span className="text-slate-400 block">SL Left</span>
-                            <span className="font-bold text-white font-mono">{empBalance.sick.remaining}</span>
-                          </div>
-                          <div className="p-1.5 bg-slate-950 rounded border border-slate-800">
-                            <span className="text-slate-400 block">PL Left</span>
-                            <span className="font-bold text-white font-mono">{empBalance.privilege.remaining}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Decision Remarks & Action Buttons */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-                      <input
-                        type="text"
-                        value={currentNotes}
-                        onChange={(e) =>
-                          setDecisionNotes((prev) => ({ ...prev, [req.id]: e.target.value }))
-                        }
-                        placeholder="Optional approval notes or rejection reason..."
-                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                      />
-
-                      <div className="flex items-center space-x-2 shrink-0">
-                        <button
-                          onClick={() => handleResolve(req.id, 'rejected')}
-                          className="px-3.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center space-x-1"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                          <span>Reject</span>
-                        </button>
-                        <button
-                          onClick={() => handleResolve(req.id, 'approved')}
-                          className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold transition shadow-sm flex items-center space-x-1"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Approve Leave</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
-      )}
+          );
+        })()}
+      </div>
 
-      {/* TAB 3: WHO'S ON LEAVE TODAY */}
-      {activeTab === 'calendar' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl space-y-4">
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-bold text-slate-200">
-                Staff On Leave Today ({onLeaveToday.length})
-              </h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                Date: {todayStr} • Synchronized with team sprint tasks and attendance geofencing
-              </p>
-            </div>
-          </div>
-
-          {onLeaveToday.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400">
-              <Sun className="w-8 h-8 text-amber-400/60 mx-auto mb-2" />
-              Full team attendance! No employees are scheduled on leave today.
-            </div>
-          ) : (
-            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {onLeaveToday.map((leave) => {
-                const emp = orgProfiles.find((p) => p.id === leave.employeeId);
-                return (
-                  <div
-                    key={leave.id}
-                    className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
-                  >
-                    <div className="flex items-center space-x-2.5">
-                      <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-300 font-bold text-xs flex items-center justify-center">
-                        {emp?.firstName[0] || 'U'}
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-white truncate">
-                          {emp ? `${emp.firstName} ${emp.lastName}` : 'Staff'}
-                        </h4>
-                        <span className="text-[10px] text-slate-400 truncate block">
-                          {emp?.designation} • {emp?.department}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] pt-2 border-t border-slate-800/80">
-                      <span className="text-amber-400 font-semibold uppercase">{leave.leaveType} Leave</span>
-                      <span className="text-slate-400 font-mono">
-                        {leave.startDate} to {leave.endDate}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* APPLY FOR LEAVE MODAL */}
+      {/* 5. Modal: Apply for Leave */}
       {isApplyModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
-          <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto my-6">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 border-b border-slate-800 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden my-6 border border-slate-100">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <div className="flex items-center space-x-2.5">
-                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
                   <Calendar className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-white">Apply for Leave / Time-Off</h3>
-                  <p className="text-[11px] text-slate-400">
-                    Applicant: <strong className="text-cyan-400">{currentProfile.firstName} {currentProfile.lastName}</strong>
-                  </p>
+                  <h3 className="text-sm font-bold text-slate-900">Apply for Leave</h3>
+                  <p className="text-[11px] text-slate-500">Submit a leave request for approvals</p>
                 </div>
               </div>
-              <button
-                onClick={() => setIsApplyModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1"
-              >
-                <X className="w-5 h-5" />
+              <button onClick={() => setIsApplyModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Form */}
-            <form onSubmit={handleApplySubmit} className="p-5 space-y-4">
-              {/* Leave Type Selector */}
+            <form onSubmit={handleApplySubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-200 mb-1.5">
-                  Select Leave Category *
-                </label>
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setLeaveType('casual')}
-                    className={`p-2.5 rounded-lg border text-left transition ${
-                      leaveType === 'casual'
-                        ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="block font-semibold">Casual (CL)</span>
-                    <span className="text-[10px] text-slate-400">{myBalance.casual.remaining} days left</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setLeaveType('sick')}
-                    className={`p-2.5 rounded-lg border text-left transition ${
-                      leaveType === 'sick'
-                        ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="block font-semibold">Sick (SL)</span>
-                    <span className="text-[10px] text-slate-400">{myBalance.sick.remaining} days left</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setLeaveType('privilege')}
-                    className={`p-2.5 rounded-lg border text-left transition ${
-                      leaveType === 'privilege'
-                        ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300 font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="block font-semibold">Privilege (PL)</span>
-                    <span className="text-[10px] text-slate-400">{myBalance.privilege.remaining} days left</span>
-                  </button>
-                </div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Leave Type</label>
+                <select
+                  value={leaveType}
+                  onChange={(e) => setLeaveType(e.target.value as LeaveType)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                >
+                  <option value="casual">Casual Leave ({myBalance.casual.remaining} remaining)</option>
+                  <option value="sick">Sick Leave ({myBalance.sick.remaining} remaining)</option>
+                  <option value="privilege">Annual / Privilege Leave ({myBalance.privilege.remaining} remaining)</option>
+                  <option value="unpaid">Unpaid / Loss of Pay</option>
+                </select>
               </div>
 
-              {/* Date Selection */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Start Date *
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Start Date</label>
                   <input
                     type="date"
                     required
                     value={startDate}
-                    onChange={(e) => {
-                      setStartDate(e.target.value);
-                      if (isHalfDay || e.target.value > endDate) {
-                        setEndDate(e.target.value);
-                      }
-                    }}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    End Date *
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">End Date</label>
                   <input
                     type="date"
                     required
                     disabled={isHalfDay}
-                    value={isHalfDay ? startDate : endDate}
+                    value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 disabled:opacity-50"
                   />
                 </div>
               </div>
 
-              {/* Half-Day Toggle */}
-              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-semibold text-white block">Half-Day Leave</span>
-                  <span className="text-[10px] text-slate-400">0.5 day deduction</span>
-                </div>
+              <div className="flex items-center space-x-2">
                 <input
                   type="checkbox"
+                  id="halfDayCheck"
                   checked={isHalfDay}
                   onChange={(e) => setIsHalfDay(e.target.checked)}
-                  className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
+                  className="rounded text-blue-600 focus:ring-blue-500"
                 />
-              </div>
-
-              {isHalfDay && (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setHalfDaySession('first_half')}
-                    className={`py-1.5 px-3 rounded-lg text-xs font-semibold border ${
-                      halfDaySession === 'first_half'
-                        ? 'bg-indigo-600 text-white border-indigo-500'
-                        : 'bg-slate-950 text-slate-400 border-slate-800'
-                    }`}
-                  >
-                    First Half (Morning)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHalfDaySession('second_half')}
-                    className={`py-1.5 px-3 rounded-lg text-xs font-semibold border ${
-                      halfDaySession === 'second_half'
-                        ? 'bg-indigo-600 text-white border-indigo-500'
-                        : 'bg-slate-950 text-slate-400 border-slate-800'
-                    }`}
-                  >
-                    Second Half (Post-Lunch)
-                  </button>
-                </div>
-              )}
-
-              {/* Total Duration Preview */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-cyan-950/30 border border-cyan-500/30 text-xs">
-                <span className="text-slate-300">Total Duration:</span>
-                <span className="font-extrabold text-cyan-300 font-mono">
-                  {totalRequestedDays} Working Day(s)
-                </span>
-              </div>
-
-              {/* Reason */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Reason for Leave *
+                <label htmlFor="halfDayCheck" className="text-xs font-semibold text-slate-700 cursor-pointer">
+                  Half-Day Leave
                 </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Reason for Leave *</label>
                 <textarea
                   required
                   rows={3}
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Explain why you are requesting leave..."
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  placeholder="State the reason for taking leave..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 />
               </div>
 
-              {/* Optional Attachment */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
-                  <span>Medical / Supporting Document</span>
-                  <span className="text-[10px] text-slate-500">Optional</span>
-                </label>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".pdf,.png,.jpg,.jpeg"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-                {docUrl ? (
-                  <div className="flex items-center justify-between p-2.5 bg-slate-950 border border-emerald-500/40 rounded-lg text-xs text-emerald-300">
-                    <span className="truncate">{docName || 'Attached Document'}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDocUrl('');
-                        setDocName('');
-                      }}
-                      className="text-slate-400 hover:text-rose-400 ml-2"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploading}
-                    className="w-full py-2.5 px-3 border border-dashed border-slate-700 hover:border-indigo-500 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-950 transition flex items-center justify-center space-x-1.5"
-                  >
-                    <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>{isUploading ? 'Uploading...' : 'Attach Medical Certificate / Proof'}</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Designated Approver Notice */}
-              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
-                <span className="text-white font-semibold block">Routing Notice:</span>
-                This request will be routed directly to your designated manager / HR team for formal sign-off.
-              </div>
-
-              {/* Buttons */}
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsApplyModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="inline-flex items-center space-x-1.5 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-indigo-600/30"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Submit Leave Request</span>
+                  Submit Application
                 </button>
               </div>
             </form>

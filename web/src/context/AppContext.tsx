@@ -112,6 +112,7 @@ interface AppContextType {
   // Actions: Payroll
   processMonthlyPayroll: (month: number, year: number) => void;
   markPayrollPaid: (recordId: string, reference: string) => void;
+  updatePayrollRecord: (id: string, updates: Partial<PayrollRecord>) => Promise<void>;
   exportBankPayoutCsv: (month: number, year: number) => string;
 
   // Actions & State: Leave Management
@@ -134,7 +135,13 @@ interface AppContextType {
   notifications: InAppNotification[];
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
-  addNotification: (title: string, message: string, category: InAppNotification['category'], linkTab?: string) => void;
+  addNotification: (
+    title: string,
+    message: string,
+    category: InAppNotification['category'],
+    linkTab?: string,
+    target?: { recipientId?: string; recipientRole?: UserRole | 'all'; orgId?: string }
+  ) => void;
   unreadNotificationCount: number;
 
   // Supabase Live Config
@@ -404,7 +411,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             designation: p.designation || 'Team Member',
             department: p.department || 'Operations',
             joiningDate: p.joining_date || new Date().toISOString().split('T')[0],
-            baseSalary: Number(p.base_salary) || 50000,
+            baseSalary: p.base_salary !== null && p.base_salary !== undefined ? Number(p.base_salary) : 0,
             avatarUrl: p.avatar_url || '/vedotrix-logo.png',
             isActive: p.is_active ?? true,
             managerId: p.manager_id || undefined,
@@ -439,10 +446,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             designation: o.designation,
             department: o.department,
             joiningDate: o.joining_date,
-            annualCtc: Number(o.annual_ctc) || 1200000,
-            basicMonthly: Number(o.basic_monthly) || 50000,
-            hraMonthly: Number(o.hra_monthly) || 25000,
-            specialAllowance: Number(o.special_allowance) || 25000,
+            annualCtc: o.annual_ctc !== null && o.annual_ctc !== undefined ? Number(o.annual_ctc) : 0,
+            basicMonthly: o.basic_monthly !== null && o.basic_monthly !== undefined ? Number(o.basic_monthly) : 0,
+            hraMonthly: o.hra_monthly !== null && o.hra_monthly !== undefined ? Number(o.hra_monthly) : 0,
+            specialAllowance: o.special_allowance !== null && o.special_allowance !== undefined ? Number(o.special_allowance) : 0,
             status: o.status,
             verificationToken: o.verification_token,
             pdfUrl: o.pdf_url,
@@ -753,10 +760,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Notification Dispatcher
-  const addNotification = (title: string, message: string, category: InAppNotification['category'], linkTab?: string) => {
+  // Notification Dispatcher with Recipient & Role Scoping
+  const addNotification = (
+    title: string,
+    message: string,
+    category: InAppNotification['category'],
+    linkTab?: string,
+    target?: { recipientId?: string; recipientRole?: UserRole | 'all'; orgId?: string }
+  ) => {
     const newNotif: InAppNotification = {
       id: generateUUID(),
+      orgId: target?.orgId || currentOrgId,
+      recipientId: target?.recipientId,
+      recipientRole: target?.recipientRole,
       title,
       message,
       category,
@@ -770,12 +786,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const markNotificationRead = (id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
   };
-
-  const markAllNotificationsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  };
-
-  const unreadNotificationCount = notifications.filter((n) => !n.isRead).length;
 
   const currentOrg = organizations.find((o) => o.id === currentOrgId) || organizations[0];
   const orgProfiles = profiles.filter((p) => p.orgId === currentOrgId);
@@ -802,6 +812,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     (currentProfile.orgId === '00000000-0000-0000-0000-000000000001' ||
      currentProfile.email.toLowerCase() === 'admin@vedotrix.com' ||
      currentProfile.email.toLowerCase() === 'sajalsaxenagola@gmail.com');
+
+  // Filter notifications strictly to current user / role / tenant
+  const userNotifications = notifications.filter((n) => {
+    // 1. Organization isolation
+    if (n.orgId && n.orgId !== currentOrg?.id && !isVedotrixSuperadmin) {
+      return false;
+    }
+
+    // 2. Direct user targeting
+    if (n.recipientId) {
+      return n.recipientId === currentProfile.id;
+    }
+
+    // 3. Role targeting
+    if (n.recipientRole && n.recipientRole !== 'all') {
+      if (currentProfile.role === n.recipientRole) return true;
+      if (n.recipientRole === 'hr' && (currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || isVedotrixSuperadmin)) {
+        return true;
+      }
+      return false;
+    }
+
+    // 4. Category defaults
+    if (n.category === 'payroll') {
+      return currentProfile.role === 'hr' || currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || isVedotrixSuperadmin;
+    }
+
+    if (n.category === 'offer') {
+      return currentProfile.role === 'hr' || currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || isVedotrixSuperadmin;
+    }
+
+    return true;
+  });
+
+  const unreadNotificationCount = userNotifications.filter((n) => !n.isRead).length;
+
+  const markAllNotificationsRead = () => {
+    const userIds = new Set(userNotifications.map((n) => n.id));
+    setNotifications((prev) => prev.map((n) => (userIds.has(n.id) ? { ...n, isRead: true } : n)));
+  };
 
   const switchOrganization = (orgId: string) => {
     if (!isVedotrixSuperadmin && orgId !== currentOrgId) {
@@ -1955,13 +2005,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const effectivePresent = Math.min(totalDaysInMonth, Math.max(presentCount + halfDayCount * 0.5, totalDaysInMonth));
       const lopDays = Math.max(0, totalDaysInMonth - effectivePresent);
 
-      const baseSalary = emp.baseSalary || 50000;
-      const basicPay = Math.round(baseSalary * 0.5);
-      const hra = Math.round(baseSalary * 0.25);
-      const allowances = Math.round(baseSalary * 0.25);
-      const deductions = 1800;
-      const lopDeduction = Math.round((baseSalary / totalDaysInMonth) * lopDays);
-      const netSalary = Math.max(0, baseSalary - deductions - lopDeduction);
+      const baseSalary = typeof emp.baseSalary === 'number' ? emp.baseSalary : 0;
+      let basicPay = 0;
+      let hra = 0;
+      let allowances = 0;
+      let deductions = 0;
+      let lopDeduction = 0;
+      let netSalary = 0;
+      let payoutStatus: 'pending' | 'paid' | 'failed' = 'pending';
+
+      if (baseSalary === 0) {
+        // Unpaid Intern: zero across all components, auto-marked paid
+        basicPay = 0;
+        hra = 0;
+        allowances = 0;
+        deductions = 0;
+        lopDeduction = 0;
+        netSalary = 0;
+        payoutStatus = 'paid';
+      } else if (baseSalary <= 25000) {
+        // Intern Stipend or Fixed Tier: no mandatory PF deduction
+        basicPay = baseSalary;
+        hra = 0;
+        allowances = 0;
+        deductions = 0;
+        lopDeduction = Math.round((baseSalary / totalDaysInMonth) * lopDays);
+        netSalary = Math.max(0, baseSalary - lopDeduction);
+        payoutStatus = 'pending';
+      } else {
+        // Full-time regular employee
+        basicPay = Math.round(baseSalary * 0.5);
+        hra = Math.round(baseSalary * 0.25);
+        allowances = Math.round(baseSalary * 0.25);
+        deductions = 1800; // Standard PF
+        lopDeduction = Math.round((baseSalary / totalDaysInMonth) * lopDays);
+        netSalary = Math.max(0, baseSalary - deductions - lopDeduction);
+        payoutStatus = 'pending';
+      }
 
       newRecords.push({
         id: generateUUID(),
@@ -1978,7 +2058,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deductions,
         lopDeduction,
         netSalary,
-        payoutStatus: 'pending',
+        payoutStatus,
         paymentMode: 'NEFT',
         bankAccountNumber: `91${Math.floor(1000000000 + Math.random() * 9000000000)}`,
         bankIfsc: 'HDFC0001824',
@@ -2019,6 +2099,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const markPayrollPaid = (recordId: string, reference: string) => {
+    const targetRecord = payrollRecords.find((p) => p.id === recordId);
+
     setPayrollRecords((prev) =>
       prev.map((p) => {
         if (p.id === recordId) {
@@ -2045,7 +2127,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {}
 
     addToast('Payout Disbursed', `Payment reference ${reference} recorded. Payslip is now ready.`, 'success');
-    addNotification('Salary Disbursed 💰', `Monthly payout processed with reference ${reference}.`, 'payroll', 'payroll');
+    if (targetRecord) {
+      addNotification(
+        'Salary Disbursed 💰',
+        `Your payslip for ${targetRecord.month}/${targetRecord.year} is ready. Reference: ${reference}.`,
+        'payroll',
+        'payroll',
+        { recipientId: targetRecord.employeeId }
+      );
+    }
+  };
+
+  const updatePayrollRecord = async (id: string, updates: Partial<PayrollRecord>) => {
+    setPayrollRecords((prev) =>
+      prev.map((p) => {
+        if (p.id === id) {
+          const updated = { ...p, ...updates };
+          if (updates.deductions !== undefined || updates.allowances !== undefined || updates.basicPay !== undefined || updates.hra !== undefined) {
+            const basic = updates.basicPay !== undefined ? updates.basicPay : p.basicPay;
+            const hra = updates.hra !== undefined ? updates.hra : p.hra;
+            const allow = updates.allowances !== undefined ? updates.allowances : p.allowances;
+            const ded = updates.deductions !== undefined ? updates.deductions : p.deductions;
+            const lop = updates.lopDeduction !== undefined ? updates.lopDeduction : p.lopDeduction;
+            updated.netSalary = Math.max(0, (basic + hra + allow) - ded - lop);
+          }
+          return updated;
+        }
+        return p;
+      })
+    );
+
+    try {
+      const client = getSupabaseClient();
+      const payload: any = {};
+      if (updates.deductions !== undefined) payload.deductions = updates.deductions;
+      if (updates.allowances !== undefined) payload.allowances = updates.allowances;
+      if (updates.netSalary !== undefined) payload.net_salary = updates.netSalary;
+      if (updates.basicPay !== undefined) payload.basic_pay = updates.basicPay;
+      if (updates.hra !== undefined) payload.hra = updates.hra;
+      if (updates.payoutStatus !== undefined) payload.payout_status = updates.payoutStatus;
+      if (updates.paymentReference !== undefined) payload.payment_reference = updates.paymentReference;
+
+      if (Object.keys(payload).length > 0) {
+        await client.from('payroll_records').update(payload).eq('id', id);
+      }
+    } catch (e) {
+      console.warn('Failed to sync payroll update to Supabase:', e);
+    }
   };
 
   const exportBankPayoutCsv = (month: number, year: number): string => {
@@ -2095,12 +2223,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         broadcasts,
         createBroadcast,
         officeLocations: effectiveOfficeLocations,
-        offerLetters: offerLetters.filter((o) => o.orgId === currentOrg.id),
-        allOfferLetters: isVedotrixSuperadmin ? offerLetters : offerLetters.filter((o) => o.orgId === currentOrg.id),
+        offerLetters: isVedotrixSuperadmin
+          ? offerLetters
+          : (currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin')
+          ? offerLetters.filter((o) => o.orgId === currentOrg.id)
+          : offerLetters.filter(
+              (o) =>
+                o.orgId === currentOrg.id &&
+                ((o.employeeId && o.employeeId === currentProfile.id) ||
+                  o.candidateEmail?.toLowerCase() === currentProfile.email?.toLowerCase())
+            ),
+        allOfferLetters: (isVedotrixSuperadmin || currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin')
+          ? (isVedotrixSuperadmin ? offerLetters : offerLetters.filter((o) => o.orgId === currentOrg.id))
+          : offerLetters.filter(
+              (o) =>
+                o.orgId === currentOrg.id &&
+                ((o.employeeId && o.employeeId === currentProfile.id) ||
+                  o.candidateEmail?.toLowerCase() === currentProfile.email?.toLowerCase())
+            ),
         attendanceRecords: attendanceRecords.filter((a) => a.orgId === currentOrg.id),
         tasks: tasks.filter((t) => t.orgId === currentOrg.id),
         standups: standups.filter((s) => s.orgId === currentOrg.id),
-        payrollRecords: payrollRecords.filter((p) => p.orgId === currentOrg.id),
+        payrollRecords: (isVedotrixSuperadmin || currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'superadmin')
+          ? payrollRecords.filter((p) => p.orgId === currentOrg.id)
+          : payrollRecords.filter((p) => p.orgId === currentOrg.id && p.employeeId === currentProfile.id),
         createOfferLetter,
         acceptOfferLetter,
         verifyOfferLetterByHr,
@@ -2114,13 +2260,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         submitStandup,
         processMonthlyPayroll,
         markPayrollPaid,
+        updatePayrollRecord,
         exportBankPayoutCsv,
         leaveRequests: leaveRequests.filter((l) => l.orgId === currentOrg.id),
         submitLeaveRequest,
         resolveLeaveRequest,
         cancelLeaveRequest,
         getLeaveBalance,
-        notifications,
+        notifications: userNotifications,
         markNotificationRead,
         markAllNotificationsRead,
         addNotification,

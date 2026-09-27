@@ -34,11 +34,22 @@ export function generateVerificationToken(serial: string, email: string): string
  * Formats Indian Currency or Standard Currency (₹)
  */
 export function formatCurrency(amount: number): string {
+  const val = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0
-  }).format(amount);
+  }).format(val);
+}
+
+/**
+ * Formats salary or intern stipend with clear unpaid indication
+ */
+export function formatSalaryOrStipend(amount: number, isAnnual = false): string {
+  if (!amount || amount === 0) {
+    return isAnnual ? '₹0 (Unpaid)' : '₹0 / Unpaid Intern';
+  }
+  return formatCurrency(amount);
 }
 
 /**

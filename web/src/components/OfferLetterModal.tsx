@@ -72,8 +72,8 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
       setDesignation(emp.designation || 'Team Member');
       setDepartment(emp.department || 'Engineering');
       setJoiningDate(emp.joiningDate || new Date().toISOString().split('T')[0]);
-      if (emp.baseSalary) {
-        setAnnualCtc(emp.baseSalary * 12);
+      if (emp.baseSalary !== undefined && emp.baseSalary !== null) {
+        setAnnualCtc(Number(emp.baseSalary) * 12);
       }
       if (emp.managerId) {
         setManagerId(emp.managerId);
@@ -521,34 +521,100 @@ export const OfferLetterModal: React.FC<OfferLetterModalProps> = ({ isOpen, onCl
                 Annual Fixed CTC (₹ INR)
               </label>
               <span className="text-xs font-mono font-bold text-cyan-400">
-                {formatCurrency(annualCtc)}
+                {annualCtc === 0 ? '₹0 (Unpaid Intern)' : formatCurrency(annualCtc)}
               </span>
             </div>
-            <input
-              type="range"
-              min="300000"
-              max="5000000"
-              step="50000"
-              value={annualCtc}
-              onChange={(e) => setAnnualCtc(Number(e.target.value))}
-              className="w-full accent-indigo-500 cursor-pointer"
-            />
 
-            {/* Monthly Breakup Preview */}
-            <div className="grid grid-cols-3 gap-2 pt-2 text-[11px] border-t border-slate-800">
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Basic (50%)</span>
-                <span className="font-semibold text-slate-200 font-mono">{formatCurrency(basicMonthly)}/mo</span>
-              </div>
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">HRA (25%)</span>
-                <span className="font-semibold text-slate-200 font-mono">{formatCurrency(hraMonthly)}/mo</span>
-              </div>
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Special Allow. (25%)</span>
-                <span className="font-semibold text-slate-200 font-mono">{formatCurrency(specialAllowance)}/mo</span>
-              </div>
+            {/* Quick CTC Presets */}
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAnnualCtc(0)}
+                className={`px-2 py-1 rounded text-[10px] font-semibold transition ${
+                  annualCtc === 0
+                    ? 'bg-amber-500 text-slate-950 font-bold'
+                    : 'bg-slate-900 text-amber-300 border border-amber-500/30 hover:bg-amber-950/40'
+                }`}
+              >
+                Unpaid Intern (₹0)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnnualCtc(120000)}
+                className={`px-2 py-1 rounded text-[10px] font-semibold transition ${
+                  annualCtc === 120000
+                    ? 'bg-blue-600 text-white font-bold'
+                    : 'bg-slate-900 text-blue-300 border border-blue-500/30 hover:bg-blue-950/40'
+                }`}
+              >
+                Stipend (₹1.2L / ₹10k mo)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnnualCtc(360000)}
+                className={`px-2 py-1 rounded text-[10px] font-semibold transition ${
+                  annualCtc === 360000
+                    ? 'bg-indigo-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:bg-slate-800'
+                }`}
+              >
+                Junior (₹3.6L / ₹30k mo)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnnualCtc(1200000)}
+                className={`px-2 py-1 rounded text-[10px] font-semibold transition ${
+                  annualCtc === 1200000
+                    ? 'bg-indigo-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:bg-slate-800'
+                }`}
+              >
+                Senior (₹12L / ₹1L mo)
+              </button>
             </div>
+
+            <div className="flex items-center space-x-3">
+              <input
+                type="range"
+                min="0"
+                max="5000000"
+                step="25000"
+                value={annualCtc}
+                onChange={(e) => setAnnualCtc(Number(e.target.value))}
+                className="flex-1 accent-indigo-500 cursor-pointer"
+              />
+              <input
+                type="number"
+                min="0"
+                step="10000"
+                value={annualCtc}
+                onChange={(e) => setAnnualCtc(Number(e.target.value))}
+                className="w-28 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-xs font-mono text-white text-right"
+              />
+            </div>
+
+            {annualCtc === 0 ? (
+              <div className="p-2.5 rounded-lg bg-amber-950/30 border border-amber-500/30 text-[11px] text-amber-300">
+                <span className="font-semibold block">Academic / Unpaid Training Contract:</span>
+                Non-monetary offer letter. Candidate receives training, mentorship, and completion certificate with zero INR basic salary.
+              </div>
+            ) : (
+              /* Monthly Breakup Preview */
+              <div className="grid grid-cols-3 gap-2 pt-2 text-[11px] border-t border-slate-800">
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">
+                  <span className="text-slate-400 block text-[10px]">Basic (50%)</span>
+                  <span className="font-semibold text-slate-200 font-mono">{formatCurrency(basicMonthly)}/mo</span>
+                </div>
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">
+                  <span className="text-slate-400 block text-[10px]">HRA (25%)</span>
+                  <span className="font-semibold text-slate-200 font-mono">{formatCurrency(hraMonthly)}/mo</span>
+                </div>
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">
+                  <span className="text-slate-400 block text-[10px]">Special Allow. (25%)</span>
+                  <span className="font-semibold text-slate-200 font-mono">{formatCurrency(specialAllowance)}/mo</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Action Buttons */}

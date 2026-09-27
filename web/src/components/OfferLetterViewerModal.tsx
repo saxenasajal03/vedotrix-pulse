@@ -188,44 +188,55 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
           </div>
 
           {/* Compensation Breakdown Table */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
-              Annexure A: Annual Compensation Structure
-            </h3>
-            <table className="w-full text-xs border border-slate-300">
-              <thead className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
-                <tr>
-                  <th className="text-left p-2.5">Salary Component</th>
-                  <th className="text-right p-2.5">Monthly (₹)</th>
-                  <th className="text-right p-2.5">Annual (₹)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-slate-700">
-                <tr>
-                  <td className="p-2.5 font-medium">Basic Salary (50%)</td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.basicMonthly)}</td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.basicMonthly * 12)}</td>
-                </tr>
-                <tr>
-                  <td className="p-2.5 font-medium">House Rent Allowance (HRA - 25%)</td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.hraMonthly)}</td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.hraMonthly * 12)}</td>
-                </tr>
-                <tr>
-                  <td className="p-2.5 font-medium">Special Allowance / Performance Stack</td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.specialAllowance)}</td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.specialAllowance * 12)}</td>
-                </tr>
-                <tr className="bg-slate-50 font-bold text-slate-950 border-t-2 border-slate-400">
-                  <td className="p-2.5">Total Cost to Company (CTC)</td>
-                  <td className="p-2.5 text-right font-mono">
-                    {formatCurrency(Math.round(offer.annualCtc / 12))}
-                  </td>
-                  <td className="p-2.5 text-right font-mono">{formatCurrency(offer.annualCtc)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          {offer.annualCtc === 0 ? (
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-300 space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                Annexure A: Internship Program & Training Contract (Unpaid)
+              </h3>
+              <p className="text-xs text-slate-700 leading-relaxed">
+                This appointment is an experiential, skill-development internship program. There is no monetary fixed salary or monthly stipend attached to this position (₹0 INR CTC). Upon satisfactory fulfillment of milestones and sprint deliverables, the candidate will be awarded an official Certificate of Completion and formal Letter of Recommendation (LOR) with consideration for future full-time placement.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                Annexure A: Annual Compensation Structure
+              </h3>
+              <table className="w-full text-xs border border-slate-300">
+                <thead className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
+                  <tr>
+                    <th className="text-left p-2.5">Salary Component</th>
+                    <th className="text-right p-2.5">Monthly (₹)</th>
+                    <th className="text-right p-2.5">Annual (₹)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 text-slate-700">
+                  <tr>
+                    <td className="p-2.5 font-medium">Basic Salary (50%)</td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.basicMonthly)}</td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.basicMonthly * 12)}</td>
+                  </tr>
+                  <tr>
+                    <td className="p-2.5 font-medium">House Rent Allowance (HRA - 25%)</td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.hraMonthly)}</td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.hraMonthly * 12)}</td>
+                  </tr>
+                  <tr>
+                    <td className="p-2.5 font-medium">Special Allowance / Performance Stack</td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.specialAllowance)}</td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.specialAllowance * 12)}</td>
+                  </tr>
+                  <tr className="bg-slate-50 font-bold text-slate-950 border-t-2 border-slate-400">
+                    <td className="p-2.5">Total Cost to Company (CTC)</td>
+                    <td className="p-2.5 text-right font-mono">
+                      {formatCurrency(Math.round(offer.annualCtc / 12))}
+                    </td>
+                    <td className="p-2.5 text-right font-mono">{formatCurrency(offer.annualCtc)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Signatures & Seal */}
           <div className="grid grid-cols-2 gap-8 pt-8 border-t border-slate-300 items-end">

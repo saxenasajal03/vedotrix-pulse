@@ -24,7 +24,7 @@ import { LeaveManager } from './components/LeaveManager';
 import { OfferLetter } from './types';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, currentProfile, isVedotrixSuperadmin } = useApp();
+  const { isAuthenticated, isVedotrixSuperadmin } = useApp();
   const [activeTab, setActiveTab] = useState<string>(() => {
     return isVedotrixSuperadmin ? 'superadmin' : 'dashboard';
   });
@@ -64,28 +64,29 @@ const MainLayout: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] transition-colors">
-      {/* Navbar with Hamburger Menu, Tenant Switcher & Logout */}
-      <Navbar
-        onOpenVerifyModal={() => handleOpenVerify()}
+    <div className="min-h-screen bg-[#f4f7fe] text-slate-800 flex font-['Plus_Jakarta_Sans',sans-serif]">
+      {/* 1. Responsive Sidebar: Fixed Dark Navy on Left */}
+      <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onToggleMobileMenu={() => setMobileMenuOpen((prev) => !prev)}
+        onOpenVerifyModal={() => handleOpenVerify()}
         mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
       />
 
-      <div className="flex-1 flex max-w-7xl w-full mx-auto relative">
-        {/* Responsive Sidebar (Desktop Fixed + Mobile Off-Canvas Drawer) */}
-        <Sidebar
+      {/* 2. Main Work Area (Header + Tab Page Content) */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen bg-[#f4f7fe]">
+        {/* Top Navbar */}
+        <Navbar
+          onOpenVerifyModal={() => handleOpenVerify()}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          onOpenVerifyModal={() => handleOpenVerify()}
+          onToggleMobileMenu={() => setMobileMenuOpen((prev) => !prev)}
           mobileOpen={mobileMenuOpen}
-          onCloseMobile={() => setMobileMenuOpen(false)}
         />
 
-        {/* Main Content Area with Bottom Padding on Mobile for Fixed Bottom Bar */}
-        <main className="flex-1 p-3.5 sm:p-6 lg:p-8 overflow-y-auto pb-24 md:pb-8 min-w-0">
+        {/* Dynamic Tab Content with responsive padding */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto pb-24 md:pb-8 min-w-0">
           {activeTab === 'superadmin' && isVedotrixSuperadmin && <SuperAdminConsole />}
 
           {activeTab === 'dashboard' && (

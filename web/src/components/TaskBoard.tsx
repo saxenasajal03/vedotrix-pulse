@@ -21,13 +21,8 @@ import { formatCurrency } from '../lib/serialUtils';
 export const TaskBoard: React.FC = () => {
   const { currentOrg, tasks, createTask, updateTaskStatus, orgProfiles, currentProfile } = useApp();
   const [isModalOpen, setIsModalOpen] = useState(false);
-
-  // Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [assignedTo, setAssignedTo] = useState(orgProfiles[0]?.id || '');
-  const [priority, setPriority] = useState<TaskPriority>('medium');
-  const [dueDate, setDueDate] = useState('2026-09-30T18:00:00Z');
 
   // Tech Mode Fields
   const [gitBranch, setGitBranch] = useState('feature/new-module');
@@ -41,6 +36,20 @@ export const TaskBoard: React.FC = () => {
   const [targetKpi, setTargetKpi] = useState('4.2x Blended ROAS');
 
   const isTech = currentOrg.industry === 'Tech';
+
+  const canAssignAll =
+    currentProfile.role === 'superadmin' ||
+    currentProfile.role === 'owner' ||
+    currentProfile.role === 'hr';
+
+  // Employees can assign only to employees managed by them, or self
+  const assignableProfiles = canAssignAll
+    ? orgProfiles
+    : orgProfiles.filter((p) => p.managerId === currentProfile.id || p.id === currentProfile.id);
+
+  const [assignedTo, setAssignedTo] = useState(assignableProfiles[0]?.id || currentProfile.id);
+  const [priority, setPriority] = useState<TaskPriority>('medium');
+  const [dueDate, setDueDate] = useState('2026-09-30T18:00:00Z');
 
   const [taskFilter, setTaskFilter] = useState<'all' | 'my' | 'team'>('all');
   const directReportIds = new Set(
@@ -377,17 +386,20 @@ export const TaskBoard: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Assignee</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Assignee {!canAssignAll && '(Direct Reports Only)'}
+                  </label>
                   <select
                     value={assignedTo}
                     onChange={(e) => setAssignedTo(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
-                    {orgProfiles.map((p) => {
+                    {assignableProfiles.map((p) => {
+                      const isMe = p.id === currentProfile.id;
                       const isDirectReport = p.managerId === currentProfile.id;
                       return (
                         <option key={p.id} value={p.id}>
-                          {isDirectReport ? '★ [Direct Report] ' : ''}
+                          {isMe ? '👤 [Self] ' : isDirectReport ? '★ [My Report] ' : ''}
                           {p.firstName} {p.lastName} ({p.role.toUpperCase()} - {p.designation || p.department})
                         </option>
                       );

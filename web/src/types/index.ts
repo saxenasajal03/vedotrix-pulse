@@ -212,11 +212,17 @@ export interface PayrollRecord {
   paymentReference?: string;
   bankAccountNumber?: string;
   bankIfsc?: string;
+  deductionNotes?: string;
+  customDeductions?: number;
+  bonus?: number;
   createdAt: string;
 }
 
 export interface InAppNotification {
   id: string;
+  orgId?: string;
+  recipientId?: string; // target user ID (optional)
+  recipientRole?: UserRole | 'all'; // target role (optional, e.g. 'hr', 'superadmin', 'manager', 'employee', 'all')
   title: string;
   message: string;
   category: 'offer' | 'attendance' | 'task' | 'payroll' | 'system' | 'broadcast' | 'leave';

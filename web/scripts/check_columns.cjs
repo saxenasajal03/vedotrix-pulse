@@ -7,14 +7,10 @@ const client = new Client({
 
 async function check() {
   await client.connect();
-  const profCols = await client.query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'profiles';");
-  console.log('Profiles columns:', profCols.rows);
-  const orgCols = await client.query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'organizations';");
-  console.log('Organizations columns:', orgCols.rows);
-  const orgs = await client.query("SELECT id, name, org_code, industry FROM organizations;");
-  console.log('Current organizations in DB:', orgs.rows);
-  const profiles = await client.query("SELECT id, email, first_name, last_name, role, org_id FROM profiles;");
-  console.log('Current profiles in DB:', profiles.rows);
+  const payrollCols = await client.query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'payroll_records';");
+  console.log('Payroll columns:', payrollCols.rows);
+  const offerCols = await client.query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'offer_letters';");
+  console.log('Offer columns:', offerCols.rows);
   await client.end();
 }
 

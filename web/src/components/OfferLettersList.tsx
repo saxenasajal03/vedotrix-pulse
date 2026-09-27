@@ -180,10 +180,16 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                 <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800">
                   <span className="text-[10px] text-slate-400 font-semibold block uppercase">Total Annual CTC</span>
                   <p className="text-base font-extrabold text-white font-mono mt-1">
-                    {formatCurrency(myOffer.annualCtc)}
+                    {myOffer.annualCtc === 0 ? (
+                      <span className="text-amber-400 font-sans text-sm font-bold">Unpaid Intern (₹0)</span>
+                    ) : (
+                      formatCurrency(myOffer.annualCtc)
+                    )}
                   </p>
                   <span className="text-[10px] text-emerald-400 block mt-0.5">
-                    {formatCurrency(Math.round(myOffer.annualCtc / 12))}/month gross
+                    {myOffer.annualCtc === 0
+                      ? 'Academic Training Contract'
+                      : `${formatCurrency(Math.round(myOffer.annualCtc / 12))}/month gross`}
                   </span>
                 </div>
 
@@ -385,7 +391,11 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                           </td>
 
                           <td className="p-3 text-right font-mono font-bold text-white">
-                            {formatCurrency(offer.annualCtc)}
+                            {offer.annualCtc === 0 ? (
+                              <span className="text-amber-400 font-sans text-xs font-semibold">Unpaid Intern (₹0)</span>
+                            ) : (
+                              formatCurrency(offer.annualCtc)
+                            )}
                           </td>
 
                           <td className="p-3 text-center">
