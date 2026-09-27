@@ -334,9 +334,14 @@ export interface ChatMessage {
 
 export interface ChatChannel {
   id: string;
+  orgId: string;
   name: string;
   description: string;
   isPrivate?: boolean;
-  type: 'channel' | 'dm';
+  memberIds?: string[];
+  createdBy?: string;
+  createdByName?: string;
+  type: 'channel' | 'group' | 'dm';
   unreadCount?: number;
+  createdAt?: string;
 }

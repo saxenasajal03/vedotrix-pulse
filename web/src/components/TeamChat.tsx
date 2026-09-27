@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { ChatMessage, Profile } from '../types';
+import { ChatMessage, Profile, ChatChannel } from '../types';
 import {
   MessageSquare,
   Hash,
@@ -16,7 +16,13 @@ import {
   Circle,
   Clock,
   MoreVertical,
-  Paperclip
+  Paperclip,
+  Headphones,
+  Plus,
+  Trash2,
+  X,
+  HelpCircle,
+  Globe
 } from 'lucide-react';
 import { formatISTTime, formatISTDate } from '../lib/serialUtils';
 
@@ -26,6 +32,9 @@ export const TeamChat: React.FC = () => {
     currentProfile,
     orgProfiles,
     chatMessages,
+    chatChannels,
+    createChatChannel,
+    deleteChatChannel,
     sendChatMessage,
     addChatReaction,
     activeChatChannel,
@@ -40,13 +49,13 @@ export const TeamChat: React.FC = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Channels definitions
-  const CHANNELS = [
-    { id: 'general', name: 'general', desc: 'Company-wide updates & team discussion' },
-    { id: 'engineering', name: 'engineering', desc: 'Technical sprints, PRs, and deployments' },
-    { id: 'operations', name: 'operations', desc: 'Operations, client workflows, and workplace ops' },
-    { id: 'announcements', name: 'announcements', desc: 'Official releases & corporate broadcasts' }
-  ];
+  // New Group/Channel Modal State
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelDesc, setNewChannelDesc] = useState('');
+  const [isPrivateChannel, setIsPrivateChannel] = useState(false);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [isSubmittingChannel, setIsSubmittingChannel] = useState(false);
 
   // Helper to determine if current channel is a DM
   const isDirectMessage = activeChatChannel.startsWith('dm:');
@@ -56,6 +65,9 @@ export const TeamChat: React.FC = () => {
   const dmTargetProfile = dmTargetProfileId
     ? orgProfiles.find((p) => p.id === dmTargetProfileId)
     : null;
+
+  // Find active custom channel info
+  const activeChannelObj = chatChannels.find((c) => c.id === activeChatChannel);
 
   // Filter messages for active channel
   const activeChannelMessages = chatMessages.filter((m) => {
@@ -95,10 +107,40 @@ export const TeamChat: React.FC = () => {
   };
 
   const handleSelectDm = (targetUser: Profile) => {
-    // Generate normalized deterministic DM channel key
     const sortedIds = [currentProfile.id, targetUser.id].sort();
     const dmKey = `dm:${sortedIds[0]}:${sortedIds[1]}`;
     setActiveChatChannel(dmKey);
+  };
+
+  const handleCreateChannelSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newChannelName.trim()) return;
+
+    setIsSubmittingChannel(true);
+    try {
+      const created = await createChatChannel({
+        name: newChannelName.trim(),
+        description: newChannelDesc.trim() || (isPrivateChannel ? 'Private Group Channel' : 'Public Department Channel'),
+        isPrivate: isPrivateChannel,
+        memberIds: isPrivateChannel ? Array.from(new Set([currentProfile.id, ...selectedMemberIds])) : undefined
+      });
+      setActiveChatChannel(created.id);
+      setIsCreateModalOpen(false);
+      setNewChannelName('');
+      setNewChannelDesc('');
+      setIsPrivateChannel(false);
+      setSelectedMemberIds([]);
+    } catch (err) {
+      addToast('Creation Failed', 'Could not create channel.', 'error');
+    } finally {
+      setIsSubmittingChannel(false);
+    }
+  };
+
+  const toggleMemberSelection = (empId: string) => {
+    setSelectedMemberIds((prev) =>
+      prev.includes(empId) ? prev.filter((id) => id !== empId) : [...prev, empId]
+    );
   };
 
   const QUICK_EMOJIS = ['👍', '❤️', '🚀', '🎉', '🔥', '👀', '💯'];
@@ -115,6 +157,10 @@ export const TeamChat: React.FC = () => {
         p.role.toLowerCase().includes(q)
       );
     });
+
+  // Separate standard/public organization channels from custom groups
+  const publicChannels = chatChannels.filter((c) => !c.isPrivate && c.type !== 'group');
+  const privateGroupChannels = chatChannels.filter((c) => c.isPrivate || c.type === 'group');
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] overflow-hidden flex flex-col md:flex-row h-[calc(100vh-140px)] min-h-[580px]">
@@ -153,14 +199,16 @@ export const TeamChat: React.FC = () => {
 
         {/* Scrollable Channels & DMs */}
         <div className="flex-1 overflow-y-auto p-2 space-y-4">
-          {/* Public Channels */}
+          {/* Organization Channels (including Common Support) */}
           <div>
-            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Department Channels
+            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+              <span>Organization Channels</span>
+              <span className="text-[9px] font-semibold text-slate-500">{publicChannels.length}</span>
             </div>
             <div className="space-y-0.5 mt-1">
-              {CHANNELS.map((ch) => {
+              {publicChannels.map((ch) => {
                 const isActive = activeChatChannel === ch.id;
+                const isSupport = ch.id === 'support';
                 const unread = chatMessages.filter(
                   (m) => m.channel === ch.id && m.senderId !== currentProfile.id
                 ).length;
@@ -171,13 +219,26 @@ export const TeamChat: React.FC = () => {
                     onClick={() => setActiveChatChannel(ch.id)}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition text-left ${
                       isActive
-                        ? 'bg-blue-600 text-white shadow-xs'
+                        ? isSupport ? 'bg-indigo-600 text-white shadow-xs' : 'bg-blue-600 text-white shadow-xs'
+                        : isSupport
+                        ? 'text-indigo-700 hover:bg-indigo-50/60 font-bold'
                         : 'text-slate-700 hover:bg-white hover:text-slate-900'
                     }`}
                   >
                     <div className="flex items-center space-x-2 truncate">
-                      <Hash className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                      {isSupport ? (
+                        <Headphones className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
+                      ) : (
+                        <Hash className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                      )}
                       <span className="truncate">{ch.name}</span>
+                      {isSupport && (
+                        <span className={`text-[8px] px-1 py-0.2 rounded font-extrabold uppercase ${
+                          isActive ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-700'
+                        }`}>
+                          Helpdesk
+                        </span>
+                      )}
                     </div>
                     {unread > 0 && !isActive && (
                       <span className="w-2 h-2 rounded-full bg-blue-600" />
@@ -185,6 +246,62 @@ export const TeamChat: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Groups & Private Channels */}
+          <div>
+            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+              <span>Groups & Private Channels</span>
+              <button
+                onClick={() => setIsCreateModalOpen(true)}
+                className="inline-flex items-center space-x-1 px-1.5 py-0.5 text-[9px] font-bold text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition"
+                title="Create Group or Private Channel"
+              >
+                <Plus className="w-3 h-3" />
+                <span>New</span>
+              </button>
+            </div>
+            <div className="space-y-0.5 mt-1">
+              {privateGroupChannels.length === 0 ? (
+                <div className="px-3 py-2 text-[11px] text-slate-400 italic">
+                  No groups yet. Click + New to create one!
+                </div>
+              ) : (
+                privateGroupChannels.map((ch) => {
+                  const isActive = activeChatChannel === ch.id;
+                  const unread = chatMessages.filter(
+                    (m) => m.channel === ch.id && m.senderId !== currentProfile.id
+                  ).length;
+
+                  return (
+                    <button
+                      key={ch.id}
+                      onClick={() => setActiveChatChannel(ch.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition text-left ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-slate-700 hover:bg-white hover:text-slate-900'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2 truncate">
+                        <Lock className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-amber-500'}`} />
+                        <span className="truncate">{ch.name}</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        {unread > 0 && !isActive && (
+                          <span className="w-2 h-2 rounded-full bg-blue-600" />
+                        )}
+                        <span className={`text-[8px] px-1 py-0.2 rounded ${
+                          isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                        }`}>
+                          {ch.memberIds?.length || 1}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -275,16 +392,45 @@ export const TeamChat: React.FC = () => {
                   </p>
                 </div>
               </div>
+            ) : activeChatChannel === 'support' ? (
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center border border-indigo-200">
+                  <Headphones className="w-4 h-4 text-indigo-600" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Common Support Channel
+                    </h3>
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-indigo-100 text-indigo-700">
+                      Helpdesk
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Internal organization support, HR questions, payroll queries & IT tickets
+                  </p>
+                </div>
+              </div>
             ) : (
               <div>
                 <div className="flex items-center space-x-1.5">
-                  <Hash className="w-4 h-4 text-blue-600 font-bold" />
+                  {activeChannelObj?.isPrivate ? (
+                    <Lock className="w-4 h-4 text-amber-500 font-bold" />
+                  ) : (
+                    <Hash className="w-4 h-4 text-blue-600 font-bold" />
+                  )}
                   <h3 className="text-sm font-bold text-slate-900 capitalize">
-                    {CHANNELS.find((c) => c.id === activeChatChannel)?.name || activeChatChannel}
+                    {activeChannelObj?.name || activeChatChannel}
                   </h3>
+                  {activeChannelObj?.isPrivate && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 uppercase">
+                      Private Group
+                    </span>
+                  )}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  {CHANNELS.find((c) => c.id === activeChatChannel)?.desc || 'Discussion channel'}
+                  {activeChannelObj?.description || 'Discussion channel'}
+                  {activeChannelObj?.createdByName ? ` • Created by ${activeChannelObj.createdByName}` : ''}
                 </p>
               </div>
             )}
@@ -303,12 +449,20 @@ export const TeamChat: React.FC = () => {
           {activeChannelMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400">
               <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center mb-3">
-                <MessageSquare className="w-6 h-6" />
+                {activeChatChannel === 'support' ? (
+                  <Headphones className="w-6 h-6 text-indigo-600" />
+                ) : (
+                  <MessageSquare className="w-6 h-6" />
+                )}
               </div>
-              <h4 className="text-sm font-bold text-slate-700">No Messages Yet</h4>
+              <h4 className="text-sm font-bold text-slate-700">
+                {activeChatChannel === 'support' ? 'Common Support & Helpdesk' : 'No Messages Yet'}
+              </h4>
               <p className="text-xs text-slate-400 mt-1 max-w-xs">
                 {isDirectMessage
                   ? `Say hello to ${dmTargetProfile?.firstName || 'your colleague'}! Send your first direct message.`
+                  : activeChatChannel === 'support'
+                  ? 'Ask HR, management, or IT for assistance here. All organization support requests are monitored.'
                   : `Start the conversation in #${activeChatChannel}!`}
               </p>
             </div>
@@ -444,6 +598,8 @@ export const TeamChat: React.FC = () => {
               placeholder={
                 isDirectMessage
                   ? `Message ${dmTargetProfile?.firstName || 'colleague'}...`
+                  : activeChatChannel === 'support'
+                  ? 'Ask support or report an inquiry...'
                   : `Message #${activeChatChannel}...`
               }
               className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
@@ -459,6 +615,138 @@ export const TeamChat: React.FC = () => {
           </form>
         </div>
       </div>
+
+      {/* Modal: Create Channel / Group */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden my-6 border border-slate-100">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center space-x-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <h3 className="text-xs font-bold text-slate-900">
+                  {isPrivateChannel ? 'Create Private Group' : 'Create Team Channel'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsCreateModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateChannelSubmit} className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Channel / Group Name *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400 font-bold">#</span>
+                  <input
+                    type="text"
+                    required
+                    value={newChannelName}
+                    onChange={(e) => setNewChannelName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))}
+                    placeholder="e.g. project-apollo, marketing-sync"
+                    className="w-full pl-7 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Description / Purpose
+                </label>
+                <input
+                  type="text"
+                  value={newChannelDesc}
+                  onChange={(e) => setNewChannelDesc(e.target.value)}
+                  placeholder="What is this channel for?"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Privacy Toggle */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Lock className="w-4 h-4 text-amber-500" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">Private Group Channel</span>
+                      <span className="text-[10px] text-slate-500">Only invited members can view and post</span>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={isPrivateChannel}
+                    onChange={(e) => setIsPrivateChannel(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Member Selection if Private */}
+              {isPrivateChannel && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Select Group Members ({selectedMemberIds.length} chosen)
+                  </label>
+                  <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 rounded-xl border border-slate-200">
+                    {orgProfiles
+                      .filter((p) => p.id !== currentProfile.id)
+                      .map((p) => {
+                        const isSelected = selectedMemberIds.includes(p.id);
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => toggleMemberSelection(p.id)}
+                            className={`flex items-center justify-between p-1.5 rounded-lg cursor-pointer transition ${
+                              isSelected ? 'bg-blue-100/70 text-blue-900' : 'hover:bg-white text-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[9px] font-bold flex items-center justify-center">
+                                {p.firstName[0]}
+                              </span>
+                              <span className="text-xs font-medium">{p.firstName} {p.lastName}</span>
+                              <span className="text-[9px] text-slate-400">({p.role})</span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              readOnly
+                              checked={isSelected}
+                              className="w-3.5 h-3.5 rounded text-blue-600"
+                            />
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newChannelName.trim() || isSubmittingChannel}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold transition flex items-center space-x-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isSubmittingChannel ? 'Creating...' : 'Create Channel'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

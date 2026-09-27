@@ -26,9 +26,11 @@ import {
   Video,
   Megaphone,
   Pin,
-  ExternalLink
+  ExternalLink,
+  Building2
 } from 'lucide-react';
 import { formatCurrency, formatSalaryOrStipend, getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
+import { EditOrganizationModal } from './EditOrganizationModal';
 
 interface DashboardOverviewProps {
   onOpenCreateOffer: () => void;
@@ -58,6 +60,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     meetings,
     notices,
     createProfile,
+    getLeaveBalance,
     addToast
   } = useApp();
 
@@ -75,6 +78,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const [baseSalary, setBaseSalary] = useState('0');
   const [assignedManagerId, setAssignedManagerId] = useState('');
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
+  const [isEditOrgOpen, setIsEditOrgOpen] = useState(false);
 
   const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
@@ -86,34 +90,102 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     setShowPassword(true);
   };
 
-  // 100% Dynamic KPI computations strictly from Supabase live state (No fake fallbacks)
   const todayStr = getTodayISTDateString();
+
+  // Role Scoping:
+  // 1. Top Leadership (Owner, Superadmin, HR, Root Superadmin) -> Org-wide KPIs
+  // 2. Managers (managedTeam.length > 0) -> Only their managed team
+  // 3. Individual Employees (manage 0 reports) -> Their personal metrics only
+  const isTopLeadership =
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'superadmin' ||
+    isVedotrixSuperadmin;
+
+  const managedTeam = orgProfiles.filter((p) => p.managerId === currentProfile?.id);
+  const isManager = !isTopLeadership && managedTeam.length > 0;
+  const isIndividual = !isTopLeadership && !isManager;
+
+  // 1. Top Leadership Metrics (Org-wide)
   const totalEmployees = orgProfiles.length;
   const todayPunches = attendanceRecords.filter((a) => a.date === todayStr);
   const presentCount = todayPunches.filter((a) => a.status === 'present' || a.status === 'regularized').length;
   const halfDayCount = todayPunches.filter((a) => a.status === 'half_day').length;
   const onLeaveCount = leaveRequests.filter((l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr).length;
   const absentCount = Math.max(0, totalEmployees - (presentCount + halfDayCount + onLeaveCount));
-
   const attendanceRate = totalEmployees > 0 ? Math.round(((presentCount + halfDayCount * 0.5) / totalEmployees) * 100) : 0;
   const onLeaveRate = totalEmployees > 0 ? Math.round((onLeaveCount / totalEmployees) * 100) : 0;
-
   const pendingApprovalsCount =
     leaveRequests.filter((l) => l.status === 'pending').length +
     attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length +
     accessRequests.filter((r) => r.status === 'pending').length;
 
-  // Dynamic 7-day attendance trend data strictly from records
+  // 2. Manager Metrics (Strictly scoped to employees managed by them)
+  const managedTeamIds = new Set(managedTeam.map((m) => m.id));
+  const managerPunches = todayPunches.filter((a) => managedTeamIds.has(a.employeeId));
+  const managerPresentCount = managerPunches.filter((a) => a.status === 'present' || a.status === 'regularized').length;
+  const managerOnLeaveCount = leaveRequests.filter(
+    (l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr && managedTeamIds.has(l.employeeId)
+  ).length;
+  const managerAbsentCount = Math.max(0, managedTeam.length - (managerPresentCount + managerOnLeaveCount));
+  const managerAttendanceRate = managedTeam.length > 0 ? Math.round((managerPresentCount / managedTeam.length) * 100) : 0;
+  const managerPendingApprovals =
+    leaveRequests.filter((l) => l.status === 'pending' && (l.assignedApproverId === currentProfile?.id || managedTeamIds.has(l.employeeId))).length +
+    attendanceRecords.filter((a) => a.regularizationStatus === 'pending' && managedTeamIds.has(a.employeeId)).length;
+
+  // 3. Individual Employee Metrics (Strictly personal)
+  const myTodayPunch = todayPunches.find((a) => a.employeeId === currentProfile?.id);
+  const myActiveLeave = leaveRequests.find(
+    (l) => l.employeeId === currentProfile?.id && (l.status === 'approved' || l.status === 'pending') && l.startDate <= todayStr && l.endDate >= todayStr
+  );
+  const myMonthPunchesCount = attendanceRecords.filter(
+    (a) => a.employeeId === currentProfile?.id && a.date.startsWith(todayStr.slice(0, 7)) && (a.status === 'present' || a.status === 'regularized')
+  ).length;
+  const myPendingRequestsCount =
+    leaveRequests.filter((l) => l.employeeId === currentProfile?.id && l.status === 'pending').length +
+    attendanceRecords.filter((a) => a.employeeId === currentProfile?.id && a.regularizationStatus === 'pending').length;
+  const myLeaveBal = getLeaveBalance(currentProfile?.id);
+  const myAvailableDays = myLeaveBal.casual.remaining + myLeaveBal.sick.remaining + myLeaveBal.privilege.remaining;
+
+  // Scoped metrics for Attendance Overview Donut Chart & Legend
+  const displayTotal = isTopLeadership ? totalEmployees : isManager ? managedTeam.length : 1;
+  const displayPresent = isTopLeadership
+    ? presentCount
+    : isManager
+    ? managerPresentCount
+    : (myTodayPunch && (myTodayPunch.status === 'present' || myTodayPunch.status === 'regularized') ? 1 : 0);
+  const displayOnLeave = isTopLeadership ? onLeaveCount : isManager ? managerOnLeaveCount : (myActiveLeave ? 1 : 0);
+  const displayAbsent = Math.max(0, displayTotal - (displayPresent + displayOnLeave));
+  const displayRate = isTopLeadership
+    ? attendanceRate
+    : isManager
+    ? managerAttendanceRate
+    : (displayPresent ? 100 : 0);
+  const displayRateLabel = isTopLeadership ? 'Present Today' : isManager ? 'Team Present' : (displayPresent ? 'Present Today' : myActiveLeave ? 'On Leave' : 'Not Punched');
+
+  // Dynamic 7-day attendance trend data strictly scoped
   const last7Days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
     const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const label = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
-    const count = attendanceRecords.filter((a) => a.date === dateStr && (a.status === 'present' || a.status === 'regularized')).length;
+    let count = 0;
+    if (isTopLeadership) {
+      count = attendanceRecords.filter((a) => a.date === dateStr && (a.status === 'present' || a.status === 'regularized')).length;
+    } else if (isManager) {
+      count = attendanceRecords.filter((a) => a.date === dateStr && managedTeamIds.has(a.employeeId) && (a.status === 'present' || a.status === 'regularized')).length;
+    } else {
+      count = attendanceRecords.filter((a) => a.date === dateStr && a.employeeId === currentProfile?.id && (a.status === 'present' || a.status === 'regularized')).length;
+    }
     return { dateStr, label, count };
   });
 
-  const maxChartCount = Math.max(...last7Days.map((d) => d.count), totalEmployees, 5);
+  const maxChartCount = isTopLeadership
+    ? Math.max(...last7Days.map((d) => d.count), totalEmployees, 5)
+    : isManager
+    ? Math.max(...last7Days.map((d) => d.count), managedTeam.length, 3)
+    : 1;
+
   const chartPoints = last7Days.map((d, index) => {
     const x = 30 + index * (265 / 6);
     const normalizedY = maxChartCount > 0 ? d.count / maxChartCount : 0;
@@ -333,77 +405,141 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       </div>
 
-      {/* 2. Top 4 Metric Summary Cards matching reference mockup */}
+      {/* 2. Top 4 Metric Summary Cards scoped by role & management hierarchy */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Employees */}
+        {/* Card 1: Headcount / Managed Team / Today's Presence */}
         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md transition">
           <div className="flex items-center space-x-3.5">
             <div className="w-12 h-12 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center shrink-0">
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs text-slate-500 font-medium block">Total Employees</span>
+              <span className="text-xs text-slate-500 font-medium block">
+                {isTopLeadership
+                  ? 'Total Employees'
+                  : isManager
+                  ? 'My Managed Team'
+                  : "Today's Presence"}
+              </span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {totalEmployees}
+                {isTopLeadership
+                  ? totalEmployees
+                  : isManager
+                  ? managedTeam.length
+                  : (myTodayPunch ? 'PRESENT' : myActiveLeave ? 'ON LEAVE' : 'NOT PUNCHED')}
               </div>
             </div>
           </div>
-          <div className="mt-3 flex items-center text-[11px] font-semibold text-emerald-600">
-            <span className="inline-flex items-center">{totalEmployees} Active in {currentOrg.orgCode}</span>
+          <div className="mt-3 flex items-center text-[11px] font-semibold text-purple-600">
+            <span>
+              {isTopLeadership
+                ? `${totalEmployees} Active in ${currentOrg.orgCode}`
+                : isManager
+                ? `${managedTeam.length} Direct Reports assigned to you`
+                : 'Punched at IST office / remote location'}
+            </span>
           </div>
         </div>
 
-        {/* Present Today */}
+        {/* Card 2: Present Today / Team Present / Monthly Attendance */}
         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md transition">
           <div className="flex items-center space-x-3.5">
             <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
               <CalendarCheck className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs text-slate-500 font-medium block">Present Today (IST)</span>
+              <span className="text-xs text-slate-500 font-medium block">
+                {isTopLeadership
+                  ? 'Present Today (IST)'
+                  : isManager
+                  ? 'Team Present Today'
+                  : 'Monthly Present Days'}
+              </span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {presentCount}
+                {isTopLeadership
+                  ? presentCount
+                  : isManager
+                  ? `${managerPresentCount} / ${managedTeam.length}`
+                  : `${myMonthPunchesCount} Days`}
               </div>
             </div>
           </div>
           <div className="mt-3 flex items-center text-[11px] font-semibold text-emerald-600">
-            <span>{attendanceRate}% attendance rate</span>
+            <span>
+              {isTopLeadership
+                ? `${attendanceRate}% organization rate`
+                : isManager
+                ? `${managerAttendanceRate}% of managed direct reports`
+                : 'Logged this calendar month (IST)'}
+            </span>
           </div>
         </div>
 
-        {/* On Leave */}
+        {/* Card 3: On Leave / Team on Leave / Personal Leave Balance */}
         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md transition">
           <div className="flex items-center space-x-3.5">
             <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
               <Calendar className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs text-slate-500 font-medium block">On Leave</span>
+              <span className="text-xs text-slate-500 font-medium block">
+                {isTopLeadership
+                  ? 'On Leave Today'
+                  : isManager
+                  ? 'Team on Leave'
+                  : 'My Leave Balance'}
+              </span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {onLeaveCount}
+                {isTopLeadership
+                  ? onLeaveCount
+                  : isManager
+                  ? managerOnLeaveCount
+                  : `${myAvailableDays} Days`}
               </div>
             </div>
           </div>
           <div className="mt-3 flex items-center text-[11px] font-semibold text-amber-600">
-            <span>{onLeaveRate}% of total staff</span>
+            <span>
+              {isTopLeadership
+                ? `${onLeaveRate}% of total staff`
+                : isManager
+                ? 'Direct reports on leave today'
+                : 'Casual + Sick + Privilege remaining'}
+            </span>
           </div>
         </div>
 
-        {/* Pending Approvals */}
+        {/* Card 4: Approvals / Team Approvals / Personal Pending Requests */}
         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md transition">
           <div className="flex items-center space-x-3.5">
             <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs text-slate-500 font-medium block">Pending Approvals</span>
+              <span className="text-xs text-slate-500 font-medium block">
+                {isTopLeadership
+                  ? 'Pending Approvals'
+                  : isManager
+                  ? 'Team Approvals'
+                  : 'My Pending Requests'}
+              </span>
               <div className="text-2xl font-extrabold text-slate-900 leading-tight">
-                {pendingApprovalsCount}
+                {isTopLeadership
+                  ? pendingApprovalsCount
+                  : isManager
+                  ? managerPendingApprovals
+                  : myPendingRequestsCount}
               </div>
             </div>
           </div>
           <div className="mt-3 flex items-center text-[11px] font-medium text-slate-400">
-            <span>Leave / Attendance / Others</span>
+            <span>
+              {isTopLeadership
+                ? 'Leave / Attendance / Access'
+                : isManager
+                ? 'Awaiting your manager sign-off'
+                : 'Leave or regularization pending decision'}
+            </span>
           </div>
         </div>
       </div>
@@ -418,7 +554,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <h2 className="text-sm font-bold text-slate-900">Attendance Overview</h2>
             </div>
             <div className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600">
-              <span>Past 7 Days (IST)</span>
+              <span>
+                {isTopLeadership
+                  ? 'Past 7 Days (Organization-wide)'
+                  : isManager
+                  ? 'Past 7 Days (My Managed Team)'
+                  : 'Past 7 Days (My Attendance)'}
+              </span>
             </div>
           </div>
 
@@ -498,7 +640,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                     strokeWidth="10"
                     fill="none"
                     strokeDasharray="238.76"
-                    strokeDashoffset={238.76 - 238.76 * (totalEmployees > 0 ? presentCount / totalEmployees : 0)}
+                    strokeDashoffset={238.76 - 238.76 * (displayTotal > 0 ? displayPresent / displayTotal : 0)}
                     strokeLinecap="round"
                   />
                   {/* On Leave Track */}
@@ -510,13 +652,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                     strokeWidth="10"
                     fill="none"
                     strokeDasharray="238.76"
-                    strokeDashoffset={238.76 - 238.76 * (totalEmployees > 0 ? onLeaveCount / totalEmployees : 0)}
+                    strokeDashoffset={238.76 - 238.76 * (displayTotal > 0 ? displayOnLeave / displayTotal : 0)}
                     strokeLinecap="round"
                   />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                  <span className="text-xl font-extrabold text-slate-900 leading-tight">{attendanceRate}%</span>
-                  <span className="text-[10px] text-slate-400 font-semibold">Present Today</span>
+                  <span className="text-xl font-extrabold text-slate-900 leading-tight">{displayRate}%</span>
+                  <span className="text-[10px] text-slate-400 font-semibold">{displayRateLabel}</span>
                 </div>
               </div>
 
@@ -527,21 +669,21 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-600 mr-2" />
                     Present
                   </span>
-                  <span className="font-bold text-slate-800">{presentCount}</span>
+                  <span className="font-bold text-slate-800">{displayPresent}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center text-slate-600">
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-500 mr-2" />
                     On Leave
                   </span>
-                  <span className="font-bold text-slate-800">{onLeaveCount}</span>
+                  <span className="font-bold text-slate-800">{displayOnLeave}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center text-slate-600">
                     <span className="w-2.5 h-2.5 rounded-full bg-slate-300 mr-2" />
                     Pending / Out
                   </span>
-                  <span className="font-bold text-slate-800">{absentCount}</span>
+                  <span className="font-bold text-slate-800">{displayAbsent}</span>
                 </div>
               </div>
             </div>
@@ -641,6 +783,17 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <FileSpreadsheet className="w-4 h-4 text-cyan-600 shrink-0" />
               <span>View Reports</span>
             </button>
+
+            {/* Edit Organization Profile (HR, Owner, Superadmin) */}
+            {isElevatedRole && (
+              <button
+                onClick={() => setIsEditOrgOpen(true)}
+                className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs transition text-left"
+              >
+                <Building2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>Organization Profile</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -996,6 +1149,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Edit Organization Modal */}
+      <EditOrganizationModal
+        isOpen={isEditOrgOpen}
+        onClose={() => setIsEditOrgOpen(false)}
+      />
     </div>
   );
 };

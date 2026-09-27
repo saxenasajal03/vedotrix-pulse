@@ -17,6 +17,7 @@ import {
   Palette
 } from 'lucide-react';
 import { NotificationDropdown } from './NotificationDropdown';
+import { EditOrganizationModal } from './EditOrganizationModal';
 
 interface NavbarProps {
   onOpenVerifyModal: () => void;
@@ -54,6 +55,9 @@ export const Navbar: React.FC<NavbarProps> = ({
       setActiveTab('employees');
     }
   };
+
+  const [isEditOrgOpen, setIsEditOrgOpen] = useState(false);
+  const canManageOrg = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
 
   const themeOptions = [
     { id: 'corporate-light', label: 'Corporate Light', icon: Sun, desc: 'Clean White & Slate' },
@@ -94,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Right: Actions, Notifications & User Profile */}
         <div className="flex items-center space-x-2 sm:space-x-4 shrink-0">
           {/* Tenant Switcher Pill */}
-          <div className="relative hidden lg:block">
+          <div className="relative hidden lg:flex items-center space-x-1.5">
             <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700 hover:bg-slate-100 transition cursor-pointer">
               <div className="w-5 h-5 rounded-md bg-white border border-slate-200 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
                 <img
@@ -127,6 +131,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </option>
                 ))}
               </select>
+            )}
+
+            {/* Quick Edit Organization Profile for Superadmin & HR */}
+            {canManageOrg && (
+              <button
+                type="button"
+                onClick={() => setIsEditOrgOpen(true)}
+                title="Edit Organization Details, Address & Website (HR / Superadmin)"
+                className="p-1.5 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 hover:text-blue-600 transition shadow-xs"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
@@ -284,6 +300,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Edit Organization Profile Modal */}
+      <EditOrganizationModal
+        isOpen={isEditOrgOpen}
+        onClose={() => setIsEditOrgOpen(false)}
+      />
     </header>
   );
 };

@@ -548,7 +548,11 @@ export const PayrollManager: React.FC = () => {
                 <div>
                   <h2 className="text-xl font-extrabold uppercase text-slate-950">{currentOrg.name}</h2>
                   <p className="text-[11px] text-slate-600">{currentOrg.address || 'Corporate Headquarters'}</p>
-                  <p className="text-[11px] text-blue-700 font-semibold">
+                  <p className="text-[10px] text-slate-500">
+                    {currentOrg.phone ? `Phone: ${currentOrg.phone} • ` : ''}
+                    {currentOrg.website || 'https://vedotrix.com'}
+                  </p>
+                  <p className="text-[11px] text-blue-700 font-semibold mt-1">
                     Payslip for Month: {activePayslip.month}/{activePayslip.year}
                   </p>
                 </div>

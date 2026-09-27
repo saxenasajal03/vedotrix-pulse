@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   MapPin,
@@ -9,7 +9,10 @@ import {
   Navigation,
   Compass,
   FileEdit,
-  ShieldCheck
+  ShieldCheck,
+  CalendarX,
+  Undo2,
+  LocateFixed
 } from 'lucide-react';
 import { calculateHaversineDistance, formatDistance } from '../lib/geoUtils';
 import { formatISTTime, getTodayISTDateString } from '../lib/serialUtils';
@@ -23,24 +26,45 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
   onRequestRegularization,
   onOpenStandup
 }) => {
-  const { currentOrg, officeLocations, getTodayAttendance, punchAttendance } = useApp();
-  
+  const {
+    currentOrg,
+    currentProfile,
+    officeLocations,
+    leaveRequests,
+    getTodayAttendance,
+    punchAttendance,
+    cancelLeaveRequest,
+    addToast
+  } = useApp();
+
   const activeOffice = officeLocations[0] || {
     latitude: 17.4435,
     longitude: 78.3772,
     radiusMeters: 150,
-    name: 'Primary Office'
+    name: 'Primary Office',
+    address: currentOrg.address || 'Corporate Headquarters'
   };
 
-  // State for user's coordinates (starts around office location for demo convenience)
   const [userLat, setUserLat] = useState<number>(activeOffice.latitude + 0.0001);
   const [userLong, setUserLong] = useState<number>(activeOffice.longitude + 0.0001);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [hasRealGps, setHasRealGps] = useState(false);
+  const [isWithdrawingLeave, setIsWithdrawingLeave] = useState(false);
 
+  const todayStr = getTodayISTDateString();
   const todayRecord = getTodayAttendance();
 
-  // Compute live distance
+  // Check if employee has an active leave request covering today
+  const activeLeaveToday = leaveRequests.find(
+    (l) =>
+      l.employeeId === currentProfile.id &&
+      (l.status === 'approved' || l.status === 'pending') &&
+      l.startDate <= todayStr &&
+      l.endDate >= todayStr
+  );
+
+  // Compute live distance using standard Haversine formula
   const currentDistance = calculateHaversineDistance(
     userLat,
     userLong,
@@ -50,7 +74,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
 
   const isInsideFence = currentDistance <= activeOffice.radiusMeters;
 
-  // Real GPS lookup
+  // Real GPS lookup with high accuracy
   const captureRealGps = () => {
     if (!navigator.geolocation) {
       setGpsError('Geolocation is not supported by your browser.');
@@ -62,36 +86,60 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
       (pos) => {
         setUserLat(pos.coords.latitude);
         setUserLong(pos.coords.longitude);
+        setHasRealGps(true);
         setGpsLoading(false);
       },
       (err) => {
-        setGpsError(`GPS Access: ${err.message}. Using simulated location.`);
+        setGpsError(`GPS Access: ${err.message}. Please allow location access in your browser.`);
         setGpsLoading(false);
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
-  // Quick Location Simulation Presets
-  const simulateOfficeLocation = () => {
-    setUserLat(activeOffice.latitude + 0.0001);
-    setUserLong(activeOffice.longitude + 0.0001);
-    setGpsError(null);
-  };
-
-  const simulateRemoteLocation = () => {
-    // 2.5 km away
-    setUserLat(activeOffice.latitude + 0.02);
-    setUserLong(activeOffice.longitude + 0.02);
-    setGpsError(null);
-  };
+  // Attempt real GPS once on mount
+  useEffect(() => {
+    if (navigator.geolocation && !hasRealGps) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLat(pos.coords.latitude);
+          setUserLong(pos.coords.longitude);
+          setHasRealGps(true);
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    }
+  }, []);
 
   const activeOfficeAddress = activeOffice.address || currentOrg.address || 'Corporate Headquarters';
 
   const handlePunch = () => {
+    if (activeLeaveToday) {
+      addToast(
+        'Leave Active',
+        `You cannot record attendance while on ${activeLeaveToday.status} leave today.`,
+        'warning'
+      );
+      return;
+    }
+
     const res = punchAttendance(userLat, userLong, !isInsideFence, currentDistance, activeOfficeAddress);
     if (res.success) {
       onOpenStandup();
+    }
+  };
+
+  const handleWithdrawPendingLeave = async () => {
+    if (!activeLeaveToday || activeLeaveToday.status !== 'pending') return;
+    setIsWithdrawingLeave(true);
+    try {
+      await cancelLeaveRequest(activeLeaveToday.id);
+      addToast('Leave Withdrawn 🔓', 'Your pending leave was cancelled. Attendance punch is now unlocked!', 'success');
+    } catch (err) {
+      addToast('Error', 'Could not withdraw leave request.', 'error');
+    } finally {
+      setIsWithdrawingLeave(false);
     }
   };
 
@@ -106,7 +154,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           <div className="min-w-0">
             <h3 className="text-sm sm:text-base font-bold text-white truncate">Smart Office Presence & Geo Attendance</h3>
             <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-              Assigned Office: <span className="text-cyan-400 font-semibold">{activeOffice.name}</span> • Timezone: <span className="text-emerald-400 font-semibold">IST (UTC+5:30)</span>
+              Assigned Office: <span className="text-cyan-400 font-semibold">{activeOffice.name}</span> • Timezone: <span className="text-emerald-400 font-semibold">IST (Asia/Kolkata)</span>
             </p>
           </div>
         </div>
@@ -127,13 +175,58 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           ) : (
             <>
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-              <span>Location Not Matched (Approval Needed)</span>
+              <span>Outside Perimeter (Remote / Approval Needed)</span>
             </>
           )}
         </div>
       </div>
 
-      {/* Geolocation Stats Radar Card - Showing Office Address instead of raw lat/long */}
+      {/* Active Leave Alert Banner (Locks attendance punch if leave is active for today) */}
+      {activeLeaveToday && (
+        <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+          activeLeaveToday.status === 'pending'
+            ? 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+            : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
+        }`}>
+          <div className="flex items-start space-x-3">
+            <div className={`p-2 rounded-lg shrink-0 ${
+              activeLeaveToday.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-rose-500/20 text-rose-400'
+            }`}>
+              <CalendarX className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold uppercase tracking-wider">
+                  Attendance Locked: {activeLeaveToday.leaveType.toUpperCase()} LEAVE ACTIVE TODAY
+                </span>
+                <span className={`px-2 py-0.2 rounded-full text-[9px] font-extrabold uppercase ${
+                  activeLeaveToday.status === 'pending' ? 'bg-amber-500/30 text-amber-300' : 'bg-rose-500/30 text-rose-300'
+                }`}>
+                  {activeLeaveToday.status}
+                </span>
+              </div>
+              <p className="text-[11px] mt-1 text-slate-300 leading-relaxed">
+                {activeLeaveToday.status === 'pending'
+                  ? 'You submitted a leave request covering today that is currently pending approval. To mark presence, withdraw your pending leave request.'
+                  : 'Your leave application for today has been approved by management. Approved leaves cannot be self-withdrawn; please contact HR or your Reporting Manager to adjust.'}
+              </p>
+            </div>
+          </div>
+
+          {activeLeaveToday.status === 'pending' && (
+            <button
+              onClick={handleWithdrawPendingLeave}
+              disabled={isWithdrawingLeave}
+              className="inline-flex items-center space-x-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 text-xs font-bold rounded-xl transition shrink-0 shadow-md"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span>{isWithdrawingLeave ? 'Withdrawing...' : 'Withdraw Leave & Unlock'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Geolocation Live Coordinates & Verification Box */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-950/70 p-4 rounded-xl border border-slate-800">
         <div>
           <span className="text-[10px] uppercase font-bold text-slate-400 block flex items-center">
@@ -144,7 +237,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
             {activeOfficeAddress}
           </p>
           <span className="text-[10px] text-slate-500 mt-1 block">
-            Office Radius: &le; {activeOffice.radiusMeters}m geofence
+            Office Perimeter: &le; {activeOffice.radiusMeters}m geofence
           </span>
         </div>
 
@@ -167,26 +260,14 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           <button
             onClick={captureRealGps}
             disabled={gpsLoading}
-            className="w-full py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-semibold flex items-center justify-center space-x-1.5 transition"
+            className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition shadow-sm"
           >
-            <Navigation className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{gpsLoading ? 'Reading GPS...' : 'Use Browser Location'}</span>
+            <LocateFixed className="w-4 h-4 text-white" />
+            <span>{gpsLoading ? 'Detecting Precise GPS...' : hasRealGps ? 'Recalibrate Live GPS' : 'Acquire Device Location'}</span>
           </button>
-          
-          <div className="flex space-x-1">
-            <button
-              onClick={simulateOfficeLocation}
-              className="flex-1 py-1 px-1.5 bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 text-indigo-300 rounded text-[10px] font-semibold text-center"
-            >
-              Simulate In-Office
-            </button>
-            <button
-              onClick={simulateRemoteLocation}
-              className="flex-1 py-1 px-1.5 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/30 text-amber-300 rounded text-[10px] font-semibold text-center"
-            >
-              Simulate Remote
-            </button>
-          </div>
+          <p className="text-[9px] text-slate-400 text-center">
+            {hasRealGps ? 'Live device GPS coordinates verified' : 'Click to sync with high-precision GPS'}
+          </p>
         </div>
       </div>
 
@@ -201,20 +282,22 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950/20 to-slate-900 p-5 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-            Today's Attendance Status ({getTodayISTDateString()} IST)
+            Today's Attendance Status ({todayStr} IST)
           </span>
           <div className="flex items-center space-x-2 mt-1">
             <div
               className={`w-2.5 h-2.5 rounded-full ${
                 !todayRecord
-                  ? 'bg-slate-500'
+                  ? activeLeaveToday ? 'bg-amber-400' : 'bg-slate-500'
                   : 'bg-emerald-400'
               }`}
             />
             <span className="text-base font-bold text-white">
-              {!todayRecord
-                ? 'Not Recorded Today'
-                : '✓ Attendance Recorded for Today (IST)'}
+              {todayRecord
+                ? '✓ Attendance Recorded for Today (IST)'
+                : activeLeaveToday
+                ? `Locked: On ${activeLeaveToday.leaveType.toUpperCase()} Leave`
+                : 'Not Recorded Today'}
             </span>
           </div>
 
@@ -248,10 +331,19 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           {!todayRecord ? (
             <button
               onClick={handlePunch}
-              className="w-full sm:w-auto justify-center px-6 py-3.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/30 transition flex items-center space-x-2"
+              disabled={Boolean(activeLeaveToday)}
+              className={`w-full sm:w-auto justify-center px-6 py-3.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 ${
+                activeLeaveToday
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                  : 'text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/30'
+              }`}
             >
               <Clock className="w-4 h-4" />
-              <span>Punch In (Mark Present - IST)</span>
+              <span>
+                {activeLeaveToday
+                  ? `Locked: On ${activeLeaveToday.leaveType} Leave`
+                  : 'Punch In (Mark Present - IST)'}
+              </span>
             </button>
           ) : (
             <div className="flex flex-col sm:items-end space-y-1.5 w-full sm:w-auto">

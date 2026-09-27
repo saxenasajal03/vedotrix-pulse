@@ -21,7 +21,8 @@ import {
   OrganizationAdminCredentials,
   MeetingEvent,
   NoticeItem,
-  ChatMessage
+  ChatMessage,
+  ChatChannel
 } from '../types';
 import {
   INITIAL_ORGS,
@@ -104,7 +105,7 @@ interface AppContextType {
   getOfferBySerial: (serialNumber: string) => OfferLetter | undefined;
   
   // Actions: Attendance
-  punchAttendance: (lat: number, long: number, isRemote?: boolean, distanceMeters?: number, officeAddress?: string) => { success: boolean; message: string; record: AttendanceRecord };
+  punchAttendance: (lat: number, long: number, isRemote?: boolean, distanceMeters?: number, officeAddress?: string) => { success: boolean; message: string; record?: AttendanceRecord };
   requestRegularization: (attendanceId: string, reason: string) => void;
   resolveRegularization: (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => void;
   getTodayAttendance: () => AttendanceRecord | undefined;
@@ -176,6 +177,9 @@ interface AppContextType {
 
   // Organizational Live Chat (Supabase DB)
   chatMessages: ChatMessage[];
+  chatChannels: ChatChannel[];
+  createChatChannel: (data: { name: string; description: string; isPrivate?: boolean; memberIds?: string[] }) => Promise<ChatChannel>;
+  deleteChatChannel: (channelId: string) => Promise<void>;
   sendChatMessage: (message: string, channel: string, recipientId?: string) => Promise<ChatMessage>;
   addChatReaction: (messageId: string, emoji: string) => Promise<void>;
   activeChatChannel: string;
@@ -356,6 +360,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Organizational Live Chat State (Supabase DB synced)
   const [activeChatChannel, setActiveChatChannel] = useState<string>('general');
+  const [customChannels, setCustomChannels] = useState<ChatChannel[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_custom_channels');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [];
+  });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_chat_messages');
@@ -1693,6 +1704,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     officeAddress?: string
   ) => {
     const todayStr = getTodayISTDateString();
+
+    // Check if employee has an active leave request covering today
+    const activeLeaveToday = leaveRequests.find(
+      (l) =>
+        l.employeeId === currentProfile.id &&
+        (l.status === 'approved' || l.status === 'pending') &&
+        l.startDate <= todayStr &&
+        l.endDate >= todayStr
+    );
+
+    if (activeLeaveToday) {
+      const isPending = activeLeaveToday.status === 'pending';
+      addToast(
+        isPending ? 'Pending Leave Today ⏳' : 'Active Leave Today 🏖️',
+        isPending
+          ? `You have a pending ${activeLeaveToday.leaveType} leave request for today. Withdraw it before recording attendance.`
+          : `You are scheduled on approved ${activeLeaveToday.leaveType} leave for today. Attendance recording is locked.`,
+        'warning'
+      );
+      return {
+        success: false,
+        message: isPending
+          ? 'You have a pending leave request for today. Please withdraw it first to punch in.'
+          : 'You are on approved leave today. Attendance punch is locked.'
+      };
+    }
+
     const existing = getTodayAttendance();
     const resolvedAddress = officeAddress || currentOrg.address || 'Corporate Headquarters';
 
@@ -2134,7 +2172,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = leaveRequests.find((l) => l.id === leaveId);
     if (!target) return;
 
-    if (target.employeeId !== currentProfile.id && currentProfile.role !== 'owner' && currentProfile.role !== 'superadmin') {
+    if (target.status === 'approved' && currentProfile.role !== 'owner' && currentProfile.role !== 'superadmin' && currentProfile.role !== 'hr') {
+      addToast('Cannot Withdraw Approved Leave', 'Approved leaves cannot be self-withdrawn. Please contact HR or Superadmin.', 'warning');
+      return;
+    }
+
+    if (target.employeeId !== currentProfile.id && currentProfile.role !== 'owner' && currentProfile.role !== 'superadmin' && currentProfile.role !== 'hr') {
       addToast('Cannot Cancel', 'You can only cancel your own pending leave requests.', 'warning');
       return;
     }
@@ -2596,8 +2639,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {}
   };
 
+  const createChatChannel = async (data: {
+    name: string;
+    description: string;
+    isPrivate?: boolean;
+    memberIds?: string[];
+  }): Promise<ChatChannel> => {
+    const cleanName = data.name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    const newChan: ChatChannel = {
+      id: cleanName,
+      orgId: currentOrg.id,
+      name: cleanName,
+      description: data.description.trim(),
+      isPrivate: Boolean(data.isPrivate),
+      memberIds: data.isPrivate && data.memberIds ? data.memberIds : undefined,
+      createdBy: currentProfile.id,
+      createdByName: `${currentProfile.firstName} ${currentProfile.lastName}`.trim(),
+      type: data.isPrivate ? 'group' : 'channel',
+      createdAt: new Date().toISOString()
+    };
+
+    setCustomChannels((prev) => {
+      const updated = [...prev.filter((c) => !(c.id === cleanName && c.orgId === currentOrg.id)), newChan];
+      try {
+        localStorage.setItem('vdx_custom_channels', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    addToast(
+      data.isPrivate ? 'Private Group Created 🔒' : 'Channel Created 📢',
+      `#${cleanName} is now active for ${currentOrg.name}.`,
+      'success'
+    );
+    return newChan;
+  };
+
+  const deleteChatChannel = async (channelId: string): Promise<void> => {
+    setCustomChannels((prev) => {
+      const updated = prev.filter((c) => !(c.id === channelId && c.orgId === currentOrg.id));
+      try {
+        localStorage.setItem('vdx_custom_channels', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    if (activeChatChannel === channelId) {
+      setActiveChatChannel('general');
+    }
+    addToast('Channel Removed', `Channel #${channelId} was removed.`, 'info');
+  };
+
   const isSuperOrHr = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
   const directReportIds = new Set(profiles.filter((p) => p.orgId === currentOrg.id && p.managerId === currentProfile?.id).map((p) => p.id));
+
+  // Standard Base Channels for the current organization
+  const standardChannels: ChatChannel[] = [
+    {
+      id: 'general',
+      orgId: currentOrg.id,
+      name: 'general',
+      description: 'Company-wide updates & general team discussion',
+      type: 'channel',
+      isPrivate: false
+    },
+    {
+      id: 'support',
+      orgId: currentOrg.id,
+      name: 'support',
+      description: 'Common Support: Internal helpdesk, HR questions & IT ticket assistance',
+      type: 'channel',
+      isPrivate: false
+    },
+    {
+      id: 'engineering',
+      orgId: currentOrg.id,
+      name: 'engineering',
+      description: 'Technical sprints, PR reviews, bug reports, and deployments',
+      type: 'channel',
+      isPrivate: false
+    },
+    {
+      id: 'operations',
+      orgId: currentOrg.id,
+      name: 'operations',
+      description: 'Daily client workflows, workplace facilities, and operations',
+      type: 'channel',
+      isPrivate: false
+    },
+    {
+      id: 'announcements',
+      orgId: currentOrg.id,
+      name: 'announcements',
+      description: 'Official corporate releases, townhalls, and broadcasts',
+      type: 'channel',
+      isPrivate: false
+    }
+  ];
+
+  // Scoped Channels: standard channels + custom channels of this org visible to this user
+  const scopedChatChannels = [
+    ...standardChannels,
+    ...customChannels.filter((c) => {
+      if (c.orgId !== currentOrg.id && !isVedotrixSuperadmin) return false;
+      if (!c.isPrivate) return true;
+      if (isSuperOrHr) return true;
+      if (c.createdBy === currentProfile.id) return true;
+      if (c.memberIds && c.memberIds.includes(currentProfile.id)) return true;
+      return false;
+    })
+  ];
 
   // Scoped Meetings: elevated roles see all in org; employees/managers see meetings assigned to them, organized by them, organized by their manager, or attended by their direct reports
   const scopedMeetings = meetings.filter((m) => {
@@ -2714,6 +2864,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createNotice,
         deleteNotice,
         chatMessages: scopedChatMessages,
+        chatChannels: scopedChatChannels,
+        createChatChannel,
+        deleteChatChannel,
         sendChatMessage,
         addChatReaction,
         activeChatChannel,
