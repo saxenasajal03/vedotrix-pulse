@@ -155,30 +155,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center justify-between">
           <div
             onClick={() => handleTabClick('dashboard')}
-            className="flex items-center space-x-3 cursor-pointer group"
+            className="flex items-center space-x-3 cursor-pointer group min-w-0"
           >
-            {/* Logo Icon */}
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/25 shrink-0 group-hover:scale-105 transition-transform">
-              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <circle cx="8" cy="8" r="3" />
-                <path d="M4 17c0-2.2 1.8-4 4-4s4 1.8 4 4v1H4v-1z" />
-                <circle cx="16" cy="11" r="2.5" />
-                <path d="M13.5 18c0-1.7 1.3-3 3-3s3 1.3 3 3v1h-6v-1z" opacity="0.8" />
-              </svg>
+            {/* Dynamic Organization Logo */}
+            <div className="w-11 h-11 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center shadow-lg shadow-blue-500/10 shrink-0 group-hover:scale-105 transition-transform overflow-hidden p-1.5">
+              <img
+                src={currentOrg.logoUrl || '/vedotrix-logo.png'}
+                alt={currentOrg.name}
+                className="w-full h-full object-contain"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/vedotrix-logo.png';
+                }}
+              />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center space-x-1.5">
-                <span className="text-lg font-extrabold text-white tracking-tight leading-none">
-                  HRMS
+                <span className="text-sm font-extrabold text-white tracking-tight leading-snug truncate">
+                  {currentOrg.name}
                 </span>
-                {isVedotrixSuperadmin && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                    MASTER
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[11px] font-bold text-cyan-400">
+                  Vedotrix Pulse
+                </span>
+                {isVedotrixSuperadmin ? (
+                  <span className="text-[8px] font-extrabold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    SUPER CONTROLLER
+                  </span>
+                ) : (
+                  <span className="text-[8px] font-bold px-1 rounded bg-slate-800 text-slate-400">
+                    {currentOrg.orgCode}
                   </span>
                 )}
               </div>
-              <p className="text-[10px] text-slate-400 font-medium tracking-tight mt-0.5">
-                People. Process. Progress.
+              <p className="text-[9px] text-slate-400 font-medium tracking-tight truncate">
+                Designed & Managed by Vedotrix Technologies
               </p>
             </div>
           </div>
@@ -186,7 +197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {isMobileView && (
             <button
               onClick={onCloseMobile}
-              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white shrink-0 ml-1"
             >
               <X className="w-4 h-4" />
             </button>
@@ -199,7 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             <span className="font-semibold text-slate-200 truncate">{currentOrg.name}</span>
           </div>
-          <span className="text-[10px] font-mono text-slate-400 font-bold ml-1 shrink-0">
+          <span className="text-[10px] font-mono text-cyan-400 font-bold ml-1 shrink-0">
             {currentOrg.orgCode}
           </span>
         </div>

@@ -59,7 +59,7 @@ export async function sendWelcomeEmail(
   initialPassword?: string,
   loginUrl: string = 'https://vedotrix-pulse.netlify.app'
 ): Promise<EmailDispatchResult> {
-  const subject = `Welcome to ${orgName} on Vedotrix Pulse HRMS`;
+  const subject = `Welcome to ${orgName} on Vedotrix Pulse`;
 
   // HTML Template with metallic Vedotrix styling
   const emailHtml = `
@@ -126,7 +126,7 @@ export async function sendWelcomeEmail(
                 <tr>
                   <td style="padding: 24px 32px; background-color: #07090e; border-top: 1px solid #1e293b; text-align: center;">
                     <p style="color: #64748b; font-size: 11px; margin: 0 0 4px 0;">
-                      This is an automated notification from <strong>Vedotrix Pulse HRMS</strong>.
+                      This is an automated notification from <strong>Vedotrix Pulse</strong>.
                     </p>
                     <p style="color: #38bdf8; font-size: 11px; font-weight: 700; margin: 0;">
                       Designed & Managed by Vedotrix Technologies

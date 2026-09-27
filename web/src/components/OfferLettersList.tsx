@@ -34,7 +34,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
   onViewOffer,
   onOpenVerify
 }) => {
-  const { offerLetters, currentOrg, currentProfile, acceptOfferLetter, addToast } = useApp();
+  const { offerLetters, currentOrg, allOrganizations, currentProfile, acceptOfferLetter, addToast } = useApp();
 
   const canManage =
     currentProfile.role === 'hr' ||
@@ -47,6 +47,10 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
       (o.employeeId && o.employeeId === currentProfile.id) ||
       o.candidateEmail.toLowerCase() === currentProfile.email.toLowerCase()
   );
+
+  const myOfferOrg = myOffer
+    ? allOrganizations?.find((o) => o.id === myOffer.orgId) || currentOrg
+    : currentOrg;
 
   const [activeTab, setActiveTab] = useState<'all' | 'my_offer'>(
     canManage ? 'all' : 'my_offer'
@@ -130,8 +134,8 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                 <div className="flex items-center space-x-3">
                   <div className="w-12 h-12 rounded-xl bg-slate-950 p-1.5 border border-cyan-500/40 flex items-center justify-center">
                     <img
-                      src={currentOrg.logoUrl || '/vedotrix-logo.png'}
-                      alt={currentOrg.name}
+                      src={myOfferOrg.logoUrl || '/vedotrix-logo.png'}
+                      alt={myOfferOrg.name}
                       className="w-full h-full object-contain"
                       onError={(e) => { (e.target as HTMLImageElement).src = '/vedotrix-logo.png'; }}
                     />
@@ -140,8 +144,8 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                     <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-400 block font-mono">
                       Official Employment Contract
                     </span>
-                    <h3 className="text-lg font-bold text-white">{currentOrg.name}</h3>
-                    <p className="text-xs text-slate-400">{currentOrg.address || 'Corporate Headquarters'}</p>
+                    <h3 className="text-lg font-bold text-white">{myOfferOrg.name}</h3>
+                    <p className="text-xs text-slate-400">{myOfferOrg.address || 'Corporate Headquarters'}</p>
                   </div>
                 </div>
 
@@ -334,6 +338,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                   <tbody className="divide-y divide-slate-800 text-slate-300">
                     {offerLetters.map((offer) => {
                       const isAccepted = offer.status === 'accepted';
+                      const offerOrg = allOrganizations?.find((o) => o.id === offer.orgId) || currentOrg;
                       return (
                         <tr key={offer.id} className="hover:bg-slate-800/40 transition">
                           <td className="p-3">
@@ -342,9 +347,14 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                               <span className="font-mono text-cyan-300 font-bold">
                                 {offer.serialNumber}
                               </span>
+                              {offerOrg.id !== currentOrg.id && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                  {offerOrg.orgCode}
+                                </span>
+                              )}
                             </div>
                             <span className="text-[10px] text-slate-500 font-mono block mt-0.5">
-                              Issued {new Date(offer.createdAt).toLocaleDateString()}
+                              Issued {new Date(offer.createdAt).toLocaleDateString()} • {offerOrg.name}
                             </span>
                             {offer.pdfUrl && (
                               <a

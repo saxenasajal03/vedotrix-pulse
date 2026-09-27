@@ -26,9 +26,12 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
   onClose,
   onOpenVerify
 }) => {
-  const { currentOrg, acceptOfferLetter } = useApp();
+  const { currentOrg, allOrganizations, acceptOfferLetter } = useApp();
 
   if (!offer) return null;
+
+  // Resolve the specific issuing organization from offer.orgId
+  const issuingOrg = allOrganizations?.find((o) => o.id === offer.orgId) || currentOrg;
 
   const handleAccept = () => {
     acceptOfferLetter(offer.serialNumber);
@@ -102,18 +105,21 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
           <div className="flex items-start justify-between border-b-2 border-slate-900 pb-6">
             <div className="flex items-start space-x-4">
               <img
-                src="/vedotrix-logo.png"
-                alt="Vedotrix Logo"
+                src={issuingOrg.logoUrl || '/vedotrix-logo.png'}
+                alt={issuingOrg.name}
                 className="w-14 h-14 object-contain rounded-xl p-1 bg-slate-950 border-2 border-slate-900"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/vedotrix-logo.png';
+                }}
               />
               <div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 uppercase">
-                  {currentOrg.name}
+                  {issuingOrg.name}
                 </h1>
                 <p className="text-xs text-slate-600 mt-1 max-w-sm leading-snug">
-                  {currentOrg.address} • {currentOrg.phone}
+                  {issuingOrg.address || 'Corporate Headquarters'} • {issuingOrg.phone || '+91 80 4400 9900'}
                 </p>
-                <p className="text-xs text-indigo-700 font-semibold">{currentOrg.website}</p>
+                <p className="text-xs text-indigo-700 font-semibold">{issuingOrg.website || 'https://vedotrix.com'}</p>
               </div>
             </div>
 
@@ -156,7 +162,7 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
               Dear <strong>{offer.candidateName}</strong>,
             </p>
             <p>
-              On behalf of <strong>{currentOrg.name}</strong>, we are thrilled to extend an offer of employment for the position of{' '}
+              On behalf of <strong>{issuingOrg.name}</strong>, we are thrilled to extend an offer of employment for the position of{' '}
               <strong className="text-slate-950 underline">{offer.designation}</strong> in our{' '}
               <strong>{offer.department}</strong> division.
             </p>
@@ -247,7 +253,7 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
                 </span>
               </div>
               <p className="font-bold text-xs text-slate-950">Head of Human Resources</p>
-              <p className="text-[11px] text-slate-600">{currentOrg.name}</p>
+              <p className="text-[11px] text-slate-600">{issuingOrg.name}</p>
               <div className="inline-flex items-center space-x-1 mt-1 text-[10px] text-emerald-700 font-bold">
                 <CheckCircle className="w-3.5 h-3.5" />
                 <span>HR Identity Verified via System</span>
@@ -281,8 +287,12 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
           {/* Document Footer */}
           <div className="border-t border-slate-200 pt-4 text-center text-[10px] text-slate-500 space-y-1">
             <p>
-              This is a cryptographically secured electronic document issued through{' '}
-              <strong className="text-slate-800 font-semibold">Vedotrix Pulse HRMS</strong>.
+              This is an official offer of employment issued by{' '}
+              <strong className="text-slate-800 font-semibold">{issuingOrg.name}</strong>.
+            </p>
+            <p>
+              Cryptographically verified via{' '}
+              <strong className="text-slate-800 font-semibold">Vedotrix Pulse</strong>.
             </p>
             <p className="font-semibold text-indigo-900">
               Designed & Managed by Vedotrix Technologies

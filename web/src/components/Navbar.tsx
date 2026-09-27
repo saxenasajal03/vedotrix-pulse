@@ -79,8 +79,17 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center space-x-2 sm:space-x-4 shrink-0">
           {/* Tenant Switcher Pill */}
           <div className="relative hidden lg:block">
-            <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700 hover:bg-slate-100 transition cursor-pointer">
-              <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700 hover:bg-slate-100 transition cursor-pointer">
+              <div className="w-5 h-5 rounded-md bg-white border border-slate-200 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src={currentOrg.logoUrl || '/vedotrix-logo.png'}
+                  alt={currentOrg.name}
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = '/vedotrix-logo.png';
+                  }}
+                />
+              </div>
               <span className="font-semibold text-xs text-slate-800 max-w-[130px] truncate">
                 {currentOrg.name}
               </span>
