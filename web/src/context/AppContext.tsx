@@ -181,7 +181,10 @@ interface AppContextType {
   chatMessages: ChatMessage[];
   chatChannels: ChatChannel[];
   createChatChannel: (data: { name: string; description: string; isPrivate?: boolean; memberIds?: string[] }) => Promise<ChatChannel>;
+  updateChatChannel: (channelId: string, updates: Partial<ChatChannel>) => Promise<void>;
   deleteChatChannel: (channelId: string) => Promise<void>;
+  addMemberToChannel: (channelId: string, memberId: string) => Promise<void>;
+  removeMemberFromChannel: (channelId: string, memberId: string) => Promise<void>;
   sendChatMessage: (
     message: string,
     channel: string,
@@ -2699,6 +2702,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newChan;
   };
 
+  const updateChatChannel = async (channelId: string, updates: Partial<ChatChannel>): Promise<void> => {
+    setCustomChannels((prev) => {
+      const updated = prev.map((c) => {
+        if (c.id === channelId && c.orgId === currentOrg.id) {
+          return { ...c, ...updates };
+        }
+        return c;
+      });
+      try {
+        localStorage.setItem('vdx_custom_channels', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    addToast('Channel Settings Saved', 'Channel configuration updated.', 'success');
+  };
+
+  const addMemberToChannel = async (channelId: string, memberId: string): Promise<void> => {
+    setCustomChannels((prev) => {
+      const updated = prev.map((c) => {
+        if (c.id === channelId && c.orgId === currentOrg.id) {
+          const currentMembers = c.memberIds || [];
+          if (!currentMembers.includes(memberId)) {
+            return { ...c, memberIds: [...currentMembers, memberId] };
+          }
+        }
+        return c;
+      });
+      try {
+        localStorage.setItem('vdx_custom_channels', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    const addedMember = profiles.find((p) => p.id === memberId);
+    addToast('Member Added 👤', `${addedMember?.firstName || 'Colleague'} was added to #${channelId}.`, 'success');
+  };
+
+  const removeMemberFromChannel = async (channelId: string, memberId: string): Promise<void> => {
+    setCustomChannels((prev) => {
+      const updated = prev.map((c) => {
+        if (c.id === channelId && c.orgId === currentOrg.id) {
+          const currentMembers = c.memberIds || [];
+          return { ...c, memberIds: currentMembers.filter((id) => id !== memberId) };
+        }
+        return c;
+      });
+      try {
+        localStorage.setItem('vdx_custom_channels', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    const removedMember = profiles.find((p) => p.id === memberId);
+    addToast('Member Removed', `${removedMember?.firstName || 'Colleague'} was removed from #${channelId}.`, 'info');
+  };
+
   const deleteChatChannel = async (channelId: string): Promise<void> => {
     setCustomChannels((prev) => {
       const updated = prev.filter((c) => !(c.id === channelId && c.orgId === currentOrg.id));
@@ -2858,7 +2915,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         chatMessages: scopedChatMessages,
         chatChannels: scopedChatChannels,
         createChatChannel,
+        updateChatChannel,
         deleteChatChannel,
+        addMemberToChannel,
+        removeMemberFromChannel,
         sendChatMessage,
         addChatReaction,
         activeChatChannel,

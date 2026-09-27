@@ -81,6 +81,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const managedEmployeesCount = orgProfiles.filter((p) => p.managerId === currentProfile?.id).length;
   const canAccessEmployees = isTopLeadership || managedEmployeesCount > 0;
 
+  const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
+
   // Exact navigation item list matching the reference image & requirements
   const navItems = [
     {
@@ -121,7 +123,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'chat',
       label: 'Team Chat',
       icon: MessageSquare,
-      badge: null
+      badge: chatUnreadCount > 0 ? `${chatUnreadCount}` : null
     },
     {
       id: 'meetings',

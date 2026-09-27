@@ -35,7 +35,9 @@ const MainLayout: React.FC = () => {
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isFloatingChatWidgetOpen, setIsFloatingChatWidgetOpen] = useState(false);
-  const isPopoutMode = typeof window !== 'undefined' && window.location.hash === '#chat-popout';
+  const isPopoutMode =
+    typeof window !== 'undefined' &&
+    (window.location.hash === '#chat-popout' || window.location.hash === '#widget');
 
   const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
 
@@ -88,7 +90,7 @@ const MainLayout: React.FC = () => {
 
   if (isPopoutMode) {
     return (
-      <div className="h-screen w-screen bg-slate-100 p-2 sm:p-4 overflow-hidden font-['Plus_Jakarta_Sans',sans-serif]">
+      <div className="h-screen w-screen bg-[var(--bg-page)] text-[var(--text-primary)] p-2 sm:p-4 overflow-hidden font-['Plus_Jakarta_Sans',sans-serif]">
         <TeamChat isWidgetMode={false} />
         <ToastContainer />
       </div>
