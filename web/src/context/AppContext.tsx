@@ -435,7 +435,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           { data: cloudStandups, error: errStandups },
           { data: cloudRequests, error: errReqs },
           { data: cloudPayroll, error: errPay },
-          { data: cloudLeaves, error: errLeaves }
+          { data: cloudLeaves, error: errLeaves },
+          { data: cloudChannels, error: errChannels },
+          { data: cloudMessages, error: errMessages },
+          { data: cloudMeetings, error: errMeetings },
+          { data: cloudNotices, error: errNotices }
         ] = await Promise.all([
           client.from('organizations').select('*'),
           client.from('profiles').select('*'),
@@ -446,7 +450,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           client.from('daily_standups').select('*'),
           client.from('access_requests').select('*'),
           client.from('payroll_records').select('*'),
-          client.from('leave_requests').select('*')
+          client.from('leave_requests').select('*'),
+          client.from('chat_channels').select('*'),
+          client.from('chat_messages').select('*').order('created_at', { ascending: true }),
+          client.from('meetings').select('*').order('date', { ascending: false }),
+          client.from('notices').select('*').order('date', { ascending: false })
         ]);
 
         if (errOrgs) console.warn('Supabase orgs fetch error:', errOrgs);
@@ -459,6 +467,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (errReqs) console.warn('Supabase requests fetch error:', errReqs);
         if (errPay) console.warn('Supabase payroll fetch error:', errPay);
         if (errLeaves) console.warn('Supabase leaves fetch error:', errLeaves);
+        if (errChannels) console.warn('Supabase chat_channels fetch error:', errChannels);
+        if (errMessages) console.warn('Supabase chat_messages fetch error:', errMessages);
+        if (errMeetings) console.warn('Supabase meetings fetch error:', errMeetings);
+        if (errNotices) console.warn('Supabase notices fetch error:', errNotices);
 
         if (cloudOrgs && cloudOrgs.length > 0) {
           const mappedOrgs: Organization[] = cloudOrgs.map((o: any) => ({
@@ -683,27 +695,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           setLeaveRequests(mappedLeaves);
         }
-      } catch (err) {
-        console.warn('Live cloud sync note:', err);
-      }
-    }
-    syncFromLiveSupabase();
-  }, []);
 
-  // Live Supabase Polling for Chat Messages
-  useEffect(() => {
-    let isMounted = true;
-    const syncChatFromSupabase = async () => {
-      try {
-        const client = getSupabaseClient();
-        const { data, error } = await client
-          .from('chat_messages')
-          .select('*')
-          .eq('org_id', currentOrgId)
-          .order('created_at', { ascending: true });
+        if (!errChannels && cloudChannels && cloudChannels.length > 0) {
+          const mappedChannels: ChatChannel[] = cloudChannels.map((c: any) => ({
+            id: c.id,
+            orgId: c.org_id,
+            name: c.name,
+            description: c.description || '',
+            isPrivate: c.is_private ?? false,
+            memberIds: Array.isArray(c.member_ids) ? c.member_ids : [],
+            createdBy: c.created_by,
+            createdByName: c.created_by_name || '',
+            type: c.type || (c.is_private ? 'group' : 'channel'),
+            createdAt: c.created_at
+          }));
+          setCustomChannels(mappedChannels);
+          try {
+            localStorage.setItem('vdx_custom_channels', JSON.stringify(mappedChannels));
+          } catch {}
+        }
 
-        if (!error && data && data.length > 0 && isMounted) {
-          const mapped: ChatMessage[] = data.map((m: any) => ({
+        if (!errMessages && cloudMessages && cloudMessages.length > 0) {
+          const mappedMessages: ChatMessage[] = cloudMessages.map((m: any) => ({
             id: m.id,
             orgId: m.org_id,
             senderId: m.sender_id,
@@ -713,29 +726,446 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             channel: m.channel,
             recipientId: m.recipient_id || undefined,
             message: m.message,
+            attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
             reactions: Array.isArray(m.reactions) ? m.reactions : [],
+            replyToMessageId: m.reply_to_message_id,
+            replyToSnippet: m.reply_to_snippet,
             isPinned: m.is_pinned ?? false,
             createdAt: m.created_at
           }));
+          setChatMessages(mappedMessages);
+          try {
+            localStorage.setItem('vdx_chat_messages', JSON.stringify(mappedMessages));
+          } catch {}
+        }
 
+        if (!errMeetings && cloudMeetings && cloudMeetings.length > 0) {
+          const mappedMeetings: MeetingEvent[] = cloudMeetings.map((m: any) => ({
+            id: m.id,
+            orgId: m.org_id,
+            title: m.title,
+            description: m.description || '',
+            date: typeof m.date === 'string' ? m.date.split('T')[0] : m.date,
+            startTime: m.start_time,
+            endTime: m.end_time || '',
+            isOnline: m.is_online ?? true,
+            meetingUrl: m.meeting_url || '',
+            location: m.location || '',
+            organizerId: m.organizer_id,
+            organizerName: m.organizer_name,
+            organizerRole: m.organizer_role,
+            attendeeIds: Array.isArray(m.attendee_ids) ? m.attendee_ids : ['all'],
+            department: m.department || 'All',
+            status: m.status || 'scheduled',
+            createdAt: m.created_at
+          }));
+          setMeetings(mappedMeetings);
+          try {
+            localStorage.setItem('vdx_meetings', JSON.stringify(mappedMeetings));
+          } catch {}
+        }
+
+        if (!errNotices && cloudNotices && cloudNotices.length > 0) {
+          const mappedNotices: NoticeItem[] = cloudNotices.map((n: any) => ({
+            id: n.id,
+            orgId: n.org_id,
+            title: n.title,
+            content: n.content,
+            category: n.category || 'announcement',
+            priority: n.priority || 'medium',
+            authorId: n.author_id,
+            authorName: n.author_name,
+            authorRole: n.author_role,
+            date: n.date,
+            attachmentUrl: n.attachment_url || undefined,
+            isPinned: n.is_pinned ?? false,
+            createdAt: n.created_at
+          }));
+          setNotices(mappedNotices);
+          try {
+            localStorage.setItem('vdx_notices', JSON.stringify(mappedNotices));
+          } catch {}
+        }
+      } catch (err) {
+        console.warn('Live cloud sync note:', err);
+      }
+    }
+    syncFromLiveSupabase();
+  }, []);
+
+  // Live Supabase Realtime & Polling Sync for Chat Messages, Channels, Meetings, and Notices
+  useEffect(() => {
+    let isMounted = true;
+    const client = getSupabaseClient();
+
+    // 1. Supabase Realtime WebSocket Subscription
+    const realtimeChannel = client.channel(`vdx_live_pulse_${currentOrgId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_messages', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const m = payload.new;
+            const newMsg: ChatMessage = {
+              id: m.id,
+              orgId: m.org_id,
+              senderId: m.sender_id,
+              senderName: m.sender_name,
+              senderRole: m.sender_role,
+              senderAvatar: m.sender_avatar,
+              channel: m.channel,
+              recipientId: m.recipient_id || undefined,
+              message: m.message,
+              attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
+              reactions: Array.isArray(m.reactions) ? m.reactions : [],
+              replyToMessageId: m.reply_to_message_id,
+              replyToSnippet: m.reply_to_snippet,
+              isPinned: m.is_pinned ?? false,
+              createdAt: m.created_at
+            };
+            setChatMessages((prev) => {
+              if (prev.some((x) => x.id === newMsg.id)) return prev;
+              const updated = [...prev, newMsg];
+              try { localStorage.setItem('vdx_chat_messages', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+
+            if (newMsg.senderId !== currentProfileId) {
+              try {
+                sendDeviceNotification({
+                  title: newMsg.recipientId ? `Message from ${newMsg.senderName}` : `Vedotrix Pulse • #${newMsg.channel}`,
+                  body: `${newMsg.senderName}: ${newMsg.message || (newMsg.attachments?.length ? `[${newMsg.attachments[0].name}]` : 'Sent a file')}`,
+                  channel: newMsg.channel
+                });
+              } catch {}
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const m = payload.new;
+            setChatMessages((prev) => {
+              const updated = prev.map((msg) =>
+                msg.id === m.id
+                  ? {
+                      ...msg,
+                      message: m.message,
+                      reactions: Array.isArray(m.reactions) ? m.reactions : [],
+                      isPinned: m.is_pinned ?? false,
+                      attachments: Array.isArray(m.attachments) ? m.attachments : msg.attachments
+                    }
+                  : msg
+              );
+              try { localStorage.setItem('vdx_chat_messages', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setChatMessages((prev) => {
+              const updated = prev.filter((msg) => msg.id !== payload.old.id);
+              try { localStorage.setItem('vdx_chat_messages', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'meetings', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const m = payload.new;
+            const newMeet: MeetingEvent = {
+              id: m.id,
+              orgId: m.org_id,
+              title: m.title,
+              description: m.description || '',
+              date: typeof m.date === 'string' ? m.date.split('T')[0] : m.date,
+              startTime: m.start_time,
+              endTime: m.end_time || '',
+              isOnline: m.is_online ?? true,
+              meetingUrl: m.meeting_url || '',
+              location: m.location || '',
+              organizerId: m.organizer_id,
+              organizerName: m.organizer_name,
+              organizerRole: m.organizer_role,
+              attendeeIds: Array.isArray(m.attendee_ids) ? m.attendee_ids : ['all'],
+              department: m.department || 'All',
+              status: m.status || 'scheduled',
+              createdAt: m.created_at
+            };
+            setMeetings((prev) => {
+              if (prev.some((x) => x.id === newMeet.id)) return prev;
+              const updated = [newMeet, ...prev];
+              try { localStorage.setItem('vdx_meetings', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const m = payload.new;
+            setMeetings((prev) => {
+              const updated = prev.map((meet) =>
+                meet.id === m.id
+                  ? {
+                      ...meet,
+                      title: m.title,
+                      description: m.description || '',
+                      date: typeof m.date === 'string' ? m.date.split('T')[0] : m.date,
+                      startTime: m.start_time,
+                      endTime: m.end_time || '',
+                      isOnline: m.is_online ?? true,
+                      meetingUrl: m.meeting_url || '',
+                      location: m.location || '',
+                      status: m.status || 'scheduled',
+                      attendeeIds: Array.isArray(m.attendee_ids) ? m.attendee_ids : meet.attendeeIds
+                    }
+                  : meet
+              );
+              try { localStorage.setItem('vdx_meetings', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setMeetings((prev) => {
+              const updated = prev.filter((meet) => meet.id !== payload.old.id);
+              try { localStorage.setItem('vdx_meetings', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notices', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const n = payload.new;
+            const newNotice: NoticeItem = {
+              id: n.id,
+              orgId: n.org_id,
+              title: n.title,
+              content: n.content,
+              category: n.category || 'announcement',
+              priority: n.priority || 'medium',
+              authorId: n.author_id,
+              authorName: n.author_name,
+              authorRole: n.author_role,
+              date: n.date,
+              attachmentUrl: n.attachment_url || undefined,
+              isPinned: n.is_pinned ?? false,
+              createdAt: n.created_at
+            };
+            setNotices((prev) => {
+              if (prev.some((x) => x.id === newNotice.id)) return prev;
+              const updated = [newNotice, ...prev];
+              try { localStorage.setItem('vdx_notices', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const n = payload.new;
+            setNotices((prev) => {
+              const updated = prev.map((notice) =>
+                notice.id === n.id
+                  ? {
+                      ...notice,
+                      title: n.title,
+                      content: n.content,
+                      category: n.category || 'announcement',
+                      priority: n.priority || 'medium',
+                      isPinned: n.is_pinned ?? false,
+                      attachmentUrl: n.attachment_url || undefined
+                    }
+                  : notice
+              );
+              try { localStorage.setItem('vdx_notices', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setNotices((prev) => {
+              const updated = prev.filter((notice) => notice.id !== payload.old.id);
+              try { localStorage.setItem('vdx_notices', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_channels', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const c = payload.new;
+            const newChan: ChatChannel = {
+              id: c.id,
+              orgId: c.org_id,
+              name: c.name,
+              description: c.description || '',
+              isPrivate: c.is_private ?? false,
+              memberIds: Array.isArray(c.member_ids) ? c.member_ids : [],
+              createdBy: c.created_by,
+              createdByName: c.created_by_name || '',
+              type: c.type || (c.is_private ? 'group' : 'channel'),
+              createdAt: c.created_at
+            };
+            setCustomChannels((prev) => {
+              if (prev.some((x) => x.id === newChan.id && x.orgId === newChan.orgId)) return prev;
+              const updated = [...prev, newChan];
+              try { localStorage.setItem('vdx_custom_channels', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const c = payload.new;
+            setCustomChannels((prev) => {
+              const updated = prev.map((chan) =>
+                chan.id === c.id && chan.orgId === c.org_id
+                  ? {
+                      ...chan,
+                      name: c.name,
+                      description: c.description || '',
+                      isPrivate: c.is_private ?? false,
+                      memberIds: Array.isArray(c.member_ids) ? c.member_ids : chan.memberIds
+                    }
+                  : chan
+              );
+              try { localStorage.setItem('vdx_custom_channels', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setCustomChannels((prev) => {
+              const updated = prev.filter((chan) => chan.id !== payload.old.id);
+              try { localStorage.setItem('vdx_custom_channels', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. High-reliability Polling Fallback (syncs any missed updates)
+    const syncRealtimeData = async () => {
+      try {
+        const [
+          { data: cloudChannels },
+          { data: cloudMessages },
+          { data: cloudMeetings },
+          { data: cloudNotices }
+        ] = await Promise.all([
+          client.from('chat_channels').select('*').eq('org_id', currentOrgId),
+          client.from('chat_messages').select('*').eq('org_id', currentOrgId).order('created_at', { ascending: true }),
+          client.from('meetings').select('*').eq('org_id', currentOrgId).order('date', { ascending: false }),
+          client.from('notices').select('*').eq('org_id', currentOrgId).order('date', { ascending: false })
+        ]);
+
+        if (cloudChannels && cloudChannels.length > 0 && isMounted) {
+          const mappedChannels: ChatChannel[] = cloudChannels.map((c: any) => ({
+            id: c.id,
+            orgId: c.org_id,
+            name: c.name,
+            description: c.description || '',
+            isPrivate: c.is_private ?? false,
+            memberIds: Array.isArray(c.member_ids) ? c.member_ids : [],
+            createdBy: c.created_by,
+            createdByName: c.created_by_name || '',
+            type: c.type || (c.is_private ? 'group' : 'channel'),
+            createdAt: c.created_at
+          }));
+          setCustomChannels((prev) => {
+            const map = new Map(prev.map((c) => [`${c.orgId}_${c.id}`, c]));
+            mappedChannels.forEach((c) => map.set(`${c.orgId}_${c.id}`, c));
+            return Array.from(map.values());
+          });
+        }
+
+        if (cloudMessages && cloudMessages.length > 0 && isMounted) {
+          const mappedMessages: ChatMessage[] = cloudMessages.map((m: any) => ({
+            id: m.id,
+            orgId: m.org_id,
+            senderId: m.sender_id,
+            senderName: m.sender_name,
+            senderRole: m.sender_role,
+            senderAvatar: m.sender_avatar,
+            channel: m.channel,
+            recipientId: m.recipient_id || undefined,
+            message: m.message,
+            attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
+            reactions: Array.isArray(m.reactions) ? m.reactions : [],
+            replyToMessageId: m.reply_to_message_id,
+            replyToSnippet: m.reply_to_snippet,
+            isPinned: m.is_pinned ?? false,
+            createdAt: m.created_at
+          }));
           setChatMessages((prev) => {
             const map = new Map(prev.map((msg) => [msg.id, msg]));
-            mapped.forEach((msg) => map.set(msg.id, msg));
+            mappedMessages.forEach((msg) => map.set(msg.id, msg));
             return Array.from(map.values()).sort(
               (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+          });
+        }
+
+        if (cloudMeetings && cloudMeetings.length > 0 && isMounted) {
+          const mappedMeetings: MeetingEvent[] = cloudMeetings.map((m: any) => ({
+            id: m.id,
+            orgId: m.org_id,
+            title: m.title,
+            description: m.description || '',
+            date: typeof m.date === 'string' ? m.date.split('T')[0] : m.date,
+            startTime: m.start_time,
+            endTime: m.end_time || '',
+            isOnline: m.is_online ?? true,
+            meetingUrl: m.meeting_url || '',
+            location: m.location || '',
+            organizerId: m.organizer_id,
+            organizerName: m.organizer_name,
+            organizerRole: m.organizer_role,
+            attendeeIds: Array.isArray(m.attendee_ids) ? m.attendee_ids : ['all'],
+            department: m.department || 'All',
+            status: m.status || 'scheduled',
+            createdAt: m.created_at
+          }));
+          setMeetings((prev) => {
+            const map = new Map(prev.map((meet) => [meet.id, meet]));
+            mappedMeetings.forEach((meet) => map.set(meet.id, meet));
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+          });
+        }
+
+        if (cloudNotices && cloudNotices.length > 0 && isMounted) {
+          const mappedNotices: NoticeItem[] = cloudNotices.map((n: any) => ({
+            id: n.id,
+            orgId: n.org_id,
+            title: n.title,
+            content: n.content,
+            category: n.category || 'announcement',
+            priority: n.priority || 'medium',
+            authorId: n.author_id,
+            authorName: n.author_name,
+            authorRole: n.author_role,
+            date: n.date,
+            attachmentUrl: n.attachment_url || undefined,
+            isPinned: n.is_pinned ?? false,
+            createdAt: n.created_at
+          }));
+          setNotices((prev) => {
+            const map = new Map(prev.map((not) => [not.id, not]));
+            mappedNotices.forEach((not) => map.set(not.id, not));
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
             );
           });
         }
       } catch (err) {}
     };
 
-    syncChatFromSupabase();
-    const interval = setInterval(syncChatFromSupabase, 4000);
+    syncRealtimeData();
+    const interval = setInterval(syncRealtimeData, 4000);
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      client.removeChannel(realtimeChannel);
     };
-  }, [currentOrgId]);
+  }, [currentOrgId, currentProfileId]);
 
   // Secure Authentication Logic with Supabase pgcrypto Bcrypt RPC
   const login = async (email: string, pass: string): Promise<{ success: boolean; message: string }> => {
@@ -2474,6 +2904,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
+    try {
+      const client = getSupabaseClient();
+      await client.from('meetings').insert([{
+        id: newMeeting.id,
+        org_id: newMeeting.orgId,
+        title: newMeeting.title,
+        description: newMeeting.description || '',
+        date: newMeeting.date,
+        start_time: newMeeting.startTime,
+        end_time: newMeeting.endTime || '',
+        is_online: newMeeting.isOnline,
+        meeting_url: newMeeting.meetingUrl || '',
+        location: newMeeting.location || '',
+        organizer_id: newMeeting.organizerId || null,
+        organizer_name: newMeeting.organizerName,
+        organizer_role: newMeeting.organizerRole,
+        attendee_ids: newMeeting.attendeeIds || ['all'],
+        department: newMeeting.department || 'All',
+        status: newMeeting.status,
+        created_at: newMeeting.createdAt
+      }]);
+    } catch (e) {
+      console.warn('Supabase meeting insert note:', e);
+    }
+
     if (data.attendeeIds.includes('all')) {
       addNotification(
         `New Meeting: ${data.title}`,
@@ -2506,6 +2961,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    try {
+      const client = getSupabaseClient();
+      client.from('meetings').update({ status }).eq('id', meetingId).then();
+    } catch (e) {
+      console.warn('Supabase meeting status update note:', e);
+    }
+
     addToast('Meeting Status Updated', `Status changed to ${status}.`, 'info');
   };
 
@@ -2524,6 +2987,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('notices').insert([{
+        id: newNotice.id,
+        org_id: newNotice.orgId,
+        title: newNotice.title,
+        content: newNotice.content,
+        category: newNotice.category,
+        priority: newNotice.priority,
+        author_id: newNotice.authorId || null,
+        author_name: newNotice.authorName,
+        author_role: newNotice.authorRole,
+        date: newNotice.date || newNotice.createdAt,
+        attachment_url: newNotice.attachmentUrl || null,
+        is_pinned: newNotice.isPinned ?? false,
+        created_at: newNotice.createdAt
+      }]);
+    } catch (e) {
+      console.warn('Supabase notice insert note:', e);
+    }
 
     addNotification(
       `Notice: ${data.title}`,
@@ -2545,6 +3029,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    try {
+      const client = getSupabaseClient();
+      client.from('notices').delete().eq('id', noticeId).then();
+    } catch (e) {
+      console.warn('Supabase notice delete note:', e);
+    }
+
     addToast('Notice Removed', 'The notice has been removed.', 'info');
   };
 
@@ -2593,7 +3085,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         channel: newMsg.channel,
         recipient_id: newMsg.recipientId || null,
         message: newMsg.message,
+        attachments: newMsg.attachments || [],
         reactions: newMsg.reactions || [],
+        reply_to_message_id: newMsg.replyToMessageId || null,
+        reply_to_snippet: newMsg.replyToSnippet || null,
+        is_pinned: newMsg.isPinned ?? false,
         created_at: newMsg.createdAt
       }]);
     } catch (e) {
@@ -2694,6 +3190,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_channels').upsert([{
+        id: newChan.id,
+        org_id: newChan.orgId,
+        name: newChan.name,
+        description: newChan.description,
+        is_private: newChan.isPrivate ?? false,
+        member_ids: newChan.memberIds || [],
+        created_by: newChan.createdBy || null,
+        created_by_name: newChan.createdByName || '',
+        type: newChan.type,
+        created_at: newChan.createdAt
+      }]);
+    } catch (e) {
+      console.warn('Supabase channel insert note:', e);
+    }
+
     addToast(
       data.isPrivate ? 'Private Group Created 🔒' : 'Channel Created 📢',
       `#${cleanName} is now active for ${currentOrg.name}.`,
@@ -2715,17 +3229,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    try {
+      const client = getSupabaseClient();
+      const dbUpdates: any = {};
+      if (updates.name !== undefined) dbUpdates.name = updates.name;
+      if (updates.description !== undefined) dbUpdates.description = updates.description;
+      if (updates.isPrivate !== undefined) dbUpdates.is_private = updates.isPrivate;
+      if (updates.memberIds !== undefined) dbUpdates.member_ids = updates.memberIds;
+      await client.from('chat_channels').update(dbUpdates).eq('id', channelId).eq('org_id', currentOrg.id);
+    } catch (e) {
+      console.warn('Supabase channel update note:', e);
+    }
+
     addToast('Channel Settings Saved', 'Channel configuration updated.', 'success');
   };
 
   const addMemberToChannel = async (channelId: string, memberId: string): Promise<void> => {
+    let nextMembers: string[] = [];
     setCustomChannels((prev) => {
       const updated = prev.map((c) => {
         if (c.id === channelId && c.orgId === currentOrg.id) {
           const currentMembers = c.memberIds || [];
           if (!currentMembers.includes(memberId)) {
-            return { ...c, memberIds: [...currentMembers, memberId] };
+            nextMembers = [...currentMembers, memberId];
+            return { ...c, memberIds: nextMembers };
           }
+          nextMembers = currentMembers;
         }
         return c;
       });
@@ -2734,16 +3264,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_channels').update({ member_ids: nextMembers }).eq('id', channelId).eq('org_id', currentOrg.id);
+    } catch (e) {
+      console.warn('Supabase member add note:', e);
+    }
+
     const addedMember = profiles.find((p) => p.id === memberId);
     addToast('Member Added 👤', `${addedMember?.firstName || 'Colleague'} was added to #${channelId}.`, 'success');
   };
 
   const removeMemberFromChannel = async (channelId: string, memberId: string): Promise<void> => {
+    let nextMembers: string[] = [];
     setCustomChannels((prev) => {
       const updated = prev.map((c) => {
         if (c.id === channelId && c.orgId === currentOrg.id) {
           const currentMembers = c.memberIds || [];
-          return { ...c, memberIds: currentMembers.filter((id) => id !== memberId) };
+          nextMembers = currentMembers.filter((id) => id !== memberId);
+          return { ...c, memberIds: nextMembers };
         }
         return c;
       });
@@ -2752,6 +3292,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_channels').update({ member_ids: nextMembers }).eq('id', channelId).eq('org_id', currentOrg.id);
+    } catch (e) {
+      console.warn('Supabase member remove note:', e);
+    }
+
     const removedMember = profiles.find((p) => p.id === memberId);
     addToast('Member Removed', `${removedMember?.firstName || 'Colleague'} was removed from #${channelId}.`, 'info');
   };
@@ -2767,6 +3315,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (activeChatChannel === channelId) {
       setActiveChatChannel('support');
     }
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_channels').delete().eq('id', channelId).eq('org_id', currentOrg.id);
+    } catch (e) {
+      console.warn('Supabase channel delete note:', e);
+    }
+
     addToast('Channel Removed', `Channel #${channelId} was removed.`, 'info');
   };
 

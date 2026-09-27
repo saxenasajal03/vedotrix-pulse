@@ -7,8 +7,11 @@ const client = new Client({
 
 async function check() {
   await client.connect();
-  const res = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;");
-  console.log('Tables:', res.rows.map(r => r.table_name));
+  for (const t of ['chat_channels', 'chat_messages', 'meetings', 'notices']) {
+    const c = await client.query(`SELECT count(*) FROM ${t}`);
+    const rows = await client.query(`SELECT * FROM ${t} LIMIT 2`);
+    console.log(`Table ${t}: ${c.rows[0].count} rows. Samples:`, rows.rows);
+  }
   await client.end();
 }
 
