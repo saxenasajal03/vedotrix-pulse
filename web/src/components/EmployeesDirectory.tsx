@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { formatSalaryOrStipend, formatISTDate } from '../lib/serialUtils';
 import { sendWelcomeEmail, resendBatchWelcomeEmails } from '../lib/mailer';
+import { OrganizationTree } from './OrganizationTree';
 
 export const EmployeesDirectory: React.FC = () => {
   const {
@@ -65,8 +66,8 @@ export const EmployeesDirectory: React.FC = () => {
 
   const canManage = isTopLeadership;
 
-  // Main Tab: Workforce Directory vs Holiday Calendar
-  const [activeMainTab, setActiveMainTab] = useState<'directory' | 'holidays'>('directory');
+  // Main Tab: Workforce Directory vs Organization Tree vs Holiday Calendar
+  const [activeMainTab, setActiveMainTab] = useState<'directory' | 'hierarchy' | 'holidays'>('directory');
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -440,6 +441,8 @@ export const EmployeesDirectory: React.FC = () => {
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">
             {activeMainTab === 'directory'
               ? (isTopLeadership ? 'Employee Management' : 'My Managed Team')
+              : activeMainTab === 'hierarchy'
+              ? 'Organization Hierarchy Tree'
               : 'Organization Holiday Calendar'}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -447,6 +450,8 @@ export const EmployeesDirectory: React.FC = () => {
               ? (isTopLeadership
                   ? `Manage your workforce, hierarchical reporting, statutory records, and PR deliverables for ${currentOrg.name}.`
                   : 'Manage performance, task assignments, and review deliverables for your direct reports.')
+              : activeMainTab === 'hierarchy'
+              ? `Visual hierarchy tree and designated reporting management for ${currentOrg.name}.`
               : `Official gazetted, national and corporate holidays scheduled by ${currentOrg.name} leadership.`}
           </p>
         </div>
@@ -477,7 +482,7 @@ export const EmployeesDirectory: React.FC = () => {
                   <span>Add Employee</span>
                 </button>
               </>
-            ) : (
+            ) : activeMainTab === 'holidays' ? (
               <button
                 onClick={handleOpenAddHoliday}
                 className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition shadow-sm"
@@ -485,16 +490,16 @@ export const EmployeesDirectory: React.FC = () => {
                 <Plus className="w-4 h-4" />
                 <span>Add Holiday</span>
               </button>
-            )}
+            ) : null}
           </div>
         )}
       </div>
 
-      {/* 2. Top-level Tab Switcher: Workforce Directory vs Holiday Calendar */}
-      <div className="flex items-center space-x-2 border-b border-slate-200/80 pb-2">
+      {/* 2. Top-level Tab Switcher: Workforce Directory vs Organization Tree vs Holiday Calendar */}
+      <div className="flex items-center space-x-2 border-b border-slate-200/80 pb-2 overflow-x-auto">
         <button
           onClick={() => setActiveMainTab('directory')}
-          className={`inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+          className={`inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
             activeMainTab === 'directory'
               ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -505,8 +510,20 @@ export const EmployeesDirectory: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveMainTab('hierarchy')}
+          className={`inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeMainTab === 'hierarchy'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <GitBranch className="w-4 h-4" />
+          <span>Organization Tree ({baseProfiles.length})</span>
+        </button>
+
+        <button
           onClick={() => setActiveMainTab('holidays')}
-          className={`inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+          className={`inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
             activeMainTab === 'holidays'
               ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -784,6 +801,11 @@ export const EmployeesDirectory: React.FC = () => {
         </div>
       </div>
     </div>
+  )}
+
+  {/* 3B. Organization Hierarchy Tree View */}
+  {activeMainTab === 'hierarchy' && (
+    <OrganizationTree />
   )}
 
   {/* 4. Organization Holiday Calendar View */}

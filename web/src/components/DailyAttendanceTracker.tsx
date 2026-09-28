@@ -31,7 +31,10 @@ import {
   Flame,
   FileText,
   TrendingUp,
-  Percent
+  Percent,
+  Settings,
+  Sliders,
+  X
 } from 'lucide-react';
 import { getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 import { AttendanceRecord, Profile, TaskItem, DailyStandup, Holiday, LeaveRequest } from '../types';
@@ -48,6 +51,7 @@ export const DailyAttendanceTracker: React.FC = () => {
     holidays,
     isVedotrixSuperadmin,
     resolveRegularization,
+    updateOrganization,
     addToast
   } = useApp();
 
@@ -81,6 +85,40 @@ export const DailyAttendanceTracker: React.FC = () => {
   // For managers/HR/superadmin: can toggle between 'calendar' (monthly calendar + work PR profile) and 'daily_roster' (team daily attendance)
   // For employees: strictly 'calendar'
   const [activeViewTab, setActiveViewTab] = useState<'calendar' | 'daily_roster'>('calendar');
+
+  // Date Popup on Click
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<any | null>(null);
+
+  // Shift & Week-Off Configuration Modal (Superadmin / HR only)
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+  const [shiftStart, setShiftStart] = useState(currentOrg.settings?.shiftStartTime || '10:00');
+  const [shiftEnd, setShiftEnd] = useState(currentOrg.settings?.shiftEndTime || '19:00');
+  const [graceMins, setGraceMins] = useState(currentOrg.settings?.gracePeriodMins || 15);
+  const [halfDayHours, setHalfDayHours] = useState(currentOrg.settings?.halfDayThresholdHours || 4.5);
+  const [weekOffs, setWeekOffs] = useState<number[]>(currentOrg.settings?.weekOffDays || [0]);
+  const [isSavingShift, setIsSavingShift] = useState(false);
+
+  const handleSaveShiftSettings = async () => {
+    setIsSavingShift(true);
+    try {
+      await updateOrganization(currentOrg.id, {
+        settings: {
+          ...currentOrg.settings,
+          shiftStartTime: shiftStart,
+          shiftEndTime: shiftEnd,
+          gracePeriodMins: Number(graceMins) || 15,
+          halfDayThresholdHours: Number(halfDayHours) || 4.5,
+          weekOffDays: weekOffs
+        }
+      });
+      addToast('Shift & Week-Offs Saved ⚙️', 'Configured shift timing & weekly holidays applied dynamically across the team.', 'success');
+      setIsShiftModalOpen(false);
+    } catch (err) {
+      addToast('Error', 'Could not update shift timing.', 'error');
+    } finally {
+      setIsSavingShift(false);
+    }
+  };
 
   // Month navigation for Calendar View
   const todayIST = getTodayISTDateString();
@@ -429,6 +467,19 @@ export const DailyAttendanceTracker: React.FC = () => {
               </select>
             </div>
           )}
+
+          {/* Shift Timing & Week-Offs configuration button for Superadmin & HR */}
+          {isHrOrSuperadmin && (
+            <button
+              onClick={() => setIsShiftModalOpen(true)}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded-xl text-xs font-bold transition shadow-xs"
+              title="Configure Shift Timings & Team Week-Offs"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Shift & Week-Offs</span>
+              <span className="sm:hidden">Shift</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -548,40 +599,45 @@ export const DailyAttendanceTracker: React.FC = () => {
             </div>
           </div>
 
-          {/* Monthly Calendar 7-Column Grid */}
-          <div className="rounded-2xl border border-[var(--border-color)] overflow-hidden bg-[var(--bg-card)] shadow-xs">
-            {/* Days of week header */}
-            <div className="grid grid-cols-7 border-b border-[var(--border-color)] bg-[var(--bg-card-subtle)] text-center text-xs font-bold py-2.5">
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, idx) => (
-                <div key={d} className={idx === 0 || idx === 6 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}>
-                  {d}
-                </div>
-              ))}
-            </div>
+          {/* Monthly Calendar 7-Column Grid (Responsive Mobile Scroll + Touch-Friendly) */}
+          <div className="overflow-x-auto pb-3 -mx-4 sm:mx-0 px-4 sm:px-0">
+            <div className="min-w-[620px] rounded-2xl border border-[var(--border-color)] overflow-hidden bg-[var(--bg-card)] shadow-xs">
+              {/* Days of week header */}
+              <div className="grid grid-cols-7 border-b border-[var(--border-color)] bg-[var(--bg-card-subtle)] text-center text-xs font-bold py-2.5">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, idx) => (
+                  <div key={d} className={idx === 0 || idx === 6 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}>
+                    {d}
+                  </div>
+                ))}
+              </div>
 
-            {/* Days Grid */}
-            <div className="grid grid-cols-7 divide-x divide-y divide-[var(--border-color)]">
-              {/* Spacer cells for days before the 1st of month */}
-              {Array.from({ length: calendarDays.firstDayIndex }).map((_, i) => (
-                <div key={`spacer-${i}`} className="min-h-[95px] p-2 bg-[var(--bg-card-subtle)]/40 opacity-40" />
-              ))}
+              {/* Days Grid */}
+              <div className="grid grid-cols-7 divide-x divide-y divide-[var(--border-color)]">
+                {/* Spacer cells for days before the 1st of month */}
+                {Array.from({ length: calendarDays.firstDayIndex }).map((_, i) => (
+                  <div key={`spacer-${i}`} className="min-h-[95px] p-2 bg-[var(--bg-card-subtle)]/40 opacity-40" />
+                ))}
 
-              {/* Month Day Cells */}
-              {calendarDays.daysArray.map((dayObj) => {
-                const { day, isToday, status, holiday, leave, punch } = dayObj;
+                {/* Month Day Cells */}
+                {calendarDays.daysArray.map((dayObj) => {
+                  const { day, isToday, status, holiday, leave, punch } = dayObj;
 
-                let badgeBg = 'bg-[var(--bg-card)]';
-                let badgeBorder = 'border-transparent';
+                  let badgeBg = 'bg-[var(--bg-card)]';
+                  let badgeBorder = 'border-transparent';
 
-                if (isToday) {
-                  badgeBorder = 'ring-2 ring-blue-500 border-blue-500';
-                }
+                  if (isToday) {
+                    badgeBorder = 'ring-2 ring-blue-500 border-blue-500';
+                  }
 
-                return (
-                  <div
-                    key={dayObj.dateStr}
-                    className={`min-h-[95px] p-2 flex flex-col justify-between transition hover:bg-[var(--bg-card-subtle)]/60 ${badgeBg} ${badgeBorder}`}
-                  >
+                  return (
+                    <div
+                      key={dayObj.dateStr}
+                      onClick={() => setSelectedCalendarDay(dayObj)}
+                      role="button"
+                      tabIndex={0}
+                      title="Click to view detailed day punch breakdown & shift details"
+                      className={`min-h-[95px] p-2 flex flex-col justify-between transition cursor-pointer hover:bg-[var(--bg-card-subtle)] hover:shadow-xs active:scale-[0.98] ${badgeBg} ${badgeBorder}`}
+                    >
                     {/* Day Number Header */}
                     <div className="flex items-center justify-between">
                       <span
@@ -676,8 +732,9 @@ export const DailyAttendanceTracker: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
 
-          {/* ========================================================================= */}
+        {/* ========================================================================= */}
           {/* WORK PR & DELIVERABLES PROFILE (TASKS, SPRINT PRs, STANDUPS, DELIVERABLES)*/}
           {/* ========================================================================= */}
           <div className="pt-2 border-t border-[var(--border-color)]">
@@ -960,6 +1017,402 @@ export const DailyAttendanceTracker: React.FC = () => {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. DATE DETAILS POPUP MODAL (ON CLICKING ANY CALENDAR DAY CELL)           */}
+      {/* ========================================================================= */}
+      {selectedCalendarDay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-150">
+          <div className="relative w-full max-w-lg bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] shadow-2xl overflow-hidden my-6">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600/15 text-blue-500 flex items-center justify-center font-bold">
+                  <CalendarDays className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-[var(--text-primary)]">
+                    {formatISTDate(selectedCalendarDay.dateStr)}
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Day Attendance & Shift Verification Record (IST)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedCalendarDay(null)}
+                className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)] rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 text-xs">
+              {/* Employee Header */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)]">
+                <div className="flex items-center space-x-3">
+                  <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs overflow-hidden shrink-0">
+                    {inspectedEmployee.avatarUrl && inspectedEmployee.avatarUrl !== '/vedotrix-logo.png' ? (
+                      <img src={inspectedEmployee.avatarUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span>{inspectedEmployee.firstName[0]}{inspectedEmployee.lastName[0]}</span>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[var(--text-primary)]">
+                      {inspectedEmployee.firstName} {inspectedEmployee.lastName}
+                    </h4>
+                    <p className="text-[11px] text-[var(--text-muted)]">
+                      {inspectedEmployee.designation} • {inspectedEmployee.department}
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  {inspectedEmployee.role}
+                </span>
+              </div>
+
+              {/* Day Status Banner */}
+              <div
+                className={`p-3.5 rounded-xl border flex items-center justify-between ${
+                  selectedCalendarDay.status === 'present'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : selectedCalendarDay.status === 'holiday'
+                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                    : selectedCalendarDay.status === 'week_off'
+                    ? 'bg-slate-800/40 border-slate-700/60 text-slate-300'
+                    : selectedCalendarDay.status === 'leave'
+                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                    : selectedCalendarDay.status === 'pending'
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                    : selectedCalendarDay.status === 'absent'
+                    ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                    : 'bg-slate-800/20 border-slate-700/40 text-slate-400'
+                }`}
+              >
+                <div className="flex items-center space-x-2.5">
+                  <span className="text-base">
+                    {selectedCalendarDay.status === 'present'
+                      ? '✓'
+                      : selectedCalendarDay.status === 'holiday'
+                      ? '🎊'
+                      : selectedCalendarDay.status === 'week_off'
+                      ? '🏖️'
+                      : selectedCalendarDay.status === 'leave'
+                      ? '✈️'
+                      : selectedCalendarDay.status === 'pending'
+                      ? '⏳'
+                      : selectedCalendarDay.status === 'absent'
+                      ? '✗'
+                      : '🗓️'}
+                  </span>
+                  <div>
+                    <span className="font-extrabold block text-xs uppercase tracking-wide">
+                      {selectedCalendarDay.status === 'present'
+                        ? 'Present • Verified Punch'
+                        : selectedCalendarDay.status === 'holiday'
+                        ? `Official Holiday: ${selectedCalendarDay.holiday?.name}`
+                        : selectedCalendarDay.status === 'week_off'
+                        ? 'Scheduled Team Week-Off'
+                        : selectedCalendarDay.status === 'leave'
+                        ? `Approved ${selectedCalendarDay.leave?.leaveType.toUpperCase()} Leave`
+                        : selectedCalendarDay.status === 'pending'
+                        ? 'Regularization Pending Approval'
+                        : selectedCalendarDay.status === 'absent'
+                        ? 'Unmarked / Absent Day'
+                        : 'Future Shift Scheduled'}
+                    </span>
+                    <span className="text-[10px] opacity-80">
+                      {selectedCalendarDay.status === 'present'
+                        ? `Total of ${selectedCalendarDay.punch?.totalHours || 8} hours logged`
+                        : selectedCalendarDay.status === 'week_off'
+                        ? 'No attendance required as per organization shift schedule'
+                        : selectedCalendarDay.status === 'holiday'
+                        ? 'Mandatory paid corporate holiday'
+                        : selectedCalendarDay.status === 'absent'
+                        ? 'Punch-in was not recorded within official shift timings'
+                        : 'Scheduled according to corporate roster'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Shift & Biometric Geofence Details */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)]">
+                  <span className="text-[10px] font-bold text-[var(--text-muted)] uppercase block mb-1">
+                    Check-In (IST)
+                  </span>
+                  <span className="text-sm font-extrabold text-[var(--text-primary)] font-mono">
+                    {selectedCalendarDay.punch?.checkInTime
+                      ? formatISTTime(selectedCalendarDay.punch.checkInTime)
+                      : '—'}
+                  </span>
+                  <span className="text-[10px] text-[var(--text-muted)] block mt-0.5">
+                    Shift starts {currentOrg.settings?.shiftStartTime || '10:00'} IST
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)]">
+                  <span className="text-[10px] font-bold text-[var(--text-muted)] uppercase block mb-1">
+                    Check-Out (IST)
+                  </span>
+                  <span className="text-sm font-extrabold text-[var(--text-primary)] font-mono">
+                    {selectedCalendarDay.punch?.checkOutTime
+                      ? formatISTTime(selectedCalendarDay.punch.checkOutTime)
+                      : selectedCalendarDay.punch?.checkInTime
+                      ? 'In Progress'
+                      : '—'}
+                  </span>
+                  <span className="text-[10px] text-[var(--text-muted)] block mt-0.5">
+                    Shift ends {currentOrg.settings?.shiftEndTime || '19:00'} IST
+                  </span>
+                </div>
+              </div>
+
+              {/* Total Hours & Geolocation */}
+              <div className="p-3.5 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-2">
+                <div className="flex items-center justify-between pb-2 border-b border-[var(--border-color)]">
+                  <span className="text-slate-400 font-medium">Shift Configuration:</span>
+                  <span className="font-bold text-[var(--text-primary)] font-mono">
+                    {currentOrg.settings?.shiftStartTime || '10:00'} - {currentOrg.settings?.shiftEndTime || '19:00'} IST ({currentOrg.settings?.workHoursPerDay || 8}h Shift)
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between pb-2 border-b border-[var(--border-color)]">
+                  <span className="text-slate-400 font-medium">Logged Work Duration:</span>
+                  <span className="font-extrabold text-blue-400 font-mono">
+                    {selectedCalendarDay.punch?.totalHours ? `${selectedCalendarDay.punch.totalHours} hrs` : '0.0 hrs'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between pb-2 border-b border-[var(--border-color)]">
+                  <span className="text-slate-400 font-medium">Office Location & GPS:</span>
+                  <span className="font-bold text-[var(--text-primary)] text-right truncate max-w-[220px]">
+                    {selectedCalendarDay.punch?.officeAddress || currentOrg.address || 'Office Geofence'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Geofence Distance:</span>
+                  <span className="font-bold text-[var(--text-primary)] font-mono">
+                    {selectedCalendarDay.punch?.distanceMeters
+                      ? `${selectedCalendarDay.punch.distanceMeters}m from center (verified)`
+                      : selectedCalendarDay.punch?.isRemote
+                      ? 'Remote (Approved WFH)'
+                      : '—'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Regularization Notes (if applicable) */}
+              {selectedCalendarDay.punch?.regularizationStatus && selectedCalendarDay.punch.regularizationStatus !== 'none' && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                  <span className="text-[10px] font-bold uppercase tracking-wider block mb-1">
+                    Regularization Details ({selectedCalendarDay.punch.regularizationStatus})
+                  </span>
+                  <p className="text-[11px] leading-relaxed">
+                    Reason: {selectedCalendarDay.punch.regularizationReason || 'No reason specified'}
+                  </p>
+                  {selectedCalendarDay.punch.regularizationNotes && (
+                    <p className="text-[10px] text-amber-400/80 mt-1">
+                      Notes: {selectedCalendarDay.punch.regularizationNotes}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-[var(--border-color)] flex items-center justify-end space-x-2 bg-[var(--bg-card-subtle)]">
+              <button
+                type="button"
+                onClick={() => setSelectedCalendarDay(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--bg-card)] hover:bg-[var(--border-color)] text-[var(--text-primary)] transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. SHIFT TIMING & WEEK-OFF CONFIGURATION MODAL (SUPERADMIN / HR ONLY)      */}
+      {/* ========================================================================= */}
+      {isShiftModalOpen && isHrOrSuperadmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-150">
+          <div className="relative w-full max-w-lg bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] shadow-2xl overflow-hidden my-6">
+            <div className="p-4 sm:p-5 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600/15 text-blue-500 flex items-center justify-center font-bold">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-[var(--text-primary)]">
+                    Team Shift Timings & Week-Offs
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Configure official shift hours & weekly off days for {currentOrg.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsShiftModalOpen(false)}
+                className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)] rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                    Shift Start Time (IST)
+                  </label>
+                  <input
+                    type="time"
+                    value={shiftStart}
+                    onChange={(e) => setShiftStart(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                    Shift End Time (IST)
+                  </label>
+                  <input
+                    type="time"
+                    value={shiftEnd}
+                    onChange={(e) => setShiftEnd(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                    Grace Period (Minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    value={graceMins}
+                    onChange={(e) => setGraceMins(Number(e.target.value) || 0)}
+                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                    Half-Day Threshold (Hours)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    max="12"
+                    value={halfDayHours}
+                    onChange={(e) => setHalfDayHours(Number(e.target.value) || 4.5)}
+                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Week-Off Days */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)]">
+                    Scheduled Team Week-Offs
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffs([0])}
+                      className="text-[10px] text-blue-400 hover:underline font-semibold"
+                    >
+                      Sunday Only
+                    </button>
+                    <span className="text-[var(--text-muted)]">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffs([0, 6])}
+                      className="text-[10px] text-blue-400 hover:underline font-semibold"
+                    >
+                      Sat + Sun
+                    </button>
+                    <span className="text-[var(--text-muted)]">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffs([])}
+                      className="text-[10px] text-rose-400 hover:underline font-semibold"
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-7 gap-1">
+                  {[
+                    { name: 'Sun', day: 0 },
+                    { name: 'Mon', day: 1 },
+                    { name: 'Tue', day: 2 },
+                    { name: 'Wed', day: 3 },
+                    { name: 'Thu', day: 4 },
+                    { name: 'Fri', day: 5 },
+                    { name: 'Sat', day: 6 }
+                  ].map(({ name, day }) => {
+                    const isSelected = weekOffs.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setWeekOffs(weekOffs.filter((d) => d !== day));
+                          } else {
+                            setWeekOffs([...weekOffs, day].sort());
+                          }
+                        }}
+                        className={`py-2 rounded-xl text-xs font-bold transition border ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border-[var(--border-color)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-[var(--border-color)] flex items-center justify-end space-x-2 bg-[var(--bg-card-subtle)]">
+              <button
+                type="button"
+                onClick={() => setIsShiftModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-muted)] hover:bg-[var(--border-color)] transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingShift}
+                onClick={handleSaveShiftSettings}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
+              >
+                <span>{isSavingShift ? 'Saving...' : 'Save Shift Settings'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

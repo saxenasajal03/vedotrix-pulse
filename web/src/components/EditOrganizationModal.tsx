@@ -10,7 +10,9 @@ import {
   Image,
   Save,
   X,
-  ShieldCheck
+  ShieldCheck,
+  Clock,
+  Calendar
 } from 'lucide-react';
 
 interface EditOrganizationModalProps {
@@ -30,6 +32,14 @@ export const EditOrganizationModal: React.FC<EditOrganizationModalProps> = ({
   const [website, setWebsite] = useState(currentOrg.website || '');
   const [industry, setIndustry] = useState<IndustryType>(currentOrg.industry || 'Tech');
   const [logoUrl, setLogoUrl] = useState(currentOrg.logoUrl || '/vedotrix-logo.png');
+
+  // Shift & Week-Off Timings
+  const [shiftStartTime, setShiftStartTime] = useState(currentOrg.settings?.shiftStartTime || '10:00');
+  const [shiftEndTime, setShiftEndTime] = useState(currentOrg.settings?.shiftEndTime || '19:00');
+  const [gracePeriodMins, setGracePeriodMins] = useState(currentOrg.settings?.gracePeriodMins || 15);
+  const [halfDayThresholdHours, setHalfDayThresholdHours] = useState(currentOrg.settings?.halfDayThresholdHours || 4.5);
+  const [weekOffDays, setWeekOffDays] = useState<number[]>(currentOrg.settings?.weekOffDays || [0]);
+
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -40,6 +50,11 @@ export const EditOrganizationModal: React.FC<EditOrganizationModalProps> = ({
       setWebsite(currentOrg.website || '');
       setIndustry(currentOrg.industry || 'Tech');
       setLogoUrl(currentOrg.logoUrl || '/vedotrix-logo.png');
+      setShiftStartTime(currentOrg.settings?.shiftStartTime || '10:00');
+      setShiftEndTime(currentOrg.settings?.shiftEndTime || '19:00');
+      setGracePeriodMins(currentOrg.settings?.gracePeriodMins || 15);
+      setHalfDayThresholdHours(currentOrg.settings?.halfDayThresholdHours || 4.5);
+      setWeekOffDays(currentOrg.settings?.weekOffDays || [0]);
     }
   }, [isOpen, currentOrg]);
 
@@ -60,9 +75,17 @@ export const EditOrganizationModal: React.FC<EditOrganizationModalProps> = ({
         phone: phone.trim(),
         website: website.trim(),
         industry: industry,
-        logoUrl: logoUrl.trim() || '/vedotrix-logo.png'
+        logoUrl: logoUrl.trim() || '/vedotrix-logo.png',
+        settings: {
+          ...currentOrg.settings,
+          shiftStartTime,
+          shiftEndTime,
+          gracePeriodMins: Number(gracePeriodMins) || 15,
+          halfDayThresholdHours: Number(halfDayThresholdHours) || 4.5,
+          weekOffDays
+        }
       });
-      addToast('Organization Updated 🏢', 'Company details, address, contact and website saved dynamically.', 'success');
+      addToast('Organization Updated 🏢', 'Company details, shift timings, and week-offs saved dynamically.', 'success');
       onClose();
     } catch (err) {
       addToast('Save Failed', 'Could not save organization details.', 'error');
@@ -191,6 +214,134 @@ export const EditOrganizationModal: React.FC<EditOrganizationModalProps> = ({
                 placeholder="/vedotrix-logo.png"
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
+            </div>
+          </div>
+
+          {/* Shift Timings & Week-Offs Section */}
+          <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 space-y-3">
+            <div className="flex items-center space-x-2 pb-2 border-b border-slate-200">
+              <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-900">Work Shift & Week-Off Configuration</h4>
+                <p className="text-[10px] text-slate-500">Governs punch-in boundaries, late arrivals & team holiday locks</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Shift Start Time (IST)
+                </label>
+                <input
+                  type="time"
+                  value={shiftStartTime}
+                  onChange={(e) => setShiftStartTime(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Shift End Time (IST)
+                </label>
+                <input
+                  type="time"
+                  value={shiftEndTime}
+                  onChange={(e) => setShiftEndTime(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Grace Period (Minutes)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={gracePeriodMins}
+                  onChange={(e) => setGracePeriodMins(Number(e.target.value) || 0)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Half-Day Threshold (Hours)
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="1"
+                  max="12"
+                  value={halfDayThresholdHours}
+                  onChange={(e) => setHalfDayThresholdHours(Number(e.target.value) || 4.5)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Week-Off Days Selection */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[11px] font-bold text-slate-700">
+                  Scheduled Week-Off Days
+                </label>
+                <div className="flex items-center space-x-1">
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffDays([0])}
+                    className="text-[10px] text-blue-600 hover:underline font-semibold"
+                  >
+                    Sunday
+                  </button>
+                  <span className="text-slate-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffDays([0, 6])}
+                    className="text-[10px] text-blue-600 hover:underline font-semibold"
+                  >
+                    Sat + Sun
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1">
+                {[
+                  { name: 'Sun', day: 0 },
+                  { name: 'Mon', day: 1 },
+                  { name: 'Tue', day: 2 },
+                  { name: 'Wed', day: 3 },
+                  { name: 'Thu', day: 4 },
+                  { name: 'Fri', day: 5 },
+                  { name: 'Sat', day: 6 }
+                ].map(({ name, day }) => {
+                  const isSelected = weekOffDays.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          setWeekOffDays(weekOffDays.filter((d) => d !== day));
+                        } else {
+                          setWeekOffDays([...weekOffDays, day].sort());
+                        }
+                      }}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition border ${
+                        isSelected
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

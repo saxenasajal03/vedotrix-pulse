@@ -26,7 +26,11 @@ import {
   ChatAttachment,
   Holiday
 } from '../types';
-import { sendDeviceNotification } from '../lib/deviceNotifications';
+import {
+  sendDeviceNotification,
+  requestDeviceNotificationPermission,
+  isDeviceNotificationSupported
+} from '../lib/deviceNotifications';
 import {
   INITIAL_ORGS,
   INITIAL_OFFICES,
@@ -574,7 +578,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               baseSalary: p.base_salary !== null && p.base_salary !== undefined ? Number(p.base_salary) : 0,
               avatarUrl: p.avatar_url || '/vedotrix-logo.png',
               isActive: p.is_active ?? true,
-              managerId: p.manager_id || undefined,
+              managerId: p.manager_id || baseline?.managerId || undefined,
               passwordHash: p.password_hash || 'Vedotrix@2026',
               modulesAccess: p.modules_access || ['attendance', 'tasks', 'standups'],
               bankName: statutory.bankName ?? baseline?.bankName,
@@ -1936,6 +1940,127 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
      currentProfile?.email?.toLowerCase() === 'admin@vedotrix.com' ||
      currentProfile?.email?.toLowerCase() === 'sajalsaxenagola@gmail.com')
   );
+
+  // ==============================================================================
+  // ACTIVE DEVICE NOTIFICATIONS & 30-MINUTE MEETING REMINDERS (BACKGROUND DISPATCH)
+  // Ensures hardware notifications (vibration + audio chime) fire ~30 mins before scheduled meetings
+  // even if tab is minimized, hidden, or on mobile device in the background.
+  // ==============================================================================
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // 1. Auto-request notification permissions on login/mount if in default state
+    if (isDeviceNotificationSupported() && typeof Notification !== 'undefined') {
+      if (Notification.permission === 'default') {
+        try {
+          requestDeviceNotificationPermission();
+        } catch {}
+      }
+    }
+
+    // 2. Periodic meeting reminder engine (checks every 25 seconds)
+    const checkMeetingReminders = () => {
+      if (!meetings || meetings.length === 0) return;
+
+      const now = new Date();
+      const nowMs = now.getTime();
+
+      // Today's date string in IST
+      const todayIST = getTodayISTDateString();
+
+      meetings.forEach((m) => {
+        // Filter out completed or cancelled
+        if (m.status === 'completed' || m.status === 'cancelled') return;
+        // Check organization
+        if (m.orgId && m.orgId !== currentOrgId) return;
+
+        // Check if meeting is scheduled for today
+        if (m.date !== todayIST) return;
+
+        // Check audience: attendee, organizer, or leadership
+        const isAttendee =
+          m.organizerId === currentProfileId ||
+          m.attendeeIds?.includes('all') ||
+          m.attendeeIds?.includes(currentProfileId) ||
+          currentProfile?.role === 'superadmin' ||
+          currentProfile?.role === 'owner' ||
+          (m.department && m.department !== 'All' && currentProfile?.department === m.department);
+
+        if (!isAttendee) return;
+
+        // Parse meeting start time in IST
+        const [hhStr, mmStr] = (m.startTime || '00:00').split(':');
+        const hh = parseInt(hhStr, 10);
+        const mm = parseInt(mmStr, 10);
+        if (isNaN(hh) || isNaN(mm)) return;
+
+        // Construct IST Date
+        const meetIso = `${m.date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00+05:30`;
+        const meetTimeMs = new Date(meetIso).getTime();
+        const diffMinutes = Math.floor((meetTimeMs - nowMs) / 60000);
+
+        // A) 30-Minute Meeting Reminder (Trigger between 6 and 30 mins before start)
+        if (diffMinutes > 5 && diffMinutes <= 30) {
+          const sentKey30 = `vdx_meet_remind_30m_${m.id}_${m.date}`;
+          if (!localStorage.getItem(sentKey30)) {
+            localStorage.setItem(sentKey30, Date.now().toString());
+            sendDeviceNotification({
+              title: `📅 Meeting in ${diffMinutes}m: ${m.title}`,
+              body: `Scheduled at ${m.startTime} IST (${m.organizerName}). Click to view details.`,
+              tag: `meet-reminder-30m-${m.id}`,
+              url: m.meetingUrl || window.location.href,
+              data: { meetingId: m.id }
+            });
+            addNotification(
+              `Upcoming Meeting: ${m.title}`,
+              `Starts in ${diffMinutes} minutes at ${m.startTime} IST with ${m.organizerName}.`,
+              'system',
+              'meetings',
+              { recipientId: currentProfileId, orgId: currentOrgId }
+            );
+          }
+        }
+
+        // B) 5-Minute Urgent Warning Reminder (Trigger between 1 and 5 mins before start)
+        if (diffMinutes > 0 && diffMinutes <= 5) {
+          const sentKey5 = `vdx_meet_remind_5m_${m.id}_${m.date}`;
+          if (!localStorage.getItem(sentKey5)) {
+            localStorage.setItem(sentKey5, Date.now().toString());
+            sendDeviceNotification({
+              title: `🚨 Meeting in ${diffMinutes <= 1 ? '1 min' : `${diffMinutes} mins`}: ${m.title}`,
+              body: `Starting at ${m.startTime} IST! Location: ${m.isOnline ? 'Online Meeting Link' : m.location || 'Conference Room'}.`,
+              tag: `meet-reminder-5m-${m.id}`,
+              url: m.meetingUrl || window.location.href,
+              data: { meetingId: m.id }
+            });
+          }
+        }
+
+        // C) Starting Now Reminder (Trigger right at start time: 0 to -2 mins)
+        if (diffMinutes >= -2 && diffMinutes <= 0) {
+          const sentKeyNow = `vdx_meet_remind_live_${m.id}_${m.date}`;
+          if (!localStorage.getItem(sentKeyNow)) {
+            localStorage.setItem(sentKeyNow, Date.now().toString());
+            sendDeviceNotification({
+              title: `🔴 Meeting Live Now: ${m.title}`,
+              body: `Meeting with ${m.organizerName} is happening right now! Click to join.`,
+              tag: `meet-reminder-live-${m.id}`,
+              url: m.meetingUrl || window.location.href,
+              data: { meetingId: m.id }
+            });
+          }
+        }
+      });
+    };
+
+    // Run check immediately and then every 25 seconds
+    checkMeetingReminders();
+    const reminderTimer = setInterval(checkMeetingReminders, 25000);
+
+    return () => {
+      clearInterval(reminderTimer);
+    };
+  }, [isAuthenticated, meetings, currentOrgId, currentProfileId, currentProfile]);
 
   // Filter notifications strictly to current user / role / tenant
   const userNotifications = notifications.filter((n) => {
