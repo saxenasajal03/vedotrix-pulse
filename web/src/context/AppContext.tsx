@@ -548,6 +548,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           try {
             localStorage.setItem('vdx_organizations', JSON.stringify(mappedOrgs));
           } catch {}
+
+          // Live Supabase Sync: Extract organization scheduled holidays
+          const cloudHolidays: Holiday[] = [];
+          cloudOrgs.forEach((o: any) => {
+            if (o.settings?.holidays && Array.isArray(o.settings.holidays)) {
+              cloudHolidays.push(...o.settings.holidays);
+            }
+          });
+          if (cloudHolidays.length > 0) {
+            setHolidays((prev) => {
+              const combined = [...cloudHolidays];
+              prev.forEach((h) => {
+                if (!combined.some((x) => x.id === h.id)) combined.push(h);
+              });
+              const sorted = combined.sort((a, b) => a.date.localeCompare(b.date));
+              try { localStorage.setItem('vdx_holidays', JSON.stringify(sorted)); } catch {}
+              return sorted;
+            });
+          }
         }
 
         if (!errProf && cloudProfiles) {
@@ -1410,6 +1429,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               try { localStorage.setItem('vdx_organizations', JSON.stringify(updated)); } catch {}
               return updated;
             });
+
+            // Live Supabase Sync: Sync holidays if settings updated
+            if (o.settings?.holidays && Array.isArray(o.settings.holidays)) {
+              setHolidays((prev) => {
+                const otherOrgs = prev.filter((h) => h.orgId !== o.id);
+                const updatedHols = [...otherOrgs, ...o.settings.holidays].sort((a, b) => a.date.localeCompare(b.date));
+                try { localStorage.setItem('vdx_holidays', JSON.stringify(updatedHols)); } catch {}
+                return updatedHols;
+              });
+            }
           }
         }
       )
