@@ -658,8 +658,8 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
   return (
     <div
-      className={`rounded-2xl border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-2xl overflow-hidden flex flex-col md:flex-row transition-colors duration-200 ${
-        isWidgetMode ? 'h-full w-full' : 'h-[calc(100vh-140px)] min-h-[580px]'
+      className={`rounded-none md:rounded-2xl border-0 md:border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-2xl overflow-hidden flex flex-col md:flex-row transition-colors duration-200 ${
+        isWidgetMode ? 'h-full w-full' : 'h-full md:h-[calc(100vh-140px)] w-full'
       }`}
     >
       {/* Hidden file input */}
@@ -942,11 +942,14 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                             <img
                               src={colleague.avatarUrl}
                               alt={colleague.firstName}
-                              className="w-6 h-6 rounded-full object-cover"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                              }}
+                              className="w-6 h-6 rounded-full object-cover object-center aspect-square"
                             />
                           ) : (
                             <div
-                              className={`w-6 h-6 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                              className={`w-6 h-6 rounded-full text-[10px] font-bold flex items-center justify-center select-none ${
                                 isActive
                                   ? 'bg-white/20 text-white'
                                   : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)]'
@@ -994,10 +997,13 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               <img
                 src={currentProfile.avatarUrl}
                 alt={currentProfile.firstName}
-                className="w-7 h-7 rounded-full object-cover shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = 'none';
+                }}
+                className="w-7 h-7 rounded-full object-cover object-center aspect-square shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition"
               />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-500 font-bold text-xs flex items-center justify-center shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition">
+              <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-500 font-bold text-xs flex items-center justify-center shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition select-none">
                 {currentProfile.firstName[0]}
               </div>
             )}
@@ -1045,10 +1051,13 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                     <img
                       src={dmTargetProfile.avatarUrl}
                       alt={dmTargetProfile.firstName}
-                      className="w-8 h-8 rounded-full object-cover border border-blue-500/30 group-hover/dmheader:ring-2 group-hover/dmheader:ring-blue-400 transition"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = 'none';
+                      }}
+                      className="w-8 h-8 rounded-full object-cover object-center aspect-square border border-blue-500/30 group-hover/dmheader:ring-2 group-hover/dmheader:ring-blue-400 transition"
                     />
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center border border-blue-500/30 group-hover/dmheader:ring-2 group-hover/dmheader:ring-blue-400 transition">
+                    <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center border border-blue-500/30 group-hover/dmheader:ring-2 group-hover/dmheader:ring-blue-400 transition select-none">
                       {dmTargetProfile.firstName[0]}
                       {dmTargetProfile.lastName?.[0] || ''}
                     </div>
@@ -1375,7 +1384,10 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       src={avatar}
                       alt={msg.senderName}
                       onClick={() => handleOpenProfile(msg.senderId)}
-                      className="w-8 h-8 rounded-full object-cover shrink-0 border border-[var(--border-color)] cursor-pointer hover:ring-2 hover:ring-blue-400 transition"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = 'none';
+                      }}
+                      className="w-8 h-8 rounded-full object-cover object-center aspect-square shrink-0 border border-[var(--border-color)] cursor-pointer hover:ring-2 hover:ring-blue-400 transition"
                       title={`View ${msg.senderName}'s Profile`}
                     />
                   ) : (
@@ -1383,7 +1395,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       type="button"
                       onClick={() => handleOpenProfile(msg.senderId)}
                       title={`View ${msg.senderName}'s Profile`}
-                      className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center shrink-0 border shadow-xs hover:ring-2 hover:ring-blue-400 transition ${
+                      className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center shrink-0 border shadow-xs hover:ring-2 hover:ring-blue-400 transition aspect-square select-none ${
                         isMe
                           ? 'bg-blue-600 text-white border-blue-700'
                           : 'bg-gradient-to-tr from-slate-200 to-slate-100 text-slate-700 border-slate-300 dark:from-slate-700 dark:to-slate-800 dark:text-slate-200 dark:border-slate-600'
@@ -1394,7 +1406,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   )}
 
                   {/* Bubble Content */}
-                  <div className={`max-w-[85%] sm:max-w-lg ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+                  <div className={`max-w-[90%] sm:max-w-md md:max-w-lg ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
                     {/* Sender Meta */}
                     <div className="flex items-center space-x-1.5 mb-1 px-1 text-[11px] w-full">
                       <button
@@ -1454,10 +1466,10 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
                     {/* Message Card */}
                     <div
-                      className={`p-3.5 rounded-2xl text-xs leading-relaxed transition shadow-xs relative group ${
+                      className={`p-3 sm:p-3.5 rounded-2xl text-xs sm:text-[13px] leading-relaxed transition shadow-xs relative group ${
                         isMe
-                          ? 'bg-blue-600 text-white rounded-tr-none'
-                          : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-tl-none'
+                          ? 'bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-tr-xs shadow-blue-500/10'
+                          : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-tl-xs'
                       }`}
                     >
                       {/* Message text or inline editing */}
@@ -1913,7 +1925,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
           {/* Composer Box */}
           <form onSubmit={handleSendMessage} className="space-y-2">
-            <div className="relative border border-[var(--border-color)] rounded-xl bg-[var(--bg-card-subtle)] focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition">
+            <div className="relative border border-[var(--border-color)] rounded-xl bg-[var(--bg-card-subtle)] focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition shadow-xs">
               <textarea
                 ref={textareaRef}
                 rows={1}
@@ -1922,22 +1934,22 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 onKeyDown={handleKeyDown}
                 placeholder={
                   isDirectMessage
-                    ? `Message ${dmTargetProfile?.firstName || 'colleague'}... (Type @ to mention, Enter to send)`
+                    ? `Message ${dmTargetProfile?.firstName || 'colleague'}...`
                     : activeChatChannel === 'support'
-                    ? 'Ask support or report an issue... (Type @ to mention, Enter to send)'
-                    : `Message #${activeChatChannel}... (Type @ to mention, Enter to send)`
+                    ? 'Ask support or report an issue...'
+                    : `Message #${activeChatChannel}...`
                 }
-                className="w-full px-3.5 py-2.5 bg-transparent text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none resize-none max-h-32"
+                className="w-full px-3.5 py-2.5 bg-transparent text-xs sm:text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none resize-none max-h-28"
               />
 
               {/* Composer Toolbar */}
-              <div className="px-2.5 pb-2 pt-1 flex items-center justify-between border-t border-[var(--border-color)]/60">
-                <div className="flex items-center space-x-1">
+              <div className="px-2 pb-2 pt-1 flex items-center justify-between border-t border-[var(--border-color)]/60">
+                <div className="flex items-center space-x-0.5 sm:space-x-1">
                   {/* File Attachment Button */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-1.5 text-[var(--text-muted)] hover:text-blue-500 hover:bg-[var(--bg-card)] rounded-lg transition"
+                    className="p-2 sm:p-1.5 text-[var(--text-muted)] hover:text-blue-500 hover:bg-[var(--bg-card)] rounded-lg transition"
                     title="Attach file, video, image, or document (Max 25MB)"
                   >
                     <Paperclip className="w-4 h-4" />
@@ -1952,7 +1964,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       setMentionQuery('');
                       textareaRef.current?.focus();
                     }}
-                    className="p-1.5 text-[var(--text-muted)] hover:text-blue-500 hover:bg-[var(--bg-card)] rounded-lg transition"
+                    className="p-2 sm:p-1.5 text-[var(--text-muted)] hover:text-blue-500 hover:bg-[var(--bg-card)] rounded-lg transition"
                     title="Mention a colleague (@name)"
                   >
                     <AtSign className="w-4 h-4" />
@@ -1962,7 +1974,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    className="p-1.5 text-[var(--text-muted)] hover:text-blue-500 hover:bg-[var(--bg-card)] rounded-lg transition"
+                    className="p-2 sm:p-1.5 text-[var(--text-muted)] hover:text-blue-500 hover:bg-[var(--bg-card)] rounded-lg transition"
                     title="Add Emoji"
                   >
                     <Smile className="w-4 h-4" />
@@ -1976,7 +1988,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 <button
                   type="submit"
                   disabled={(!inputText.trim() && pendingAttachments.length === 0) || isSending}
-                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg transition shadow-xs flex items-center space-x-1.5 text-xs font-bold"
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 disabled:opacity-40 disabled:pointer-events-none text-white rounded-xl transition shadow-md flex items-center space-x-1.5 text-xs font-bold"
                 >
                   <span>Send</span>
                   <Send className="w-3.5 h-3.5" />

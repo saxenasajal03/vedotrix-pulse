@@ -225,10 +225,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <img
                     src={currentProfile.avatarUrl}
                     alt={currentProfile?.firstName || 'User'}
-                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLElement).style.display = 'none';
+                    }}
+                    className="w-full h-full object-cover object-center aspect-square"
                   />
                 ) : (
-                  <span>{(currentProfile?.firstName?.[0] || 'U')}{(currentProfile?.lastName?.[0] || '')}</span>
+                  <span className="select-none font-bold">{(currentProfile?.firstName?.[0] || 'U')}{(currentProfile?.lastName?.[0] || '')}</span>
                 )}
               </div>
               <div className="hidden sm:block text-left leading-tight">

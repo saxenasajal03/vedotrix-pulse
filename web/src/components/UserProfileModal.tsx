@@ -1,24 +1,22 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Profile } from '../types';
 import {
   X,
   Mail,
   Phone,
-  Building2,
   Calendar,
   Shield,
   MessageSquare,
   Camera,
   Check,
   Copy,
-  ExternalLink,
   UserCheck,
   Briefcase
 } from 'lucide-react';
 import { formatISTDate } from '../lib/serialUtils';
 import { uploadFileToStorage } from '../lib/storage';
-import { INITIAL_ORGS, INITIAL_PROFILES } from '../lib/mockData';
+import { INITIAL_PROFILES } from '../lib/mockData';
 
 interface UserProfileModalProps {
   profile: Profile | null;
@@ -33,19 +31,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onClose,
   onStartDirectMessage
 }) => {
-  const { currentProfile, orgProfiles, currentOrg, allOrganizations, updateProfile, addToast } = useApp();
+  const { currentProfile, orgProfiles, updateProfile, addToast } = useApp();
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [profile?.id, profile?.avatarUrl]);
 
   if (!isOpen || !profile) return null;
 
   const isSelf = profile.id === currentProfile.id;
-
-  // Resolve Organization accurately
-  const isBnkProfile = profile.orgId === '11111111-2222-3333-4444-555555555555';
-  const bnkOrgFallback = allOrganizations?.find(o => o.orgCode === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555') || INITIAL_ORGS[0];
-  const profileOrg = allOrganizations?.find((o) => o.id === profile.orgId) || (isBnkProfile ? bnkOrgFallback : currentOrg);
 
   // Resolve Joining Date accurately from live Supabase record or baseline
   const baselineProf = INITIAL_PROFILES.find((ip) => ip.id === profile.id || (ip.email && ip.email.toLowerCase() === profile.email.toLowerCase()));
@@ -172,9 +170,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-md bg-[var(--bg-card)] border border-[var(--border-color)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh] overflow-hidden text-[var(--text-primary)] animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200"
       >
+        {/* Mobile Drag / Sheet Pill */}
+        <div className="w-10 h-1 rounded-full bg-white/40 mx-auto mt-2 sm:hidden absolute top-0 left-1/2 -translate-x-1/2 z-30 pointer-events-none" />
+
         {/* Banner Cover with Sticky Touch-Friendly Close Button */}
         <div className="h-24 sm:h-28 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative shrink-0">
           <button
+            type="button"
             onClick={onClose}
             className="absolute top-3 right-3 p-2 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white transition backdrop-blur-xs shadow-md z-20"
             title="Close Profile"
@@ -187,16 +189,17 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         <div className="px-5 sm:px-6 pt-0 pb-4 overflow-y-auto flex-1 overscroll-contain">
           {/* Avatar with Camera Overlay */}
           <div className="relative -mt-12 sm:-mt-14 mb-3 inline-block">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[var(--bg-card)] p-1.5 shadow-xl border-2 border-[var(--border-color)]">
-              <div className="w-full h-full rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-xl sm:text-2xl flex items-center justify-center overflow-hidden">
-                {profile.avatarUrl && profile.avatarUrl !== '/vedotrix-logo.png' ? (
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[var(--bg-card)] p-1 shadow-2xl border-2 border-[var(--border-color)]">
+              <div className="w-full h-full rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white font-black text-xl sm:text-2xl flex items-center justify-center overflow-hidden aspect-square select-none">
+                {!avatarLoadFailed && profile.avatarUrl && profile.avatarUrl !== '/vedotrix-logo.png' ? (
                   <img
                     src={profile.avatarUrl}
-                    alt={profile.firstName}
-                    className="w-full h-full object-cover"
+                    alt={`${profile.firstName} ${profile.lastName}`}
+                    onError={() => setAvatarLoadFailed(true)}
+                    className="w-full h-full object-cover object-center aspect-square"
                   />
                 ) : (
-                  <span>
+                  <span className="font-extrabold tracking-tight">
                     {profile.firstName?.[0] || 'U'}
                     {profile.lastName?.[0] || ''}
                   </span>
@@ -215,6 +218,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             {/* Camera Change Icon if Self */}
             {isSelf && (
               <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploadingPhoto}
                 className="absolute bottom-0 left-0 p-1.5 sm:p-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg border-2 border-[var(--bg-card)] transition hover:scale-105 active:scale-95"
@@ -241,11 +245,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               <p className="text-xs font-semibold text-[var(--text-secondary)] mt-0.5 truncate">
                 {profile.designation || 'Team Member'}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1 mt-0.5 truncate">
-                <Briefcase className="w-3 h-3 text-slate-400 shrink-0" />
-                <span className="truncate">{profile.department || 'Operations'}</span>
-                <span>•</span>
-                <span className="truncate">{profileOrg.name}</span>
+              <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1.5 mt-1 truncate">
+                <Briefcase className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <span className="truncate font-medium">{profile.department || 'Operations'}</span>
               </p>
             </div>
 
@@ -392,39 +394,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               <span className="text-xs font-mono font-bold text-[var(--text-primary)]">
                 {formatISTDate(effectiveJoiningDate)}
               </span>
-            </div>
-
-            {/* Organization Info */}
-            <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-1.5">
-              <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold">
-                Organization Details
-              </span>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[var(--text-secondary)] flex items-center gap-1.5 font-semibold truncate">
-                  <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                  <span className="truncate">{profileOrg.name}</span>
-                </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/10 text-blue-400 font-bold shrink-0">
-                  {profileOrg.orgCode}
-                </span>
-              </div>
-              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
-                {profileOrg.address || (isBnkProfile ? 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001' : 'Corporate Headquarters')}
-              </p>
-              <div className="flex items-center justify-between pt-1 border-t border-[var(--border-color)] text-[11px]">
-                <a
-                  href={profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-400 hover:underline flex items-center gap-1 font-semibold truncate"
-                >
-                  <ExternalLink className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}</span>
-                </a>
-                <span className="text-[var(--text-muted)] font-mono shrink-0 ml-2">
-                  {profileOrg.phone || (isBnkProfile ? '+91 6388043581' : '+91 80 4400 9900')}
-                </span>
-              </div>
             </div>
           </div>
         </div>

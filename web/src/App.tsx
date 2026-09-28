@@ -128,7 +128,13 @@ const MainLayout: React.FC = () => {
         />
 
         {/* Dynamic Tab Content with responsive padding */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto pb-24 md:pb-8 min-w-0">
+        <main
+          className={`flex-1 min-w-0 ${
+            activeTab === 'chat'
+              ? 'p-0 md:p-6 lg:p-8 pb-16 md:pb-8 flex flex-col overflow-hidden h-[calc(100dvh-4rem)] md:h-auto'
+              : 'p-4 sm:p-6 lg:p-8 overflow-y-auto pb-24 md:pb-8'
+          }`}
+        >
           {activeTab === 'superadmin' && isVedotrixSuperadmin && <SuperAdminConsole />}
 
           {activeTab === 'dashboard' && (
