@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { formatISTDate } from '../lib/serialUtils';
 import { uploadFileToStorage } from '../lib/storage';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { INITIAL_PROFILES } from '../lib/mockData';
 
 interface UserProfileModalProps {
@@ -128,12 +129,25 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
       const compressedDataUrl = await compressImage(file);
 
-      // Attempt upload to Supabase storage with fallback to compressed data URL
+      // Delete old avatar from Supabase storage before uploading new one
+      try {
+        const supabase = getSupabaseClient();
+        // List all files in avatars bucket with this user's prefix to delete old ones
+        const { data: existingFiles } = await supabase.storage
+          .from('avatars')
+          .list('', { search: `avatar_${profile.id}` });
+        if (existingFiles && existingFiles.length > 0) {
+          const toRemove = existingFiles.map((f: any) => f.name);
+          await supabase.storage.from('avatars').remove(toRemove);
+        }
+      } catch {}
+
+      // Upload new avatar to Supabase storage with fallback to compressed data URL
       let finalAvatarUrl = compressedDataUrl;
       try {
         const storageResult = await uploadFileToStorage(file, 'avatars', `avatar_${profile.id}`);
         if (storageResult.success && storageResult.url) {
-          finalAvatarUrl = storageResult.url;
+          finalAvatarUrl = storageResult.url + `?t=${Date.now()}`; // cache bust
         }
       } catch {}
 
@@ -189,7 +203,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         <div className="px-5 sm:px-6 pt-0 pb-4 overflow-y-auto flex-1 overscroll-contain">
           {/* Avatar with Camera Overlay */}
           <div className="relative -mt-12 sm:-mt-14 mb-3 inline-block">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[var(--bg-card)] p-1 shadow-2xl border-2 border-[var(--border-color)]">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[var(--bg-card)] p-1 shadow-2xl border-2 border-[var(--border-color)] overflow-hidden">
               <div className="w-full h-full rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white font-black text-xl sm:text-2xl flex items-center justify-center overflow-hidden aspect-square select-none">
                 {!avatarLoadFailed && profile.avatarUrl && profile.avatarUrl !== '/vedotrix-logo.png' ? (
                   <img

@@ -2937,13 +2937,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true, message: 'Attendance already recorded for today', record: existing };
     }
 
-    // Shift timing & late login calculation
+    // Shift timing, late login & end-of-shift enforcement
     const shiftStartTime = currentOrg.settings?.shiftStartTime || '09:30';
+    const shiftEndTime = currentOrg.settings?.shiftEndTime || '19:00';
     const graceMins = currentOrg.settings?.gracePeriodMins ?? 15;
     const [shiftH, shiftM] = shiftStartTime.split(':').map(Number);
+    const [endH, endM] = shiftEndTime.split(':').map(Number);
     const shiftTotalMins = (shiftH || 9) * 60 + (shiftM || 30);
+    const shiftEndTotalMins = (endH || 19) * 60 + (endM || 0);
     const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
     const isLateLogin = currentTotalMins > (shiftTotalMins + graceMins);
+
+    // Block punch-in before shift start (allow up to 30 min early)
+    if (currentTotalMins < (shiftTotalMins - 30)) {
+      addToast(
+        'Too Early to Punch In ⏰',
+        `Your shift starts at ${shiftStartTime} IST. Punch-in is allowed from ${String(Math.floor((shiftTotalMins - 30) / 60)).padStart(2, '0')}:${String((shiftTotalMins - 30) % 60).padStart(2, '0')} IST.`,
+        'warning'
+      );
+      return { success: false, message: `Punch-in opens at ${shiftStartTime} IST (up to 30 min before shift).` };
+    }
+
+    // Block punch-in after shift ends
+    if (currentTotalMins > shiftEndTotalMins) {
+      addToast(
+        'Shift Has Ended 🌙',
+        `Your shift ended at ${shiftEndTime} IST. Attendance marking is not allowed after shift hours. Please contact HR for regularization if needed.`,
+        'warning'
+      );
+      return { success: false, message: `Punch-in not allowed after ${shiftEndTime} IST (shift end).` };
+    }
 
     const requiresApproval = isRemote || distanceMeters > 150;
     const regularizationStatus: RegularizationStatus = requiresApproval ? 'pending' : 'none';

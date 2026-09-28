@@ -114,6 +114,19 @@ export const TeamChat: React.FC<TeamChatProps> = ({
   const [activeActionMenuMsgId, setActiveActionMenuMsgId] = useState<string | null>(null);
   const [showPinnedDrawer, setShowPinnedDrawer] = useState(false);
 
+  // Read more / show less expanded state per message (WhatsApp style)
+  const [expandedMsgIds, setExpandedMsgIds] = useState<Set<string>>(new Set());
+  const MSG_TRUNCATE_LENGTH = 350;
+  const MSG_TRUNCATE_LINES = 8;
+  const toggleMsgExpanded = (id: string) => {
+    setExpandedMsgIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // Phone & Widget responsive screen state: 'sidebar' or 'chat'
   const [mobileScreen, setMobileScreen] = useState<'sidebar' | 'chat'>('chat');
 
@@ -620,30 +633,40 @@ export const TeamChat: React.FC<TeamChatProps> = ({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Helper to highlight @mentions in messages
-  const renderMessageContent = (text: string) => {
+  // Helper to highlight @mentions in messages (excludes email addresses)
+  const renderMessageContent = (text: string, msgId?: string) => {
     if (!text) return null;
-    const mentionRegex = /(@[A-Za-z0-9_.-]+(?:\s[A-Za-z0-9_.-]+)?)/g;
+    // Only match @mention when preceded by whitespace or start of string (not inside email like user@gmail.com)
+    const mentionRegex = /(?<![a-zA-Z0-9.])(@[A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+)?)/g;
     const parts = text.split(mentionRegex);
 
     return parts.map((part, index) => {
-      if (part.startsWith('@')) {
+      if (/^@[A-Za-z0-9_]/.test(part)) {
         const isMyMention =
           part.toLowerCase().includes(currentProfile.firstName.toLowerCase()) ||
           part.toLowerCase() === '@all' ||
           part.toLowerCase() === '@channel';
 
+        // Try to find the mentioned person profile for click-to-open
+        const nameWithoutAt = part.slice(1).trim();
+        const mentionedProfile = orgProfiles.find((p) =>
+          `${p.firstName} ${p.lastName}`.toLowerCase().startsWith(nameWithoutAt.toLowerCase()) ||
+          p.firstName.toLowerCase() === nameWithoutAt.toLowerCase()
+        );
+
         return (
-          <span
+          <button
             key={index}
-            className={`inline-flex items-center px-1.5 py-0.2 rounded font-bold text-[11px] mx-0.5 ${
+            type="button"
+            onClick={() => mentionedProfile && handleOpenProfile(mentionedProfile.id)}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded font-bold text-[11px] mx-0.5 transition ${
               isMyMention
-                ? 'bg-amber-400/25 text-amber-300 border border-amber-400/40 shadow-xs'
-                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-            }`}
+                ? 'bg-amber-400/25 text-amber-300 border border-amber-400/40 shadow-xs hover:bg-amber-400/40'
+                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30'
+            } ${mentionedProfile ? 'cursor-pointer' : 'cursor-default'}`}
           >
             {part}
-          </span>
+          </button>
         );
       }
       return <span key={index}>{part}</span>;
@@ -1511,11 +1534,29 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                           </div>
                         </div>
                       ) : (
-                        msg.message && (
-                          <p className="whitespace-pre-line break-words">
-                            {renderMessageContent(msg.message)}
-                          </p>
-                        )
+                        msg.message && (() => {
+                          const isLong = msg.message.length > MSG_TRUNCATE_LENGTH || (msg.message.match(/\n/g) || []).length >= MSG_TRUNCATE_LINES;
+                          const isExpanded = expandedMsgIds.has(msg.id);
+                          const displayText = isLong && !isExpanded
+                            ? msg.message.slice(0, MSG_TRUNCATE_LENGTH).trimEnd() + '…'
+                            : msg.message;
+                          return (
+                            <div>
+                              <p className="whitespace-pre-line break-words">
+                                {renderMessageContent(displayText, msg.id)}
+                              </p>
+                              {isLong && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleMsgExpanded(msg.id)}
+                                  className="mt-1 text-[11px] font-bold text-blue-400 hover:text-blue-300 transition underline-offset-2 hover:underline"
+                                >
+                                  {isExpanded ? 'Show less ↑' : 'Read more ↓'}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()
                       )}
 
                       {/* Attachments rendering */}
