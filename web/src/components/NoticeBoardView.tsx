@@ -47,8 +47,9 @@ export const NoticeBoardView: React.FC = () => {
   const [isPinned, setIsPinned] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Filtered Notices
+  // Filtered Notices strictly scoped to active organization
   const filteredNotices = notices.filter((notice) => {
+    if (currentOrg && notice.orgId && notice.orgId !== currentOrg.id) return false;
     if (activeCategory === 'pinned') return notice.isPinned;
     if (activeCategory !== 'all' && notice.category !== activeCategory) return false;
     if (searchQuery.trim()) {

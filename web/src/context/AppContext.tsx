@@ -366,104 +366,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return INITIAL_HOLIDAYS;
   });
 
-  // Meetings & Events State
+  // Meetings & Events State (Live Supabase - Zero Mock Initializer)
   const [meetings, setMeetings] = useState<MeetingEvent[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_meetings');
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return [
-      {
-        id: 'meet-1',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        title: 'Daily Technical Sprints & Standup',
-        description: 'Review active feature branches, sprint blockers, and production deployments.',
-        date: getTodayISTDateString(),
-        startTime: '10:30',
-        endTime: '11:15',
-        isOnline: true,
-        meetingUrl: 'https://meet.google.com/vdx-pulse-tech',
-        location: 'Google Meet',
-        organizerId: '00000000-0000-0000-0000-000000000003',
-        organizerName: 'Sajal Saxena',
-        organizerRole: 'superadmin',
-        attendeeIds: ['all'],
-        department: 'Engineering',
-        status: 'scheduled',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'meet-2',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        title: 'Monthly Performance & OKR Review',
-        description: 'Review key department metrics and quarterly goals with direct managers.',
-        date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
-        startTime: '15:00',
-        endTime: '16:00',
-        isOnline: true,
-        meetingUrl: 'https://meet.google.com/vdx-okr-sync',
-        location: 'Google Meet',
-        organizerId: '00000000-0000-0000-0000-000000000003',
-        organizerName: 'HR Administration',
-        organizerRole: 'hr',
-        attendeeIds: ['all'],
-        department: 'Operations',
-        status: 'scheduled',
-        createdAt: new Date().toISOString()
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((m: any) => m.id !== 'meet-1' && m.id !== 'meet-2' && !m.id?.startsWith('dummy-'));
+        }
       }
-    ];
+    } catch {}
+    return [];
   });
 
-  // Corporate Notice Board State
+  // Corporate Notice Board State (Live Supabase - Zero Mock Initializer)
   const [notices, setNotices] = useState<NoticeItem[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_notices');
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return [
-      {
-        id: 'notice-1',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        title: 'Official Holiday Schedule: Festive Season 2026',
-        content: 'Please find the official company holiday schedule for Q4 2026. All managers are advised to ensure sprint deadlines are aligned and on-call rotations are established.',
-        category: 'holiday',
-        priority: 'high',
-        authorId: '00000000-0000-0000-0000-000000000003',
-        authorName: 'Corporate HR',
-        authorRole: 'hr',
-        date: new Date().toISOString(),
-        isPinned: true,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'notice-2',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        title: 'Workplace Attendance & Regularization Guidelines',
-        content: 'All team members must punch in via the Vedotrix Pulse portal within the designated 150m office radius. In case of field client visits or WFH, please submit an attendance regularization request with notes.',
-        category: 'policy',
-        priority: 'medium',
-        authorId: '00000000-0000-0000-0000-000000000003',
-        authorName: 'Operations Lead',
-        authorRole: 'superadmin',
-        date: new Date().toISOString(),
-        isPinned: false,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'notice-3',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        title: 'Platform Upgrade: Security & Multi-Tenant Isolation Active',
-        content: 'Our HR and technical team have rolled out enhanced multi-tenant security, IST time synchronization, digital offer acceptance verification, and direct reporting manager hierarchies.',
-        category: 'announcement',
-        priority: 'high',
-        authorId: '00000000-0000-0000-0000-000000000003',
-        authorName: 'Root Administrator',
-        authorRole: 'superadmin',
-        date: new Date().toISOString(),
-        isPinned: true,
-        createdAt: new Date().toISOString()
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((n: any) => n.id !== 'notice-1' && n.id !== 'notice-2' && n.id !== 'notice-3' && !n.id?.startsWith('dummy-'));
+        }
       }
-    ];
+    } catch {}
+    return [];
   });
 
   // Organizational Real-Time Chat State
@@ -478,35 +406,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_chat_messages');
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return [
-      {
-        id: 'msg-1',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        senderId: '00000000-0000-0000-0000-000000000003',
-        senderName: 'Sajal Saxena',
-        senderRole: 'superadmin',
-        senderAvatar: '/vedotrix-logo.png',
-        channel: 'support',
-        message: 'Welcome everyone to Vedotrix Pulse! For any HR inquiries, payroll clarifications, attendance adjustments, or IT issues, reach out here or create a dedicated channel. 🚀',
-        reactions: [{ emoji: '🚀', count: 3, userIds: ['00000000-0000-0000-0000-000000000003'] }],
-        createdAt: new Date(Date.now() - 3600000).toISOString()
-      },
-      {
-        id: 'msg-2',
-        orgId: '00000000-0000-0000-0000-000000000001',
-        senderId: '00000000-0000-0000-0000-000000000003',
-        senderName: 'HR Administration',
-        senderRole: 'hr',
-        senderAvatar: '/vedotrix-logo.png',
-        channel: 'support',
-        message: 'Please note: You can create new custom public channels or private groups with specific team members at any time using the "+ New" button.',
-        reactions: [{ emoji: '👍', count: 2, userIds: [] }],
-        createdAt: new Date(Date.now() - 1800000).toISOString()
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((m: any) => m.id !== 'msg-1' && m.id !== 'msg-2' && !m.id?.startsWith('dummy-'));
+        }
       }
-    ];
+    } catch {}
+    return [];
   });
+
+  // One-time startup sanitization of legacy dummy/mock records in localStorage
+  useEffect(() => {
+    try {
+      const mStr = localStorage.getItem('vdx_meetings');
+      if (mStr) {
+        const parsed = JSON.parse(mStr);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter((m: any) => m.id !== 'meet-1' && m.id !== 'meet-2' && !m.id?.startsWith('dummy-'));
+          if (cleaned.length !== parsed.length) {
+            localStorage.setItem('vdx_meetings', JSON.stringify(cleaned));
+            setMeetings(cleaned);
+          }
+        }
+      }
+    } catch {}
+
+    try {
+      const nStr = localStorage.getItem('vdx_notices');
+      if (nStr) {
+        const parsed = JSON.parse(nStr);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter((n: any) => n.id !== 'notice-1' && n.id !== 'notice-2' && n.id !== 'notice-3' && !n.id?.startsWith('dummy-'));
+          if (cleaned.length !== parsed.length) {
+            localStorage.setItem('vdx_notices', JSON.stringify(cleaned));
+            setNotices(cleaned);
+          }
+        }
+      }
+    } catch {}
+
+    try {
+      const cStr = localStorage.getItem('vdx_chat_messages');
+      if (cStr) {
+        const parsed = JSON.parse(cStr);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter((c: any) => c.id !== 'msg-1' && c.id !== 'msg-2' && !c.id?.startsWith('dummy-'));
+          if (cleaned.length !== parsed.length) {
+            localStorage.setItem('vdx_chat_messages', JSON.stringify(cleaned));
+            setChatMessages(cleaned);
+          }
+        }
+      }
+    } catch {}
+  }, []);
 
   // Only sync session pointers to local storage
   useEffect(() => {
@@ -823,7 +776,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setLeaveRequests(mappedLeaves);
         }
 
-        if (!errChannels && cloudChannels && cloudChannels.length > 0) {
+        if (!errChannels && cloudChannels) {
           const mappedChannels: ChatChannel[] = cloudChannels.map((c: any) => ({
             id: c.id,
             orgId: c.org_id,
@@ -842,7 +795,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } catch {}
         }
 
-        if (!errMessages && cloudMessages && cloudMessages.length > 0) {
+        if (!errMessages && cloudMessages) {
           const mappedMessages: ChatMessage[] = cloudMessages.map((m: any) => ({
             id: m.id,
             orgId: m.org_id,
@@ -868,7 +821,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } catch {}
         }
 
-        if (!errMeetings && cloudMeetings && cloudMeetings.length > 0) {
+        if (!errMeetings && cloudMeetings) {
           const mappedMeetings: MeetingEvent[] = cloudMeetings.map((m: any) => ({
             id: m.id,
             orgId: m.org_id,
@@ -894,7 +847,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } catch {}
         }
 
-        if (!errNotices && cloudNotices && cloudNotices.length > 0) {
+        if (!errNotices && cloudNotices) {
           const mappedNotices: NoticeItem[] = cloudNotices.map((n: any) => ({
             id: n.id,
             orgId: n.org_id,
@@ -1168,24 +1121,318 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const a = payload.new;
+            const newAtt: AttendanceRecord = {
+              id: a.id,
+              orgId: a.org_id,
+              employeeId: a.employee_id,
+              date: a.date,
+              checkInTime: a.check_in_time,
+              checkOutTime: a.check_out_time,
+              checkInLat: a.check_in_lat ? Number(a.check_in_lat) : undefined,
+              checkInLong: a.check_in_long ? Number(a.check_in_long) : undefined,
+              checkOutLat: a.check_out_lat ? Number(a.check_out_lat) : undefined,
+              checkOutLong: a.check_out_long ? Number(a.check_out_long) : undefined,
+              distanceMeters: a.distance_meters ? Number(a.distance_meters) : 0,
+              officeAddress: a.office_address || '',
+              status: a.status || 'present',
+              isRemote: a.is_remote ?? false,
+              approvalStatus: a.approval_status || 'approved',
+              regularizationStatus: a.regularization_status || 'none',
+              regularizationReason: a.regularization_reason,
+              regularizedBy: a.regularized_by,
+              regularizationNotes: a.regularization_notes,
+              totalHours: a.total_hours ? Number(a.total_hours) : 0
+            };
+            setAttendanceRecords((prev) => {
+              if (prev.some((x) => x.id === newAtt.id)) return prev;
+              const updated = [newAtt, ...prev];
+              try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const a = payload.new;
+            setAttendanceRecords((prev) => {
+              const updated = prev.map((att) =>
+                att.id === a.id
+                  ? {
+                      ...att,
+                      checkInTime: a.check_in_time,
+                      checkOutTime: a.check_out_time,
+                      checkInLat: a.check_in_lat ? Number(a.check_in_lat) : att.checkInLat,
+                      checkInLong: a.check_in_long ? Number(a.check_in_long) : att.checkInLong,
+                      checkOutLat: a.check_out_lat ? Number(a.check_out_lat) : att.checkOutLat,
+                      checkOutLong: a.check_out_long ? Number(a.check_out_long) : att.checkOutLong,
+                      distanceMeters: a.distance_meters ? Number(a.distance_meters) : att.distanceMeters,
+                      officeAddress: a.office_address || att.officeAddress,
+                      status: a.status || att.status,
+                      isRemote: a.is_remote ?? att.isRemote,
+                      approvalStatus: a.approval_status || att.approvalStatus,
+                      regularizationStatus: a.regularization_status || att.regularizationStatus,
+                      regularizationReason: a.regularization_reason ?? att.regularizationReason,
+                      regularizedBy: a.regularized_by ?? att.regularizedBy,
+                      regularizationNotes: a.regularization_notes ?? att.regularizationNotes,
+                      totalHours: a.total_hours ? Number(a.total_hours) : att.totalHours
+                    }
+                  : att
+              );
+              try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setAttendanceRecords((prev) => {
+              const updated = prev.filter((att) => att.id !== payload.old.id);
+              try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tasks', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const t = payload.new;
+            const newTask: TaskItem = {
+              id: t.id,
+              orgId: t.org_id,
+              title: t.title,
+              description: t.description || '',
+              assignedTo: t.assigned_to,
+              createdBy: t.created_by,
+              category: t.category || 'tech',
+              status: t.status || 'todo',
+              priority: t.priority || 'medium',
+              dueDate: t.due_date,
+              gitBranch: t.git_branch,
+              prLink: t.pr_link,
+              sprintName: t.sprint_name,
+              campaignName: t.campaign_name,
+              clientName: t.client_name,
+              adSpendTarget: t.ad_spend_target ? Number(t.ad_spend_target) : undefined,
+              targetKpi: t.target_kpi,
+              createdAt: t.created_at
+            };
+            setTasks((prev) => {
+              if (prev.some((x) => x.id === newTask.id)) return prev;
+              const updated = [newTask, ...prev];
+              try { localStorage.setItem('vdx_tasks', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const t = payload.new;
+            setTasks((prev) => {
+              const updated = prev.map((task) =>
+                task.id === t.id
+                  ? {
+                      ...task,
+                      title: t.title,
+                      description: t.description || '',
+                      assignedTo: t.assigned_to,
+                      status: t.status,
+                      priority: t.priority,
+                      dueDate: t.due_date,
+                      gitBranch: t.git_branch,
+                      prLink: t.pr_link,
+                      sprintName: t.sprint_name,
+                      campaignName: t.campaign_name,
+                      clientName: t.client_name,
+                      adSpendTarget: t.ad_spend_target ? Number(t.ad_spend_target) : undefined,
+                      targetKpi: t.target_kpi
+                    }
+                  : task
+              );
+              try { localStorage.setItem('vdx_tasks', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setTasks((prev) => {
+              const updated = prev.filter((task) => task.id !== payload.old.id);
+              try { localStorage.setItem('vdx_tasks', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leave_requests', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const l = payload.new;
+            const newLeave: LeaveRequest = {
+              id: l.id,
+              orgId: l.org_id,
+              employeeId: l.employee_id,
+              leaveType: l.leave_type || 'casual',
+              startDate: l.start_date,
+              endDate: l.end_date,
+              totalDays: Number(l.total_days) || 1,
+              isHalfDay: l.is_half_day ?? false,
+              halfDaySession: l.half_day_session,
+              reason: l.reason,
+              status: l.status || 'pending',
+              assignedApproverId: l.assigned_approver_id,
+              approverDecisionNotes: l.approver_decision_notes,
+              approvedBy: l.approved_by,
+              decidedAt: l.decided_at,
+              documentUrl: l.document_url,
+              createdAt: l.created_at
+            };
+            setLeaveRequests((prev) => {
+              if (prev.some((x) => x.id === newLeave.id)) return prev;
+              const updated = [newLeave, ...prev];
+              try { localStorage.setItem('vdx_leave_requests', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const l = payload.new;
+            setLeaveRequests((prev) => {
+              const updated = prev.map((leave) =>
+                leave.id === l.id
+                  ? {
+                      ...leave,
+                      status: l.status,
+                      approvedBy: l.approved_by,
+                      decidedAt: l.decided_at,
+                      approverDecisionNotes: l.approver_decision_notes
+                    }
+                  : leave
+              );
+              try { localStorage.setItem('vdx_leave_requests', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setLeaveRequests((prev) => {
+              const updated = prev.filter((leave) => leave.id !== payload.old.id);
+              try { localStorage.setItem('vdx_leave_requests', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles', filter: `org_id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT') {
+            const p = payload.new;
+            const newProf: Profile = {
+              id: p.id,
+              orgId: p.org_id,
+              email: p.email,
+              firstName: p.first_name,
+              lastName: p.last_name || '',
+              phone: p.phone || '',
+              role: p.role,
+              designation: p.designation || 'Team Member',
+              department: p.department || 'Operations',
+              joiningDate: p.joining_date || '2026-09-09',
+              baseSalary: p.base_salary ? Number(p.base_salary) : 0,
+              avatarUrl: p.avatar_url || '/vedotrix-logo.png',
+              isActive: p.is_active ?? true,
+              managerId: p.manager_id || undefined,
+              passwordHash: p.password_hash || 'Vedotrix@2026',
+              modulesAccess: p.modules_access || ['attendance', 'tasks', 'standups']
+            };
+            setProfiles((prev) => {
+              if (prev.some((x) => x.id === newProf.id)) return prev;
+              const updated = [...prev, newProf];
+              try { localStorage.setItem('vdx_profiles', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const p = payload.new;
+            setProfiles((prev) => {
+              const updated = prev.map((prof) =>
+                prof.id === p.id
+                  ? {
+                      ...prof,
+                      firstName: p.first_name ?? prof.firstName,
+                      lastName: p.last_name ?? prof.lastName,
+                      phone: p.phone ?? prof.phone,
+                      role: p.role ?? prof.role,
+                      designation: p.designation ?? prof.designation,
+                      department: p.department ?? prof.department,
+                      joiningDate: p.joining_date ?? prof.joiningDate,
+                      baseSalary: p.base_salary !== null && p.base_salary !== undefined ? Number(p.base_salary) : prof.baseSalary,
+                      avatarUrl: p.avatar_url ?? prof.avatarUrl,
+                      isActive: p.is_active ?? prof.isActive,
+                      managerId: p.manager_id ?? prof.managerId,
+                      modulesAccess: p.modules_access ?? prof.modulesAccess
+                    }
+                  : prof
+              );
+              try { localStorage.setItem('vdx_profiles', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'UPDATE') {
+            const o = payload.new;
+            setOrganizations((prev) => {
+              const updated = prev.map((org) =>
+                org.id === o.id
+                  ? {
+                      ...org,
+                      name: o.name,
+                      slug: o.slug,
+                      orgCode: o.org_code,
+                      industry: o.industry || org.industry,
+                      website: o.website || org.website,
+                      address: o.address || org.address,
+                      phone: o.phone || org.phone,
+                      logoUrl: o.logo_url || org.logoUrl,
+                      settings: o.settings || org.settings
+                    }
+                  : org
+              );
+              try { localStorage.setItem('vdx_organizations', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        }
+      )
       .subscribe();
 
-    // 2. High-reliability Polling Fallback (syncs any missed updates)
+    // 2. High-reliability Polling Fallback (syncs all org records every 4 seconds)
     const syncRealtimeData = async () => {
       try {
         const [
           { data: cloudChannels },
           { data: cloudMessages },
           { data: cloudMeetings },
-          { data: cloudNotices }
+          { data: cloudNotices },
+          { data: cloudAtt },
+          { data: cloudTasks },
+          { data: cloudLeaves }
         ] = await Promise.all([
           client.from('chat_channels').select('*').eq('org_id', currentOrgId),
           client.from('chat_messages').select('*').eq('org_id', currentOrgId).order('created_at', { ascending: true }),
           client.from('meetings').select('*').eq('org_id', currentOrgId).order('date', { ascending: false }),
-          client.from('notices').select('*').eq('org_id', currentOrgId).order('date', { ascending: false })
+          client.from('notices').select('*').eq('org_id', currentOrgId).order('date', { ascending: false }),
+          client.from('attendance').select('*').eq('org_id', currentOrgId),
+          client.from('tasks').select('*').eq('org_id', currentOrgId),
+          client.from('leave_requests').select('*').eq('org_id', currentOrgId)
         ]);
 
-        if (cloudChannels && cloudChannels.length > 0 && isMounted) {
+        if (cloudChannels && isMounted) {
           const mappedChannels: ChatChannel[] = cloudChannels.map((c: any) => ({
             id: c.id,
             orgId: c.org_id,
@@ -1199,13 +1446,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             createdAt: c.created_at
           }));
           setCustomChannels((prev) => {
-            const map = new Map(prev.map((c) => [`${c.orgId}_${c.id}`, c]));
-            mappedChannels.forEach((c) => map.set(`${c.orgId}_${c.id}`, c));
-            return Array.from(map.values());
+            const otherOrgs = prev.filter((c) => c.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedChannels];
+            try { localStorage.setItem('vdx_custom_channels', JSON.stringify(combined)); } catch {}
+            return combined;
           });
         }
 
-        if (cloudMessages && cloudMessages.length > 0 && isMounted) {
+        if (cloudMessages && isMounted) {
           const mappedMessages: ChatMessage[] = cloudMessages.map((m: any) => ({
             id: m.id,
             orgId: m.org_id,
@@ -1221,18 +1469,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             replyToMessageId: m.reply_to_message_id,
             replyToSnippet: m.reply_to_snippet,
             isPinned: m.is_pinned ?? false,
+            isEdited: m.is_edited ?? false,
+            editedAt: m.edited_at,
             createdAt: m.created_at
           }));
           setChatMessages((prev) => {
-            const map = new Map(prev.map((msg) => [msg.id, msg]));
-            mappedMessages.forEach((msg) => map.set(msg.id, msg));
-            return Array.from(map.values()).sort(
+            const otherOrgs = prev.filter((msg) => msg.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedMessages].sort(
               (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
             );
+            try { localStorage.setItem('vdx_chat_messages', JSON.stringify(combined)); } catch {}
+            return combined;
           });
         }
 
-        if (cloudMeetings && cloudMeetings.length > 0 && isMounted) {
+        if (cloudMeetings && isMounted) {
           const mappedMeetings: MeetingEvent[] = cloudMeetings.map((m: any) => ({
             id: m.id,
             orgId: m.org_id,
@@ -1253,15 +1504,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             createdAt: m.created_at
           }));
           setMeetings((prev) => {
-            const map = new Map(prev.map((meet) => [meet.id, meet]));
-            mappedMeetings.forEach((meet) => map.set(meet.id, meet));
-            return Array.from(map.values()).sort(
+            const otherOrgs = prev.filter((meet) => meet.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedMeetings].sort(
               (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
             );
+            try { localStorage.setItem('vdx_meetings', JSON.stringify(combined)); } catch {}
+            return combined;
           });
         }
 
-        if (cloudNotices && cloudNotices.length > 0 && isMounted) {
+        if (cloudNotices && isMounted) {
           const mappedNotices: NoticeItem[] = cloudNotices.map((n: any) => ({
             id: n.id,
             orgId: n.org_id,
@@ -1278,11 +1530,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             createdAt: n.created_at
           }));
           setNotices((prev) => {
-            const map = new Map(prev.map((not) => [not.id, not]));
-            mappedNotices.forEach((not) => map.set(not.id, not));
-            return Array.from(map.values()).sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            const otherOrgs = prev.filter((not) => not.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedNotices].sort(
+              (a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()
             );
+            try { localStorage.setItem('vdx_notices', JSON.stringify(combined)); } catch {}
+            return combined;
+          });
+        }
+
+        if (cloudAtt && isMounted) {
+          const mappedAtt: AttendanceRecord[] = cloudAtt.map((a: any) => ({
+            id: a.id,
+            orgId: a.org_id,
+            employeeId: a.employee_id,
+            date: a.date,
+            checkInTime: a.check_in_time,
+            checkOutTime: a.check_out_time,
+            checkInLat: a.check_in_lat ? Number(a.check_in_lat) : undefined,
+            checkInLong: a.check_in_long ? Number(a.check_in_long) : undefined,
+            checkOutLat: a.check_out_lat ? Number(a.check_out_lat) : undefined,
+            checkOutLong: a.check_out_long ? Number(a.check_out_long) : undefined,
+            distanceMeters: a.distance_meters ? Number(a.distance_meters) : 0,
+            officeAddress: a.office_address || '',
+            status: a.status || 'present',
+            isRemote: a.is_remote ?? false,
+            approvalStatus: a.approval_status || 'approved',
+            regularizationStatus: a.regularization_status || 'none',
+            regularizationReason: a.regularization_reason,
+            regularizedBy: a.regularized_by,
+            regularizationNotes: a.regularization_notes,
+            totalHours: a.total_hours ? Number(a.total_hours) : 0
+          }));
+          setAttendanceRecords((prev) => {
+            const otherOrgs = prev.filter((a) => a.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedAtt];
+            try { localStorage.setItem('vdx_attendance', JSON.stringify(combined)); } catch {}
+            return combined;
+          });
+        }
+
+        if (cloudTasks && isMounted) {
+          const mappedTasks: TaskItem[] = cloudTasks.map((t: any) => ({
+            id: t.id,
+            orgId: t.org_id,
+            title: t.title,
+            description: t.description || '',
+            assignedTo: t.assigned_to,
+            createdBy: t.created_by,
+            category: t.category || 'tech',
+            status: t.status || 'todo',
+            priority: t.priority || 'medium',
+            dueDate: t.due_date,
+            gitBranch: t.git_branch,
+            prLink: t.pr_link,
+            sprintName: t.sprint_name,
+            campaignName: t.campaign_name,
+            clientName: t.client_name,
+            adSpendTarget: t.ad_spend_target ? Number(t.ad_spend_target) : undefined,
+            targetKpi: t.target_kpi,
+            createdAt: t.created_at
+          }));
+          setTasks((prev) => {
+            const otherOrgs = prev.filter((t) => t.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedTasks];
+            try { localStorage.setItem('vdx_tasks', JSON.stringify(combined)); } catch {}
+            return combined;
+          });
+        }
+
+        if (cloudLeaves && isMounted) {
+          const mappedLeaves: LeaveRequest[] = cloudLeaves.map((l: any) => ({
+            id: l.id,
+            orgId: l.org_id,
+            employeeId: l.employee_id,
+            leaveType: l.leave_type || 'casual',
+            startDate: l.start_date,
+            endDate: l.end_date,
+            totalDays: Number(l.total_days) || 1,
+            isHalfDay: l.is_half_day ?? false,
+            halfDaySession: l.half_day_session,
+            reason: l.reason,
+            status: l.status || 'pending',
+            assignedApproverId: l.assigned_approver_id,
+            approverDecisionNotes: l.approver_decision_notes,
+            approvedBy: l.approved_by,
+            decidedAt: l.decided_at,
+            documentUrl: l.document_url,
+            createdAt: l.created_at
+          }));
+          setLeaveRequests((prev) => {
+            const otherOrgs = prev.filter((l) => l.orgId !== currentOrgId);
+            const combined = [...otherOrgs, ...mappedLeaves];
+            try { localStorage.setItem('vdx_leave_requests', JSON.stringify(combined)); } catch {}
+            return combined;
           });
         }
       } catch (err) {}

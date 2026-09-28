@@ -27,7 +27,8 @@ import {
   Megaphone,
   Pin,
   ExternalLink,
-  Building2
+  Building2,
+  CheckSquare
 } from 'lucide-react';
 import { formatCurrency, formatSalaryOrStipend, getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 import { EditOrganizationModal } from './EditOrganizationModal';
@@ -102,6 +103,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     currentProfile?.role === 'owner' ||
     currentProfile?.role === 'superadmin' ||
     isVedotrixSuperadmin;
+
+  // Strictly gate Add Employee: Only Superadmin & HR (and Owner / Root Superadmin)
+  const canAddEmployee = isTopLeadership;
+
+  // Strictly scope meetings and notices to current organization (zero mock / zero multi-tenant leaks)
+  const orgMeetings = meetings.filter((m) => !currentOrg || m.orgId === currentOrg.id);
+  const orgNotices = notices.filter((n) => !currentOrg || n.orgId === currentOrg.id);
 
   const managedTeam = orgProfiles.filter((p) => p.managerId === currentProfile?.id);
   const isManager = !isTopLeadership && managedTeam.length > 0;
@@ -764,14 +772,24 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
 
           <div className="flex flex-col space-y-2.5 mt-3.5 flex-1 justify-center">
-            {/* Add Employee */}
-            <button
-              onClick={() => setIsAddStaffOpen(true)}
-              className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs transition text-left"
-            >
-              <UserPlus className="w-4 h-4 text-blue-600 shrink-0" />
-              <span>Add Employee</span>
-            </button>
+            {/* Add Employee - Strictly visible ONLY to Superadmin & HR (plus Owner / Root Superadmin) */}
+            {canAddEmployee ? (
+              <button
+                onClick={() => setIsAddStaffOpen(true)}
+                className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs transition text-left"
+              >
+                <UserPlus className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Add Employee</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setActiveTab('tasks')}
+                className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs transition text-left"
+              >
+                <CheckSquare className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>My Tasks</span>
+              </button>
+            )}
 
             {/* Apply Leave */}
             <button
@@ -791,14 +809,24 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <span>Mark Attendance</span>
             </button>
 
-            {/* Run Payroll */}
-            <button
-              onClick={() => setActiveTab('payroll')}
-              className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold text-xs transition text-left"
-            >
-              <Banknote className="w-4 h-4 text-purple-600 shrink-0" />
-              <span>Run Payroll</span>
-            </button>
+            {/* Run Payroll (Superadmin & HR) / My Payslips (Employees & Managers) */}
+            {canAddEmployee ? (
+              <button
+                onClick={() => setActiveTab('payroll')}
+                className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold text-xs transition text-left"
+              >
+                <Banknote className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>Run Payroll</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setActiveTab('payroll')}
+                className="w-full flex items-center space-x-2.5 px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold text-xs transition text-left"
+              >
+                <Banknote className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>My Payslips</span>
+              </button>
+            )}
 
             {/* View Reports */}
             <button
@@ -847,13 +875,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
 
             <div className="divide-y divide-slate-100 mt-2 space-y-2">
-              {meetings.length === 0 ? (
+              {orgMeetings.length === 0 ? (
                 <div className="py-8 text-center text-slate-400 text-xs">
                   <p className="font-semibold text-slate-500">No scheduled meetings.</p>
                   <p className="text-[10px] text-slate-400 mt-1">Sessions scheduled by leadership or managers appear here.</p>
                 </div>
               ) : (
-                meetings.slice(0, 3).map((meeting) => (
+                orgMeetings.slice(0, 3).map((meeting) => (
                   <div key={meeting.id} className="pt-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center space-x-2">
@@ -914,13 +942,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
 
             <div className="divide-y divide-slate-100 mt-2 space-y-2">
-              {notices.length === 0 ? (
+              {orgNotices.length === 0 ? (
                 <div className="py-8 text-center text-slate-400 text-xs">
                   <p className="font-semibold text-slate-500">Notice board is clear.</p>
                   <p className="text-[10px] text-slate-400 mt-1">Official circulars and announcements will appear here.</p>
                 </div>
               ) : (
-                notices.slice(0, 3).map((notice) => (
+                orgNotices.slice(0, 3).map((notice) => (
                   <div key={notice.id} className="pt-2.5">
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center space-x-1.5">
@@ -948,8 +976,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       </div>
 
-      {/* 5. Modal: Add New Employee Member */}
-      {isAddStaffOpen && (
+      {/* 5. Modal: Add New Employee Member (Only accessible to HR / Superadmin) */}
+      {isAddStaffOpen && canAddEmployee && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
           <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden my-6 border border-slate-100">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">

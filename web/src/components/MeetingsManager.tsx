@@ -65,8 +65,10 @@ export const MeetingsManager: React.FC = () => {
 
   const todayStr = getTodayISTDateString();
 
-  // Filtered Meetings
+  // Filtered Meetings strictly scoped to active organization
   const filteredMeetings = meetings.filter((m) => {
+    if (currentOrg && m.orgId && m.orgId !== currentOrg.id) return false;
+
     // Search query match
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();

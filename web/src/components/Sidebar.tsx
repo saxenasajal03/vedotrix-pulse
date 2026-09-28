@@ -78,6 +78,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     isVedotrixSuperadmin;
 
   const isTopLeadership = isHrOrSuperadmin;
+
+  const currentOrgMeetings = meetings.filter((m) => !currentOrg || m.orgId === currentOrg.id);
+  const currentOrgNotices = notices.filter((n) => !currentOrg || n.orgId === currentOrg.id);
   const managedEmployeesCount = orgProfiles.filter((p) => p.managerId === currentProfile?.id).length;
   const canAccessEmployees = isTopLeadership || managedEmployeesCount > 0;
 
@@ -129,13 +132,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'meetings',
       label: 'Meetings & Events',
       icon: Video,
-      badge: meetings.length > 0 ? `${meetings.length}` : null
+      badge: currentOrgMeetings.length > 0 ? `${currentOrgMeetings.length}` : null
     },
     {
       id: 'notices',
       label: 'Notice Board',
       icon: Megaphone,
-      badge: notices.some((n) => n.isPinned) ? '📌' : null
+      badge: currentOrgNotices.some((n) => n.isPinned) ? '📌' : null
     },
     {
       id: 'tasks',
