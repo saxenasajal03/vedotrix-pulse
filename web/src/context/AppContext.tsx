@@ -201,6 +201,7 @@ interface AppContextType {
   addChatReaction: (messageId: string, emoji: string) => Promise<void>;
   editChatMessage: (messageId: string, newText: string) => Promise<void>;
   deleteChatMessage: (messageId: string) => Promise<void>;
+  togglePinChatMessage: (messageId: string) => Promise<void>;
   activeChatChannel: string;
   setActiveChatChannel: (channel: string) => void;
 
@@ -4104,6 +4105,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Message Deleted 🗑️', 'Message was removed.', 'info');
   };
 
+  const togglePinChatMessage = async (messageId: string): Promise<void> => {
+    const targetMsg = chatMessages.find((m) => m.id === messageId);
+    if (!targetMsg) return;
+
+    const nextPinned = !targetMsg.isPinned;
+
+    setChatMessages((prev) => {
+      const updated = prev.map((m) =>
+        m.id === messageId ? { ...m, isPinned: nextPinned } : m
+      );
+      try {
+        localStorage.setItem('vdx_chat_messages', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_messages').update({ is_pinned: nextPinned }).eq('id', messageId);
+    } catch (e) {
+      console.warn('Supabase chat pin note:', e);
+    }
+
+    addToast(
+      nextPinned ? 'Message Pinned 📌' : 'Message Unpinned',
+      nextPinned ? 'Message pinned to channel.' : 'Message removed from pins.',
+      'info'
+    );
+  };
+
   const createChatChannel = async (data: {
     name: string;
     description: string;
@@ -4421,6 +4452,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addChatReaction,
         editChatMessage,
         deleteChatMessage,
+        togglePinChatMessage,
         activeChatChannel,
         setActiveChatChannel,
         holidays: isVedotrixSuperadmin ? holidays : holidays.filter((h) => h.orgId === currentOrg.id || !h.orgId),

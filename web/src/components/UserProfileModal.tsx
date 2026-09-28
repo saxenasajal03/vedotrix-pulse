@@ -14,8 +14,7 @@ import {
   Copy,
   ExternalLink,
   UserCheck,
-  Briefcase,
-  CreditCard
+  Briefcase
 } from 'lucide-react';
 import { formatISTDate } from '../lib/serialUtils';
 import { uploadFileToStorage } from '../lib/storage';
@@ -87,8 +86,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setIsUploadingPhoto(true);
 
     try {
-      // Create canvas compressed image
-      const compressImage = (file: File): Promise<string> => {
+      const compressImage = (f: File): Promise<string> => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (event) => {
@@ -126,7 +124,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             img.src = event.target?.result as string;
           };
           reader.onerror = reject;
-          reader.readAsDataURL(file);
+          reader.readAsDataURL(f);
         });
       };
 
@@ -157,7 +155,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md overflow-y-auto animate-in fade-in duration-150">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-hidden animate-in fade-in duration-150"
+    >
       {/* Hidden Photo Upload Input */}
       <input
         type="file"
@@ -167,24 +168,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         className="hidden"
       />
 
-      <div className="relative w-full max-w-md bg-[var(--bg-card)] border border-[var(--border-color)] rounded-3xl shadow-2xl overflow-hidden my-6 text-[var(--text-primary)]">
-        {/* Banner Cover */}
-        <div className="h-28 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-md bg-[var(--bg-card)] border border-[var(--border-color)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh] overflow-hidden text-[var(--text-primary)] animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200"
+      >
+        {/* Banner Cover with Sticky Touch-Friendly Close Button */}
+        <div className="h-24 sm:h-28 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative shrink-0">
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 p-1.5 rounded-full bg-black/30 hover:bg-black/50 text-white transition backdrop-blur-xs"
-            title="Close"
+            className="absolute top-3 right-3 p-2 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white transition backdrop-blur-xs shadow-md z-20"
+            title="Close Profile"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Profile Card Body */}
-        <div className="px-6 pb-6 pt-0 relative">
+        {/* Scrollable Profile Content */}
+        <div className="px-5 sm:px-6 pt-0 pb-4 overflow-y-auto flex-1 overscroll-contain">
           {/* Avatar with Camera Overlay */}
-          <div className="relative -mt-14 mb-3 inline-block">
-            <div className="w-24 h-24 rounded-full bg-[var(--bg-card)] p-1.5 shadow-xl border-2 border-[var(--border-color)]">
-              <div className="w-full h-full rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-2xl flex items-center justify-center overflow-hidden">
+          <div className="relative -mt-12 sm:-mt-14 mb-3 inline-block">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[var(--bg-card)] p-1.5 shadow-xl border-2 border-[var(--border-color)]">
+              <div className="w-full h-full rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-xl sm:text-2xl flex items-center justify-center overflow-hidden">
                 {profile.avatarUrl && profile.avatarUrl !== '/vedotrix-logo.png' ? (
                   <img
                     src={profile.avatarUrl}
@@ -201,14 +205,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             </div>
 
             {/* Active Indicator */}
-            <span className="w-4 h-4 rounded-full bg-emerald-500 absolute bottom-1.5 right-1.5 border-2 border-[var(--bg-card)]" />
+            <span
+              className={`w-3.5 h-3.5 rounded-full absolute bottom-1 right-1 border-2 border-[var(--bg-card)] ${
+                profile.isActive ? 'bg-emerald-500' : 'bg-slate-400'
+              }`}
+              title={profile.isActive ? 'Active Member' : 'Inactive'}
+            />
 
             {/* Camera Change Icon if Self */}
             {isSelf && (
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploadingPhoto}
-                className="absolute bottom-0 left-0 p-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg border-2 border-[var(--bg-card)] transition hover:scale-105 active:scale-95"
+                className="absolute bottom-0 left-0 p-1.5 sm:p-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg border-2 border-[var(--bg-card)] transition hover:scale-105 active:scale-95"
                 title="Change Profile Photo"
               >
                 <Camera className="w-3.5 h-3.5" />
@@ -217,43 +226,43 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           </div>
 
           {/* Name & Role Header */}
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-lg font-bold text-[var(--text-primary)]">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center space-x-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-bold text-[var(--text-primary)] truncate">
                   {profile.firstName} {profile.lastName}
                 </h2>
                 {isSelf && (
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-blue-500/20 text-blue-400 uppercase">
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-blue-500/20 text-blue-400 uppercase shrink-0">
                     You
                   </span>
                 )}
               </div>
-              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-0.5">
+              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-0.5 truncate">
                 {profile.designation || 'Team Member'}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1 mt-0.5">
-                <Briefcase className="w-3 h-3 text-slate-400" />
-                <span>{profile.department || 'Operations'}</span>
+              <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1 mt-0.5 truncate">
+                <Briefcase className="w-3 h-3 text-slate-400 shrink-0" />
+                <span className="truncate">{profile.department || 'Operations'}</span>
                 <span>•</span>
-                <span>{profileOrg.name}</span>
+                <span className="truncate">{profileOrg.name}</span>
               </p>
             </div>
 
-            <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-blue-600/10 text-blue-500 border border-blue-500/20 shrink-0">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-blue-600/10 text-blue-500 border border-blue-500/20 shrink-0">
               {profile.role}
             </span>
           </div>
 
           {/* Direct Message Action (if not viewing self) */}
           {!isSelf && onStartDirectMessage && (
-            <div className="mt-4">
+            <div className="mt-3.5">
               <button
                 onClick={() => {
                   onStartDirectMessage(profile.id);
                   onClose();
                 }}
-                className="w-full py-2 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center space-x-2"
+                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center space-x-2 active:scale-98"
               >
                 <MessageSquare className="w-4 h-4" />
                 <span>Send Direct Message</span>
@@ -262,7 +271,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           )}
 
           {isSelf && (
-            <div className="mt-4">
+            <div className="mt-3.5">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploadingPhoto}
@@ -334,34 +343,42 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               )}
             </div>
 
-            {/* Reporting Manager */}
-            {reportingManager && (
-              <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)]">
-                <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold mb-1.5">
-                  Reporting Manager
-                </span>
+            {/* Reporting Manager (Corporate Hierarchy Info) */}
+            <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)]">
+              <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold mb-1">
+                Designated Reporting Manager
+              </span>
+              {reportingManager ? (
                 <div className="flex items-center space-x-2.5">
                   <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 font-bold text-xs flex items-center justify-center shrink-0">
                     {reportingManager.firstName[0]}
                   </div>
-                  <div>
-                    <span className="font-bold text-xs block">
+                  <div className="min-w-0">
+                    <span className="font-bold text-xs block text-[var(--text-primary)] truncate">
                       {reportingManager.firstName} {reportingManager.lastName}
                     </span>
-                    <span className="text-[10px] text-[var(--text-muted)] block">
-                      {reportingManager.designation || reportingManager.role}
+                    <span className="text-[10px] text-[var(--text-muted)] block truncate">
+                      {reportingManager.designation || reportingManager.role} ({reportingManager.department || 'Operations'})
                     </span>
                   </div>
                 </div>
-              </div>
-            )}
+              ) : profile.role === 'owner' ? (
+                <span className="text-xs font-bold text-purple-400">
+                  👑 Organization Head (Root Leadership)
+                </span>
+              ) : (
+                <span className="text-xs font-medium text-[var(--text-muted)] italic">
+                  Direct Board / Management Leadership
+                </span>
+              )}
+            </div>
 
             {/* Direct Reports Count if Manager */}
             {directReports.length > 0 && (
               <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] flex items-center justify-between">
                 <span className="text-xs font-semibold text-[var(--text-secondary)]">Direct Team Reports</span>
                 <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-blue-500/20 text-blue-400">
-                  {directReports.length} Members
+                  {directReports.length} {directReports.length === 1 ? 'Member' : 'Members'}
                 </span>
               </div>
             )}
@@ -377,97 +394,17 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               </span>
             </div>
 
-            {/* Banking & Statutory Details (Filled by HR / Superadmin) */}
-            <div className="p-3.5 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold flex items-center gap-1.5">
-                  <CreditCard className="w-3.5 h-3.5 text-blue-500" />
-                  Banking & Statutory (PF / UAN)
-                </span>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-bold border border-emerald-500/20">
-                  {profile.pfNumber ? 'Active PF' : 'HR Managed'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {/* Bank Name */}
-                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)]">
-                  <span className="text-[10px] text-[var(--text-muted)] block">Bank Name</span>
-                  <span className="font-semibold text-[var(--text-primary)] block truncate text-xs mt-0.5">
-                    {profile.bankName || 'Not Configured'}
-                  </span>
-                </div>
-
-                {/* Account Number */}
-                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] flex items-center justify-between">
-                  <div className="min-w-0">
-                    <span className="text-[10px] text-[var(--text-muted)] block">Account Number</span>
-                    <span className="font-mono font-bold text-[var(--text-primary)] block truncate text-[11px] mt-0.5">
-                      {profile.accountNumber || 'Not Configured'}
-                    </span>
-                  </div>
-                  {profile.accountNumber && (
-                    <button
-                      onClick={() => copyToClipboard(profile.accountNumber || '', 'Account Number')}
-                      className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
-                      title="Copy Account Number"
-                    >
-                      {copiedField === 'Account Number' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                  )}
-                </div>
-
-                {/* IFSC Code */}
-                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] flex items-center justify-between">
-                  <div className="min-w-0">
-                    <span className="text-[10px] text-[var(--text-muted)] block">IFSC Code</span>
-                    <span className="font-mono font-bold text-indigo-400 block truncate text-[11px] mt-0.5">
-                      {profile.ifscCode || 'Not Configured'}
-                    </span>
-                  </div>
-                  {profile.ifscCode && (
-                    <button
-                      onClick={() => copyToClipboard(profile.ifscCode || '', 'IFSC Code')}
-                      className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
-                      title="Copy IFSC Code"
-                    >
-                      {copiedField === 'IFSC Code' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                  )}
-                </div>
-
-                {/* PF / UAN */}
-                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] flex items-center justify-between">
-                  <div className="min-w-0">
-                    <span className="text-[10px] text-[var(--text-muted)] block">PF Number (UAN)</span>
-                    <span className="font-mono font-bold text-emerald-500 block truncate text-[10px] mt-0.5">
-                      {profile.pfNumber || 'Not Configured'}
-                    </span>
-                  </div>
-                  {profile.pfNumber && (
-                    <button
-                      onClick={() => copyToClipboard(profile.pfNumber || '', 'PF Number')}
-                      className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
-                      title="Copy PF Number"
-                    >
-                      {copiedField === 'PF Number' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
             {/* Organization Info */}
-            <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-2">
+            <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-1.5">
               <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold">
                 Organization Details
               </span>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[var(--text-secondary)] flex items-center gap-1.5 font-semibold">
-                  <Building2 className="w-3.5 h-3.5 text-indigo-400" />
-                  {profileOrg.name}
+                <span className="text-[var(--text-secondary)] flex items-center gap-1.5 font-semibold truncate">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <span className="truncate">{profileOrg.name}</span>
                 </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/10 text-blue-400 font-bold">
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/10 text-blue-400 font-bold shrink-0">
                   {profileOrg.orgCode}
                 </span>
               </div>
@@ -479,17 +416,28 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   href={profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-blue-400 hover:underline flex items-center gap-1 font-semibold"
+                  className="text-blue-400 hover:underline flex items-center gap-1 font-semibold truncate"
                 >
-                  <ExternalLink className="w-3 h-3" />
-                  <span>{profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}</span>
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}</span>
                 </a>
-                <span className="text-[var(--text-muted)] font-mono">
+                <span className="text-[var(--text-muted)] font-mono shrink-0 ml-2">
                   {profileOrg.phone || (isBnkProfile ? '+91 6388043581' : '+91 80 4400 9900')}
                 </span>
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Modal Footer with Mobile-Friendly Dismiss */}
+        <div className="p-3 sm:p-4 border-t border-[var(--border-color)] bg-[var(--bg-card-subtle)] shrink-0 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold bg-[var(--bg-card)] hover:bg-[var(--border-color)] text-[var(--text-primary)] border border-[var(--border-color)] transition shadow-xs"
+          >
+            Close Profile
+          </button>
         </div>
       </div>
     </div>

@@ -62,6 +62,7 @@ const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
 export interface TeamChatProps {
   isWidgetMode?: boolean;
   onCloseWidget?: () => void;
+  onMinimizeWidget?: () => void;
   onMaximizeWidget?: () => void;
   onPopoutWindow?: () => void;
 }
@@ -69,6 +70,7 @@ export interface TeamChatProps {
 export const TeamChat: React.FC<TeamChatProps> = ({
   isWidgetMode = false,
   onCloseWidget,
+  onMinimizeWidget,
   onMaximizeWidget,
   onPopoutWindow
 }) => {
@@ -87,6 +89,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
     addChatReaction,
     editChatMessage,
     deleteChatMessage,
+    togglePinChatMessage,
     activeChatChannel,
     setActiveChatChannel,
     isVedotrixSuperadmin,
@@ -106,6 +109,10 @@ export const TeamChat: React.FC<TeamChatProps> = ({
   // Message inline edit state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageText, setEditingMessageText] = useState('');
+
+  // Mobile interactive action menu & pinned messages drawer state
+  const [activeActionMenuMsgId, setActiveActionMenuMsgId] = useState<string | null>(null);
+  const [showPinnedDrawer, setShowPinnedDrawer] = useState(false);
 
   // Phone & Widget responsive screen state: 'sidebar' or 'chat'
   const [mobileScreen, setMobileScreen] = useState<'sidebar' | 'chat'>('chat');
@@ -236,6 +243,11 @@ export const TeamChat: React.FC<TeamChatProps> = ({
           m.attachments?.some((a) => a.name.toLowerCase().includes(filterMessageQuery.toLowerCase()))
       )
     : activeChannelMessages;
+
+  const pinnedMessages = useMemo(
+    () => activeChannelMessages.filter((m) => m.isPinned),
+    [activeChannelMessages]
+  );
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -711,11 +723,13 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               {/* Close Button on Mobile / Widget */}
               {onCloseWidget && (
                 <button
+                  type="button"
                   onClick={onCloseWidget}
-                  title="Close Team Chat"
-                  className="p-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-rose-500 hover:border-rose-500/30 transition shadow-xs"
+                  title="Close Team Chat and Return to Dashboard"
+                  className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 font-semibold text-xs transition shadow-xs"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
+                  <span>Close</span>
                 </button>
               )}
             </div>
@@ -1144,7 +1158,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
             {/* Pop out to Standalone Browser Window */}
             <button
               onClick={handlePopoutToSeparateWindow}
-              className="p-1.5 hover:bg-[var(--bg-card-subtle)] rounded-lg transition text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              className="hidden sm:inline-flex p-1.5 hover:bg-[var(--bg-card-subtle)] rounded-lg transition text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               title="Open in Standalone Pop-out Window"
             >
               <ExternalLink className="w-4 h-4" />
@@ -1155,6 +1169,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               <>
                 {onMaximizeWidget && (
                   <button
+                    type="button"
                     onClick={onMaximizeWidget}
                     className="p-1.5 hover:bg-[var(--bg-card-subtle)] rounded-lg transition text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                     title="Maximize to Full Page"
@@ -1164,31 +1179,38 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 )}
                 {onCloseWidget && (
                   <button
+                    type="button"
                     onClick={onCloseWidget}
-                    className="p-1.5 hover:bg-[var(--bg-card-subtle)] rounded-lg transition text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    className="flex items-center space-x-1 px-2 py-1 rounded-lg hover:bg-rose-500/10 text-rose-500 border border-rose-500/20 transition text-xs font-semibold"
                     title="Minimize Widget"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-3.5 h-3.5" />
+                    <span className="text-[11px]">Close</span>
                   </button>
                 )}
               </>
             ) : (
               <>
-                <button
-                  onClick={onCloseWidget}
-                  className="hidden md:flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] text-xs font-semibold transition"
-                  title="Pop out as Floating Widget"
-                >
-                  <Minimize2 className="w-3.5 h-3.5" />
-                  <span className="text-[11px]">Widget Mode</span>
-                </button>
+                {(onMinimizeWidget || onCloseWidget) && (
+                  <button
+                    type="button"
+                    onClick={onMinimizeWidget || onCloseWidget}
+                    className="hidden md:flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] text-xs font-semibold transition"
+                    title="Pop out as Floating Widget"
+                  >
+                    <Minimize2 className="w-3.5 h-3.5" />
+                    <span className="text-[11px]">Widget Mode</span>
+                  </button>
+                )}
                 {onCloseWidget && (
                   <button
+                    type="button"
                     onClick={onCloseWidget}
-                    className="p-1.5 hover:bg-[var(--bg-card-subtle)] rounded-lg transition text-[var(--text-muted)] hover:text-rose-500 border border-[var(--border-color)] md:hidden"
-                    title="Close Team Chat"
+                    className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 font-semibold text-xs transition shadow-xs shrink-0"
+                    title="Close Team Chat & Return to Dashboard"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-3.5 h-3.5" />
+                    <span className="text-[11px]">Close</span>
                   </button>
                 )}
               </>
@@ -1245,6 +1267,69 @@ export const TeamChat: React.FC<TeamChatProps> = ({
           </div>
         )}
 
+        {/* Pinned Messages Banner */}
+        {pinnedMessages.length > 0 && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 px-3.5 py-1.5 flex items-center justify-between text-xs text-amber-500 shrink-0">
+            <div className="flex items-center space-x-2 truncate min-w-0">
+              <Pin className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+              <span className="font-bold text-xs text-[var(--text-primary)]">
+                {pinnedMessages.length} Pinned {pinnedMessages.length === 1 ? 'Message' : 'Messages'}
+              </span>
+              <span className="text-[11px] text-[var(--text-muted)] truncate hidden sm:inline">
+                • Latest: {pinnedMessages[pinnedMessages.length - 1].senderName}: "{pinnedMessages[pinnedMessages.length - 1].message.slice(0, 45)}..."
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPinnedDrawer(!showPinnedDrawer)}
+              className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold text-[10px] transition shrink-0 ml-2 shadow-xs"
+            >
+              {showPinnedDrawer ? 'Hide Pins' : 'View Pinned'}
+            </button>
+          </div>
+        )}
+
+        {/* Pinned Messages Collapsible Drawer */}
+        {showPinnedDrawer && pinnedMessages.length > 0 && (
+          <div className="max-h-56 overflow-y-auto bg-[var(--bg-card-subtle)] border-b border-[var(--border-color)] p-3 space-y-2 shrink-0 animate-in slide-in-from-top-2 duration-150">
+            <div className="flex items-center justify-between pb-1 border-b border-[var(--border-color)] text-[10px] font-bold uppercase text-[var(--text-muted)]">
+              <span className="flex items-center space-x-1">
+                <Pin className="w-3 h-3 text-amber-500" />
+                <span>Pinned in this conversation</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowPinnedDrawer(false)}
+                className="hover:text-[var(--text-primary)] p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {pinnedMessages.map((pm) => (
+              <div
+                key={pm.id}
+                className="p-2.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] flex items-start justify-between gap-2 text-xs"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center space-x-1.5 text-[11px]">
+                    <span className="font-bold text-[var(--text-primary)]">{pm.senderName}</span>
+                    <span className="text-[10px] text-[var(--text-muted)]">{formatISTTime(pm.createdAt)} IST</span>
+                  </div>
+                  <p className="text-[var(--text-secondary)] text-xs mt-0.5 line-clamp-2">{pm.message}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => togglePinChatMessage(pm.id)}
+                  className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 text-[10px] font-bold shrink-0 transition"
+                  title="Unpin message"
+                >
+                  Unpin
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Scrollable Message History Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {displayedMessages.length === 0 ? (
@@ -1272,6 +1357,10 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               const isMe = msg.senderId === currentProfile.id;
               const senderProfile = orgProfiles.find((p) => p.id === msg.senderId) || (isMe ? currentProfile : null);
               const avatar = senderProfile?.avatarUrl && senderProfile.avatarUrl !== '/vedotrix-logo.png' ? senderProfile.avatarUrl : msg.senderAvatar;
+              const msgCreatedTime = new Date(msg.createdAt).getTime();
+              const canEditMsg = isSuperOrHr || (isMe && (Date.now() - msgCreatedTime) <= 15 * 60 * 1000);
+              const canDeleteMsg = isSuperOrHr || isMe;
+              const isActionMenuOpen = activeActionMenuMsgId === msg.id;
 
               return (
                 <div
@@ -1307,7 +1396,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   {/* Bubble Content */}
                   <div className={`max-w-[85%] sm:max-w-lg ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
                     {/* Sender Meta */}
-                    <div className="flex items-center space-x-1.5 mb-1 px-1 text-[11px]">
+                    <div className="flex items-center space-x-1.5 mb-1 px-1 text-[11px] w-full">
                       <button
                         type="button"
                         onClick={() => handleOpenProfile(msg.senderId)}
@@ -1327,38 +1416,27 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                           (edited)
                         </span>
                       )}
+                      {msg.isPinned && (
+                        <span className="inline-flex items-center space-x-0.5 text-[9px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded-full border border-amber-500/20 ml-1">
+                          <Pin className="w-2.5 h-2.5" />
+                          <span>Pinned</span>
+                        </span>
+                      )}
 
-                      {/* Mobile quick actions for own message */}
-                      {(() => {
-                        const msgCreatedTime = new Date(msg.createdAt).getTime();
-                        const canEditMsg = isSuperOrHr || (isMe && (Date.now() - msgCreatedTime) <= 15 * 60 * 1000);
-                        const canDeleteMsg = isSuperOrHr || isMe;
-                        if (!canEditMsg && !canDeleteMsg) return null;
-                        return (
-                          <span className="flex md:hidden items-center space-x-1 ml-1.5">
-                            {canEditMsg && (
-                              <button
-                                type="button"
-                                onClick={() => handleStartEdit(msg)}
-                                className="p-0.5 text-[var(--text-muted)] hover:text-blue-500"
-                                title="Edit message"
-                              >
-                                <Pencil className="w-2.5 h-2.5" />
-                              </button>
-                            )}
-                            {canDeleteMsg && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteMessage(msg.id)}
-                                className="p-0.5 text-[var(--text-muted)] hover:text-rose-500"
-                                title="Delete message"
-                              >
-                                <Trash2 className="w-2.5 h-2.5" />
-                              </button>
-                            )}
-                          </span>
-                        );
-                      })()}
+                      {/* Touch-Friendly Action Trigger on Mobile & Desktop */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveActionMenuMsgId(isActionMenuOpen ? null : msg.id);
+                        }}
+                        className={`p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-subtle)] transition ml-auto ${
+                          isActionMenuOpen ? 'bg-[var(--bg-card-subtle)] text-blue-500 ring-1 ring-blue-500/30' : ''
+                        }`}
+                        title="Actions & Reactions (Tap to open)"
+                      >
+                        <MoreVertical className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
                     {/* Quoted Reply context if any */}
@@ -1506,66 +1584,177 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                         </div>
                       )}
 
-                      {/* Slack-style Floating Action Toolbar on Message Hover */}
-                      {(() => {
-                        const msgCreatedTime = new Date(msg.createdAt).getTime();
-                        const canEditMsg = isSuperOrHr || (isMe && (Date.now() - msgCreatedTime) <= 15 * 60 * 1000);
-                        const canDeleteMsg = isSuperOrHr || isMe;
-
-                        return (
-                          <div
-                            className={`absolute -top-3.5 ${
-                              isMe ? 'left-2' : 'right-2'
-                            } hidden group-hover:flex items-center space-x-0.5 bg-[var(--bg-card)] border border-[var(--border-color)] px-1 py-0.5 rounded-full shadow-lg z-10`}
+                      {/* Slack-style Floating Action Toolbar on Message Hover or Active Action State */}
+                      <div
+                        className={`absolute -top-3.5 ${
+                          isMe ? 'left-2' : 'right-2'
+                        } ${isActionMenuOpen ? 'flex' : 'hidden md:group-hover:flex'} items-center space-x-0.5 bg-[var(--bg-card)] border border-[var(--border-color)] px-1.5 py-0.5 rounded-full shadow-xl z-20 animate-in fade-in zoom-in-95 duration-100`}
+                      >
+                        {['👍', '❤️', '🚀', '🎉', '🔥', '😂', '👏', '👀'].map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => {
+                              addChatReaction(msg.id, emoji);
+                              setActiveActionMenuMsgId(null);
+                            }}
+                            className="p-1 hover:bg-[var(--bg-card-subtle)] active:scale-125 rounded text-xs transition"
+                            title={`React with ${emoji}`}
                           >
-                            {['👍', '❤️', '🚀', '🎉', '🔥'].map((emoji) => (
-                              <button
-                                key={emoji}
-                                onClick={() => addChatReaction(msg.id, emoji)}
-                                className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-xs transition"
-                                title={`React with ${emoji}`}
-                              >
-                                {emoji}
-                              </button>
-                            ))}
-                            <button
-                              onClick={() =>
-                                setReplyingTo({ id: msg.id, senderName: msg.senderName, snippet: msg.message })
-                              }
-                              className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
-                              title="Reply in thread"
-                            >
-                              <CornerUpLeft className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={() => copyMessageText(msg.message)}
-                              className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
-                              title="Copy text"
-                            >
-                              <Copy className="w-3 h-3" />
-                            </button>
-                            {canEditMsg && (
-                              <button
-                                onClick={() => handleStartEdit(msg)}
-                                className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
-                                title="Edit message (within 15 mins)"
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                            )}
-                            {canDeleteMsg && (
-                              <button
-                                onClick={() => handleDeleteMessage(msg.id)}
-                                className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-rose-500 transition"
-                                title="Delete message"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })()}
+                            {emoji}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplyingTo({ id: msg.id, senderName: msg.senderName, snippet: msg.message });
+                            setActiveActionMenuMsgId(null);
+                          }}
+                          className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
+                          title="Reply in thread"
+                        >
+                          <CornerUpLeft className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            copyMessageText(msg.message);
+                            setActiveActionMenuMsgId(null);
+                          }}
+                          className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
+                          title="Copy text"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            togglePinChatMessage(msg.id);
+                            setActiveActionMenuMsgId(null);
+                          }}
+                          className={`p-1 hover:bg-[var(--bg-card-subtle)] rounded transition ${
+                            msg.isPinned ? 'text-amber-500' : 'text-[var(--text-muted)] hover:text-amber-500'
+                          }`}
+                          title={msg.isPinned ? 'Unpin message' : 'Pin message'}
+                        >
+                          <Pin className="w-3 h-3" />
+                        </button>
+                        {canEditMsg && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleStartEdit(msg);
+                              setActiveActionMenuMsgId(null);
+                            }}
+                            className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
+                            title="Edit message (within 15 mins)"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        )}
+                        {canDeleteMsg && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleDeleteMessage(msg.id);
+                              setActiveActionMenuMsgId(null);
+                            }}
+                            className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-rose-500 transition"
+                            title="Delete message"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Mobile Touch Action Drawer when message is tapped */}
+                    {isActionMenuOpen && (
+                      <div className="md:hidden mt-2 w-full p-2.5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)] shadow-xl animate-in fade-in slide-in-from-top-1 duration-150 space-y-2">
+                        <div className="flex items-center justify-between gap-1 overflow-x-auto pb-1.5 border-b border-[var(--border-color)] no-scrollbar">
+                          {['👍', '❤️', '🚀', '🎉', '🔥', '😂', '👏', '👀'].map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => {
+                                addChatReaction(msg.id, emoji);
+                                setActiveActionMenuMsgId(null);
+                              }}
+                              className="p-1.5 hover:bg-[var(--bg-card-subtle)] active:scale-125 rounded-xl text-base transition shrink-0"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-5 gap-1 text-center text-[10px] font-semibold text-[var(--text-secondary)]">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReplyingTo({ id: msg.id, senderName: msg.senderName, snippet: msg.message });
+                              setActiveActionMenuMsgId(null);
+                            }}
+                            className="flex flex-col items-center p-1.5 rounded-xl hover:bg-[var(--bg-card-subtle)] active:bg-blue-500/10 hover:text-blue-500 transition"
+                          >
+                            <CornerUpLeft className="w-4 h-4 mb-0.5 text-blue-500" />
+                            <span>Reply</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              copyMessageText(msg.message);
+                              setActiveActionMenuMsgId(null);
+                            }}
+                            className="flex flex-col items-center p-1.5 rounded-xl hover:bg-[var(--bg-card-subtle)] hover:text-blue-500 transition"
+                          >
+                            <Copy className="w-4 h-4 mb-0.5" />
+                            <span>Copy</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              togglePinChatMessage(msg.id);
+                              setActiveActionMenuMsgId(null);
+                            }}
+                            className={`flex flex-col items-center p-1.5 rounded-xl hover:bg-[var(--bg-card-subtle)] transition ${
+                              msg.isPinned ? 'text-amber-500' : 'hover:text-amber-500'
+                            }`}
+                          >
+                            <Pin className="w-4 h-4 mb-0.5" />
+                            <span>{msg.isPinned ? 'Unpin' : 'Pin'}</span>
+                          </button>
+                          {canEditMsg ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleStartEdit(msg);
+                                setActiveActionMenuMsgId(null);
+                              }}
+                              className="flex flex-col items-center p-1.5 rounded-xl hover:bg-[var(--bg-card-subtle)] active:bg-blue-500/10 text-blue-400 hover:text-blue-500 transition"
+                            >
+                              <Pencil className="w-4 h-4 mb-0.5" />
+                              <span>Edit</span>
+                            </button>
+                          ) : (
+                            <div />
+                          )}
+                          {canDeleteMsg ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleDeleteMessage(msg.id);
+                                setActiveActionMenuMsgId(null);
+                              }}
+                              className="flex flex-col items-center p-1.5 rounded-xl hover:bg-rose-500/10 text-rose-500 transition"
+                            >
+                              <Trash2 className="w-4 h-4 mb-0.5" />
+                              <span>Delete</span>
+                            </button>
+                          ) : (
+                            <div />
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Reaction Badges */}
                     {msg.reactions && msg.reactions.length > 0 && (

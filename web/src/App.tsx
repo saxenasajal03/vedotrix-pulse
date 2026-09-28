@@ -167,6 +167,10 @@ const MainLayout: React.FC = () => {
               onCloseWidget={() => {
                 setActiveTab('dashboard');
               }}
+              onMinimizeWidget={() => {
+                setIsFloatingChatWidgetOpen(true);
+                setActiveTab('dashboard');
+              }}
             />
           )}
 

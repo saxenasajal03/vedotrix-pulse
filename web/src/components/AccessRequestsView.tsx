@@ -21,6 +21,7 @@ import {
   Crown
 } from 'lucide-react';
 import { AccessRequest, Profile } from '../types';
+import { OrganizationTree } from './OrganizationTree';
 
 export const AccessRequestsView: React.FC = () => {
   const {
@@ -62,9 +63,9 @@ export const AccessRequestsView: React.FC = () => {
   // Requests submitted by the current user
   const myRequests = accessRequests.filter((r) => r.requesterId === currentProfile.id);
 
-  // Available managers in the organization for hierarchy assignment
+  // Available managers in the organization for hierarchy assignment (Superadmins, Owner, Managers, HR)
   const availableManagers = orgProfiles.filter(
-    (p) => p.role === 'manager' || p.role === 'owner' || p.role === 'hr'
+    (p) => p.role === 'manager' || p.role === 'owner' || p.role === 'hr' || p.role === 'superadmin'
   );
 
   const handleCreateRequest = async (e: React.FormEvent) => {
@@ -373,92 +374,28 @@ export const AccessRequestsView: React.FC = () => {
       {/* TAB 3: REPORTING STRUCTURE & TEAM TREE */}
       {activeSubTab === 'hierarchy' && (
         <div className="space-y-6">
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
-            <span>
-              <strong>Organization Team Tree:</strong> Employees are grouped under their designated reporting managers for approvals.
-            </span>
-            <span className="text-[11px] text-indigo-400 font-mono">
-              Total Staff: {orgProfiles.length}
-            </span>
-          </div>
-
-          {/* Hierarchy Cards Grouped by Managers */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {availableManagers.map((mgr) => {
-              const directReports = orgProfiles.filter((p) => p.managerId === mgr.id && p.id !== mgr.id);
-
-              return (
-                <div
-                  key={mgr.id}
-                  className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl space-y-4"
-                >
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-sm border border-cyan-500/30">
-                      {mgr.firstName[0]}
-                    </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-white text-sm">
-                          {mgr.firstName} {mgr.lastName}
-                        </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/40 uppercase">
-                          {mgr.role === 'owner' ? 'Org Owner' : 'Manager'}
-                        </span>
-                      </div>
-                      <span className="text-xs text-slate-400">
-                        {mgr.designation} • {mgr.department}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                      <span>Direct Report Team ({directReports.length})</span>
-                      <span className="text-cyan-400">Approvals Authority</span>
-                    </span>
-
-                    {directReports.length === 0 ? (
-                      <p className="text-xs text-slate-500 italic py-2">
-                        No team members currently assigned to report to this manager.
-                      </p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {directReports.map((emp) => (
-                          <div
-                            key={emp.id}
-                            className="p-2.5 bg-slate-950 rounded-lg border border-slate-800/80 flex items-center justify-between text-xs"
-                          >
-                            <div>
-                              <span className="font-semibold text-white block">
-                                {emp.firstName} {emp.lastName}
-                              </span>
-                              <span className="text-[10px] text-slate-400">
-                                {emp.designation} ({emp.department})
-                              </span>
-                            </div>
-
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                              Reports Here
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {/* Complete Visual Organization Hierarchy Tree */}
+          <OrganizationTree />
 
           {/* Unassigned Staff / Reassignment Section */}
           <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl space-y-4">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-              <Users className="w-4 h-4 text-indigo-400" />
-              <span>Designate / Update Staff Reporting Managers</span>
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
+                  <Users className="w-4 h-4 text-cyan-400" />
+                  <span>Approvals Routing & Direct Management Roster</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Designate or update reporting lines. All access requests & approvals route directly to the designated manager.
+                </p>
+              </div>
+              <span className="text-[11px] text-cyan-400 font-mono shrink-0">
+                Total Staff: {orgProfiles.length} Members
+              </span>
+            </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <table className="w-full text-xs text-left min-w-[640px]">
                 <thead className="bg-slate-950 text-slate-400 uppercase font-semibold text-[10px] border-b border-slate-800">
                   <tr>
                     <th className="p-3">Staff Member</th>
@@ -469,39 +406,50 @@ export const AccessRequestsView: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
                   {orgProfiles.map((emp) => {
-                    const currentMgr = availableManagers.find((m) => m.id === emp.managerId);
+                    const currentMgr = orgProfiles.find((m) => m.id === emp.managerId);
                     return (
                       <tr key={emp.id} className="hover:bg-slate-800/40">
                         <td className="p-3 font-semibold text-white">
-                          {emp.firstName} {emp.lastName}
+                          <div className="flex items-center space-x-2">
+                            <img
+                              src={emp.avatarUrl || '/vedotrix-logo.png'}
+                              alt=""
+                              className="w-6 h-6 rounded-full object-cover border border-slate-700"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src = '/vedotrix-logo.png';
+                              }}
+                            />
+                            <span>{emp.firstName} {emp.lastName}</span>
+                          </div>
                         </td>
                         <td className="p-3 text-slate-400">
-                          {emp.designation} ({emp.department})
+                          <span className="block text-slate-300">{emp.designation || 'Team Member'}</span>
+                          <span className="text-[10px] text-slate-500">{emp.department || 'Operations'}</span>
                         </td>
                         <td className="p-3">
                           {(isOwner || isSuperadmin) ? (
                             <select
                               value={emp.managerId || ''}
                               onChange={(e) => updateEmployeeManager(emp.id, e.target.value || null)}
-                              className="px-2.5 py-1 bg-slate-950 border border-slate-700 rounded text-xs text-white focus:outline-none focus:border-cyan-500"
+                              className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-cyan-500 w-full max-w-[280px]"
                             >
-                              <option value="">-- No Direct Manager (Direct to Owner) --</option>
+                              <option value="">-- No Direct Manager (Direct to Owner / Board) --</option>
                               {availableManagers
                                 .filter((m) => m.id !== emp.id)
                                 .map((m) => (
                                   <option key={m.id} value={m.id}>
-                                    {m.firstName} {m.lastName} ({m.designation})
+                                    {m.firstName} {m.lastName} — {m.designation || m.role} ({m.department || 'Operations'})
                                   </option>
                                 ))}
                             </select>
                           ) : (
-                            <span className="text-slate-300">
-                              {currentMgr ? `${currentMgr.firstName} ${currentMgr.lastName}` : 'Organization Owner'}
+                            <span className="text-slate-300 font-medium">
+                              {currentMgr ? `${currentMgr.firstName} ${currentMgr.lastName} (${currentMgr.designation || currentMgr.role})` : emp.role === 'owner' ? '👑 Organization Head' : 'Direct Management'}
                             </span>
                           )}
                         </td>
                         <td className="p-3 text-right text-[10px] font-mono text-cyan-400">
-                          {currentMgr ? `→ Routes to ${currentMgr.firstName}` : '→ Routes to Owner'}
+                          {currentMgr ? `→ Routes to ${currentMgr.firstName} ${currentMgr.lastName}` : emp.role === 'owner' ? 'Root Authority' : '→ Routes to Owner'}
                         </td>
                       </tr>
                     );
