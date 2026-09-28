@@ -23,7 +23,8 @@ import {
   NoticeItem,
   ChatMessage,
   ChatChannel,
-  ChatAttachment
+  ChatAttachment,
+  Holiday
 } from '../types';
 import { sendDeviceNotification } from '../lib/deviceNotifications';
 import {
@@ -36,7 +37,8 @@ import {
   INITIAL_STANDUPS,
   INITIAL_PAYROLL,
   INITIAL_NOTIFICATIONS,
-  INITIAL_BROADCASTS
+  INITIAL_BROADCASTS,
+  INITIAL_HOLIDAYS
 } from '../lib/mockData';
 import { generateVerificationToken, generateUUID, getTodayISTDateString, formatISTTime, formatISTDateTime } from '../lib/serialUtils';
 import {
@@ -193,8 +195,16 @@ interface AppContextType {
     replyTo?: { id: string; snippet: string }
   ) => Promise<ChatMessage>;
   addChatReaction: (messageId: string, emoji: string) => Promise<void>;
+  editChatMessage: (messageId: string, newText: string) => Promise<void>;
+  deleteChatMessage: (messageId: string) => Promise<void>;
   activeChatChannel: string;
   setActiveChatChannel: (channel: string) => void;
+
+  // Holiday Calendar (Official Organization Schedule)
+  holidays: Holiday[];
+  addHoliday: (holidayData: Omit<Holiday, 'id' | 'orgId'>) => Promise<Holiday>;
+  updateHoliday: (id: string, updates: Partial<Holiday>) => Promise<void>;
+  deleteHoliday: (id: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -204,16 +214,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem('vdx_auth_token') !== null;
   });
-
-  // Clean stale local storage caches to make sure live Supabase DB is the absolute single source of truth
-  useEffect(() => {
-    const keysToClean = [
-      'vdx_profiles', 'vdx_office_locations',
-      'vdx_offers', 'vdx_attendance', 'vdx_tasks', 'vdx_standups',
-      'vdx_payroll', 'vdx_access_requests', 'vdx_leave_requests'
-    ];
-    keysToClean.forEach((k) => localStorage.removeItem(k));
-  }, []);
 
   // Theme state
   const [theme, setThemeState] = useState<ThemeMode>(() => {
@@ -251,26 +251,101 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [organizations, setOrganizations] = useState<Organization[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_organizations');
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch {}
     return INITIAL_ORGS;
   });
   const [currentOrgId, setCurrentOrgId] = useState<string>(() => {
-    return localStorage.getItem('vdx_current_org_id') || '00000000-0000-0000-0000-000000000001';
+    return localStorage.getItem('vdx_current_org_id') || '11111111-2222-3333-4444-555555555555';
   });
   const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
-    return localStorage.getItem('vdx_current_profile_id') || '00000000-0000-0000-0000-000000000003';
+    return localStorage.getItem('vdx_current_profile_id') || '723d4f27-051a-4f30-93b3-1e1312b0c520';
   });
   
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [officeLocationsList, setOfficeLocationsList] = useState<OfficeLocation[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_profiles');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_PROFILES;
+  });
+  const [officeLocationsList, setOfficeLocationsList] = useState<OfficeLocation[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_office_locations');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_OFFICES;
+  });
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
-  const [offerLetters, setOfferLetters] = useState<OfferLetter[]>([]);
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [standups, setStandups] = useState<DailyStandup[]>([]);
-  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [offerLetters, setOfferLetters] = useState<OfferLetter[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_offers');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_OFFERS;
+  });
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_attendance');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [tasks, setTasks] = useState<TaskItem[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_tasks');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [standups, setStandups] = useState<DailyStandup[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_standups');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_payroll');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_leave_requests');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [notifications, setNotifications] = useState<InAppNotification[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_notifications');
@@ -280,6 +355,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
   const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>([]);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_holidays');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_HOLIDAYS;
+  });
 
   // Meetings & Events State
   const [meetings, setMeetings] = useState<MeetingEvent[]>(() => {
@@ -491,9 +576,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             slug: o.slug,
             orgCode: o.org_code,
             industry: o.industry || 'Tech',
-            website: o.website || 'https://vedotrix.com',
-            address: o.address || '',
-            phone: o.phone || '',
+            website: o.website || (o.org_code === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555' ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com'),
+            address: o.address || (o.org_code === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555' ? 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001' : ''),
+            phone: o.phone || (o.org_code === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555' ? '+91 6388043581' : ''),
             logoUrl: o.logo_url || '/vedotrix-logo.png',
             settings: o.settings || {
               workHoursPerDay: 8,
@@ -509,25 +594,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         if (!errProf && cloudProfiles) {
-          const mappedProfiles: Profile[] = cloudProfiles.map((p: any) => ({
-            id: p.id,
-            orgId: p.org_id,
-            email: p.email,
-            firstName: p.first_name,
-            lastName: p.last_name || '',
-            phone: p.phone || '',
-            role: p.role,
-            designation: p.designation || 'Team Member',
-            department: p.department || 'Operations',
-            joiningDate: p.joining_date || new Date().toISOString().split('T')[0],
-            baseSalary: p.base_salary !== null && p.base_salary !== undefined ? Number(p.base_salary) : 0,
-            avatarUrl: p.avatar_url || '/vedotrix-logo.png',
-            isActive: p.is_active ?? true,
-            managerId: p.manager_id || undefined,
-            passwordHash: p.password_hash || 'Vedotrix@2026',
-            modulesAccess: p.modules_access || ['attendance', 'tasks', 'standups']
-          }));
+          const mappedProfiles: Profile[] = cloudProfiles.map((p: any) => {
+            const baseline = INITIAL_PROFILES.find((ip) => ip.id === p.id || (ip.email && ip.email.toLowerCase() === p.email?.toLowerCase()));
+            const safeJoiningDate = p.joining_date || p.joiningDate || baseline?.joiningDate || '2026-09-09';
+            
+            // Retrieve statutory banking details from org settings, local storage, or baseline
+            let savedStatutory: any = null;
+            try {
+              const localStat = localStorage.getItem(`vdx_statutory_${p.id}`);
+              if (localStat) savedStatutory = JSON.parse(localStat);
+            } catch {}
+            const orgSettingsStat = cloudOrgs?.find((o: any) => o.id === p.org_id)?.settings?.employeeStatutory?.[p.id];
+            const statutory = savedStatutory || orgSettingsStat || {};
+
+            return {
+              id: p.id,
+              orgId: p.org_id,
+              email: p.email,
+              firstName: p.first_name,
+              lastName: p.last_name || '',
+              phone: p.phone || '',
+              role: p.role,
+              designation: p.designation || 'Team Member',
+              department: p.department || 'Operations',
+              joiningDate: safeJoiningDate,
+              baseSalary: p.base_salary !== null && p.base_salary !== undefined ? Number(p.base_salary) : 0,
+              avatarUrl: p.avatar_url || '/vedotrix-logo.png',
+              isActive: p.is_active ?? true,
+              managerId: p.manager_id || undefined,
+              passwordHash: p.password_hash || 'Vedotrix@2026',
+              modulesAccess: p.modules_access || ['attendance', 'tasks', 'standups'],
+              bankName: statutory.bankName ?? baseline?.bankName,
+              accountNumber: statutory.accountNumber ?? baseline?.accountNumber,
+              ifscCode: statutory.ifscCode ?? baseline?.ifscCode,
+              pfNumber: statutory.pfNumber ?? baseline?.pfNumber
+            };
+          });
           setProfiles(mappedProfiles);
+          try {
+            localStorage.setItem('vdx_profiles', JSON.stringify(mappedProfiles));
+          } catch {}
         }
 
         if (!errOff && cloudOffices) {
@@ -542,6 +648,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             isActive: l.is_active ?? true
           }));
           setOfficeLocationsList(mappedOffices);
+          try {
+            localStorage.setItem('vdx_office_locations', JSON.stringify(mappedOffices));
+          } catch {}
         }
 
         if (!errOffers && cloudOffers) {
@@ -579,6 +688,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             };
           });
           setOfferLetters(mappedOffers);
+          try {
+            localStorage.setItem('vdx_offers', JSON.stringify(mappedOffers));
+          } catch {}
         }
 
         if (!errAtt && cloudAttendance) {
@@ -746,6 +858,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             replyToMessageId: m.reply_to_message_id,
             replyToSnippet: m.reply_to_snippet,
             isPinned: m.is_pinned ?? false,
+            isEdited: m.is_edited ?? false,
+            editedAt: m.edited_at,
             createdAt: m.created_at
           }));
           setChatMessages(mappedMessages);
@@ -865,6 +979,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                       message: m.message,
                       reactions: Array.isArray(m.reactions) ? m.reactions : [],
                       isPinned: m.is_pinned ?? false,
+                      isEdited: m.is_edited ?? true,
+                      editedAt: m.edited_at,
                       attachments: Array.isArray(m.attachments) ? m.attachments : msg.attachments
                     }
                   : msg
@@ -1239,6 +1355,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               });
           }
 
+          const existingProf = profiles.find((p) => p.id === verifiedUser.user_id) || INITIAL_PROFILES.find((p) => p.id === verifiedUser.user_id || (p.email && p.email.toLowerCase() === cleanEmail));
+          const safeJoiningDate = verifiedUser.joining_date || verifiedUser.joiningDate || existingProf?.joiningDate || '2026-09-09';
+
           setProfiles((prev) => {
             const index = prev.findIndex((p) => p.id === verifiedUser.user_id);
             if (index >= 0) {
@@ -1252,12 +1371,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 lastName: verifiedUser.last_name || '',
                 designation: verifiedUser.designation || 'Team Member',
                 department: verifiedUser.department || 'Operations',
+                joiningDate: safeJoiningDate,
                 modulesAccess: verifiedUser.modules_access || ['attendance', 'tasks', 'standups', 'leaves'],
-                managerId: verifiedUser.manager_id
+                managerId: verifiedUser.manager_id,
+                avatarUrl: verifiedUser.avatar_url || updated[index].avatarUrl || '/vedotrix-logo.png'
               };
+              try {
+                localStorage.setItem('vdx_profiles', JSON.stringify(updated));
+              } catch {}
               return updated;
             }
-            return [
+            const newProfiles = [
               ...prev,
               {
                 id: verifiedUser.user_id,
@@ -1268,7 +1392,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 role: verifiedUser.role,
                 designation: verifiedUser.designation || 'Team Member',
                 department: verifiedUser.department || 'Operations',
-                joiningDate: new Date().toISOString().split('T')[0],
+                joiningDate: safeJoiningDate,
                 baseSalary: 50000,
                 avatarUrl: verifiedUser.avatar_url || '/vedotrix-logo.png',
                 isActive: true,
@@ -1277,6 +1401,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 modulesAccess: verifiedUser.modules_access || ['attendance', 'tasks', 'standups', 'leaves']
               }
             ];
+            try {
+              localStorage.setItem('vdx_profiles', JSON.stringify(newProfiles));
+            } catch {}
+            return newProfiles;
           });
 
           if (verifiedUser.role === 'superadmin') {
@@ -1382,14 +1510,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const fallbackOrg: Organization = {
     id: currentOrgId || '00000000-0000-0000-0000-000000000001',
-    name: 'Vedotrix Technologies Global',
-    slug: 'vedotrix',
-    orgCode: 'VDX',
-    industry: 'Tech',
-    website: 'https://vedotrix.com',
-    address: 'Vedotrix Corporate Tower, Bangalore, India',
-    phone: '+91 80 4400 9900',
-    logoUrl: '/vedotrix-logo.png',
+    name: 'BNK Digital',
+    slug: 'bnk-digital',
+    orgCode: 'BNK',
+    industry: 'Digital Marketing',
+    website: 'https://bnkdigital.com',
+    address: 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001',
+    phone: '+91 6388043581',
+    logoUrl: 'https://cqevzpvyqvckvenutuzz.supabase.co/storage/v1/object/public/organization-logos/org_logo_1790444633928_a75b1980-ad73-4aa6-8391-c248a07e1b0d.jpg',
     status: 'active',
     settings: {
       workHoursPerDay: 8,
@@ -1404,42 +1532,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const defaultFallbackProfile: Profile = {
-    id: currentProfileId || '00000000-0000-0000-0000-000000000003',
-    orgId: currentOrgId || '00000000-0000-0000-0000-000000000001',
-    email: 'user@vedotrix.com',
-    firstName: 'User',
-    lastName: '',
-    role: 'employee',
-    designation: 'Staff',
-    department: 'General',
-    joiningDate: '2026-01-01',
-    baseSalary: 0,
+  const defaultFallbackProfile: Profile = INITIAL_PROFILES[0] || {
+    id: currentProfileId || '723d4f27-051a-4f30-93b3-1e1312b0c520',
+    orgId: currentOrgId || '11111111-2222-3333-4444-555555555555',
+    email: 'chiefhead.interndesire@gmail.com',
+    firstName: 'Sajal',
+    lastName: 'Saxena',
+    role: 'superadmin',
+    designation: 'Founder & Director',
+    department: 'Executive Leadership',
+    joiningDate: '2026-10-01',
+    baseSalary: 150000,
     avatarUrl: '/vedotrix-logo.png',
     isActive: true,
-    modulesAccess: ['attendance', 'tasks', 'standups', 'offers', 'leaves']
+    modulesAccess: ['all']
   };
 
-  const currentOrg = organizations.find((o) => o.id === currentOrgId) || organizations[0] || fallbackOrg;
-  const orgProfiles = profiles.filter((p) => p.orgId === currentOrg?.id);
+  const authEmail = (typeof localStorage !== 'undefined' ? localStorage.getItem('vdx_auth_email') : null)?.toLowerCase();
+  const authProfileId = typeof localStorage !== 'undefined' ? localStorage.getItem('vdx_current_profile_id') : null;
+  const targetProfileId = currentProfileId || authProfileId;
+
   const currentProfile: Profile =
-    orgProfiles.find((p) => p.id === currentProfileId) ||
-    profiles.find((p) => p.id === currentProfileId) ||
-    orgProfiles[0] ||
+    profiles.find((p) => p.id === targetProfileId) ||
+    (authEmail ? profiles.find((p) => p.email.toLowerCase() === authEmail) : undefined) ||
+    INITIAL_PROFILES.find((p) => p.id === targetProfileId) ||
+    (authEmail ? INITIAL_PROFILES.find((p) => p.email.toLowerCase() === authEmail) : undefined) ||
     profiles[0] ||
+    INITIAL_PROFILES[0] ||
     defaultFallbackProfile;
+
+  const authOrgId = typeof localStorage !== 'undefined' ? localStorage.getItem('vdx_current_org_id') : null;
+  const effectiveOrgId = currentProfile?.orgId || authOrgId || currentOrgId || '11111111-2222-3333-4444-555555555555';
+
+  const currentOrg =
+    organizations.find((o) => o.id === effectiveOrgId) ||
+    organizations.find((o) => o.id === currentOrgId) ||
+    organizations[0] ||
+    fallbackOrg;
+
+  const orgProfiles = profiles.filter((p) => p.orgId === currentOrg?.id);
   
   // Office locations strictly for active tenant with fallback
   const officeLocations = officeLocationsList.filter((o) => o.orgId === currentOrg?.id);
   const effectiveOfficeLocations: OfficeLocation[] = officeLocations.length > 0 ? officeLocations : [
     {
-      id: '00000000-0000-0000-0000-000000000002',
-      orgId: currentOrg?.id || '00000000-0000-0000-0000-000000000001',
-      name: `${currentOrg?.name || 'Corporate'} Head Office`,
-      latitude: 12.9352,
-      longitude: 77.6946,
+      id: `${currentOrg?.id || 'org'}-office-default`,
+      orgId: currentOrg?.id || '11111111-2222-3333-4444-555555555555',
+      name: `${currentOrg?.name || 'Main'} Office`,
+      latitude: currentOrg?.id === '11111111-2222-3333-4444-555555555555' ? 26.8524 : 12.9352,
+      longitude: currentOrg?.id === '11111111-2222-3333-4444-555555555555' ? 80.9998 : 77.6946,
       radiusMeters: 200,
-      address: currentOrg?.address || 'Corporate Headquarters',
+      address: currentOrg?.address || (currentOrg?.id === '11111111-2222-3333-4444-555555555555' ? 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001' : 'Corporate Headquarters'),
       isActive: true
     }
   ];
@@ -1915,6 +2058,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (updates.modulesAccess !== undefined) supabaseUpdates.modules_access = updates.modulesAccess;
       if (updates.avatarUrl !== undefined) supabaseUpdates.avatar_url = updates.avatarUrl;
+      // Handle statutory banking details via org settings JSONB & localStorage
+      if (updates.bankName !== undefined || updates.accountNumber !== undefined || updates.ifscCode !== undefined || updates.pfNumber !== undefined) {
+        try {
+          const targetProf = profiles.find((p) => p.id === profileId);
+          const statutory = {
+            bankName: updates.bankName !== undefined ? updates.bankName : targetProf?.bankName,
+            accountNumber: updates.accountNumber !== undefined ? updates.accountNumber : targetProf?.accountNumber,
+            ifscCode: updates.ifscCode !== undefined ? updates.ifscCode : targetProf?.ifscCode,
+            pfNumber: updates.pfNumber !== undefined ? updates.pfNumber : targetProf?.pfNumber
+          };
+          localStorage.setItem(`vdx_statutory_${profileId}`, JSON.stringify(statutory));
+
+          const targetOrgId = targetProf?.orgId || currentOrg.id;
+          const targetOrg = organizations.find((o) => o.id === targetOrgId) || currentOrg;
+          const curSettings = (targetOrg.settings || {}) as any;
+          const employeeStatutory = { ...(curSettings.employeeStatutory || {}), [profileId]: statutory };
+          const updatedSettings = { ...curSettings, employeeStatutory };
+          client.from('organizations').update({ settings: updatedSettings }).eq('id', targetOrgId).then();
+        } catch (statErr) {
+          console.warn('Statutory sync note:', statErr);
+        }
+      }
+
+      try {
+        const stored = localStorage.getItem('vdx_profiles');
+        const list = stored ? JSON.parse(stored) : profiles;
+        const updatedList = list.map((p: Profile) => (p.id === profileId ? { ...p, ...updates } : p));
+        localStorage.setItem('vdx_profiles', JSON.stringify(updatedList));
+      } catch {}
 
       const { error } = await client.from('profiles').update(supabaseUpdates).eq('id', profileId);
       if (error) console.error('Supabase profile update error:', error);
@@ -1935,6 +2107,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
+    if (updates.address !== undefined) {
+      setOfficeLocationsList((prev) =>
+        prev.map((off) => (off.orgId === orgId ? { ...off, address: updates.address! } : off))
+      );
+    }
+
     try {
       const client = getSupabaseClient();
       const supabaseUpdates: any = {};
@@ -1951,6 +2129,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { error } = await client.from('organizations').update(supabaseUpdates).eq('id', orgId);
       if (error) console.error('Supabase organization update error:', error);
       else console.log('Organization updated in Supabase');
+
+      if (updates.address !== undefined) {
+        client.from('office_locations').update({ address: updates.address }).eq('org_id', orgId).then();
+      }
     } catch (e) {
       console.warn('Organization Supabase update failed:', e);
     }
@@ -2165,7 +2347,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const getOfferBySerial = (serialNumber: string): OfferLetter | undefined => {
-    return offerLetters.find((o) => o.serialNumber.trim().toUpperCase() === serialNumber.trim().toUpperCase());
+    const clean = serialNumber.trim().toUpperCase();
+    return (
+      offerLetters.find((o) => o.serialNumber.trim().toUpperCase() === clean) ||
+      INITIAL_OFFERS.find((o) => o.serialNumber.trim().toUpperCase() === clean)
+    );
   };
 
   // --- ATTENDANCE ---
@@ -2185,7 +2371,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     const todayStr = getTodayISTDateString();
 
-    // Check if employee has an active leave request covering today
+    // 1. Week-Off Day Enforcement (IST)
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const dayOfWeek = nowIST.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const weekOffDays = currentOrg.settings?.weekOffDays || [0];
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if (weekOffDays.includes(dayOfWeek)) {
+      addToast(
+        'Official Week-Off 🏖️',
+        `Today is an official weekly off (${dayNames[dayOfWeek]}). Attendance recording is not allowed on scheduled week-offs.`,
+        'info'
+      );
+      return {
+        success: false,
+        message: `Today is an official weekly off (${dayNames[dayOfWeek]}). Attendance recording is locked.`
+      };
+    }
+
+    // 2. Official Holiday Schedule Enforcement
+    const orgHolidays = holidays.filter((h) => h.orgId === currentOrg.id || !h.orgId);
+    const holidayToday = orgHolidays.find((h) => h.date === todayStr);
+    if (holidayToday) {
+      addToast(
+        `Holiday Today: ${holidayToday.name} 🎊`,
+        `Today is an official organization holiday (${holidayToday.name}). Attendance recording is blocked.`,
+        'info'
+      );
+      return {
+        success: false,
+        message: `Today is an official holiday: ${holidayToday.name}. Attendance recording is not permitted.`
+      };
+    }
+
+    // 3. Check if employee has an active leave request covering today
     const activeLeaveToday = leaveRequests.find(
       (l) =>
         l.employeeId === currentProfile.id &&
@@ -2223,6 +2441,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true, message: 'Attendance already recorded for today', record: existing };
     }
 
+    // Shift timing & late login calculation
+    const shiftStartTime = currentOrg.settings?.shiftStartTime || '09:30';
+    const graceMins = currentOrg.settings?.gracePeriodMins ?? 15;
+    const [shiftH, shiftM] = shiftStartTime.split(':').map(Number);
+    const shiftTotalMins = (shiftH || 9) * 60 + (shiftM || 30);
+    const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
+    const isLateLogin = currentTotalMins > (shiftTotalMins + graceMins);
+
     const requiresApproval = isRemote || distanceMeters > 150;
     const regularizationStatus: RegularizationStatus = requiresApproval ? 'pending' : 'none';
     const approvalStatus: 'approved' | 'pending_manager_approval' | 'rejected' = requiresApproval
@@ -2253,7 +2479,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       totalHours: workHours
     };
 
-    setAttendanceRecords((prev) => [newRecord, ...prev]);
+    setAttendanceRecords((prev) => {
+      const updated = [newRecord, ...prev];
+      try {
+        localStorage.setItem('vdx_attendance', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
 
     try {
       const client = getSupabaseClient();
@@ -2295,8 +2527,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'attendance',
         'attendance'
       );
+    } else if (isLateLogin) {
+      addToast(
+        'Attendance Recorded (Late Login) ⚠️',
+        `Punched in at ${formatISTTime(nowIso)} IST. Shift began at ${shiftStartTime} IST (grace period: ${graceMins}m).`,
+        'warning'
+      );
+      addNotification('Attendance Recorded (Late Login)', `Recorded at ${resolvedAddress} (${formatISTTime(nowIso)} IST) - Late Login.`, 'attendance', 'attendance');
     } else {
-      addToast('Attendance Recorded 📍', `Verified at ${resolvedAddress} (${formatISTTime(nowIso)} IST). Checkout not needed.`, 'success');
+      addToast('Attendance Recorded 📍', `Verified at ${resolvedAddress} (${formatISTTime(nowIso)} IST). On time. Checkout not needed.`, 'success');
       addNotification('Attendance Recorded 📍', `Punched in successfully at ${resolvedAddress} (${formatISTTime(nowIso)} IST)`, 'attendance', 'attendance');
     }
 
@@ -3079,6 +3318,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Notice Removed', 'The notice has been removed.', 'info');
   };
 
+  // Holiday Calendar Handlers (Set by Superadmin / HR)
+  const addHoliday = async (holidayData: Omit<Holiday, 'id' | 'orgId'>): Promise<Holiday> => {
+    const newHoliday: Holiday = {
+      ...holidayData,
+      id: generateUUID(),
+      orgId: currentOrg.id,
+      createdBy: currentProfile.id,
+      createdAt: new Date().toISOString()
+    };
+
+    setHolidays((prev) => {
+      const updated = [...prev, newHoliday].sort((a, b) => a.date.localeCompare(b.date));
+      try {
+        localStorage.setItem('vdx_holidays', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      const updatedHols = [...holidays.filter((h) => h.orgId === currentOrg.id), newHoliday];
+      const curSettings = currentOrg.settings || { workHoursPerDay: 8, gracePeriodMins: 15, wfhAllowed: true, halfDayThresholdHours: 4.5 };
+      await client.from('organizations').update({
+        settings: { ...curSettings, holidays: updatedHols }
+      }).eq('id', currentOrg.id);
+    } catch (e) {
+      console.warn('Supabase holiday sync note:', e);
+    }
+
+    addToast('Holiday Scheduled 🎊', `${newHoliday.name} (${newHoliday.date}) added to official calendar.`, 'success');
+    addNotification('New Holiday Added', `${newHoliday.name} scheduled on ${newHoliday.date}.`, 'announcement', 'employees', { orgId: currentOrg.id });
+    return newHoliday;
+  };
+
+  const updateHoliday = async (id: string, updates: Partial<Holiday>): Promise<void> => {
+    let targetOrgId = currentOrg.id;
+    setHolidays((prev) => {
+      const updated = prev.map((h) => {
+        if (h.id === id) {
+          targetOrgId = h.orgId;
+          return { ...h, ...updates };
+        }
+        return h;
+      }).sort((a, b) => a.date.localeCompare(b.date));
+      try {
+        localStorage.setItem('vdx_holidays', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      const updatedHols = holidays.map((h) => (h.id === id ? { ...h, ...updates } : h)).filter((h) => h.orgId === targetOrgId);
+      const curSettings = currentOrg.settings || { workHoursPerDay: 8, gracePeriodMins: 15, wfhAllowed: true, halfDayThresholdHours: 4.5 };
+      await client.from('organizations').update({
+        settings: { ...curSettings, holidays: updatedHols }
+      }).eq('id', targetOrgId);
+    } catch (e) {
+      console.warn('Supabase holiday update note:', e);
+    }
+
+    addToast('Holiday Updated', 'Holiday schedule details saved.', 'info');
+  };
+
+  const deleteHoliday = async (id: string): Promise<void> => {
+    let targetOrgId = currentOrg.id;
+    setHolidays((prev) => {
+      const updated = prev.filter((h) => {
+        if (h.id === id) targetOrgId = h.orgId;
+        return h.id !== id;
+      });
+      try {
+        localStorage.setItem('vdx_holidays', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      const updatedHols = holidays.filter((h) => h.id !== id && h.orgId === targetOrgId);
+      const curSettings = currentOrg.settings || { workHoursPerDay: 8, gracePeriodMins: 15, wfhAllowed: true, halfDayThresholdHours: 4.5 };
+      await client.from('organizations').update({
+        settings: { ...curSettings, holidays: updatedHols }
+      }).eq('id', targetOrgId);
+    } catch (e) {
+      console.warn('Supabase holiday delete note:', e);
+    }
+
+    addToast('Holiday Removed', 'Holiday deleted from calendar.', 'info');
+  };
+
   // Organizational Real-Time Chat Handlers
   const sendChatMessage = async (
     messageText: string,
@@ -3199,6 +3529,84 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const client = getSupabaseClient();
       await client.from('chat_messages').update({ reactions: targetReactions }).eq('id', messageId);
     } catch (e) {}
+  };
+
+  const editChatMessage = async (messageId: string, newText: string): Promise<void> => {
+    const targetMsg = chatMessages.find((m) => m.id === messageId);
+    if (!targetMsg) return;
+
+    // Slack-style 15 minute limit for normal members
+    const createdTime = new Date(targetMsg.createdAt).getTime();
+    const diffMinutes = (Date.now() - createdTime) / (60 * 1000);
+    const canEdit = isSuperOrHr || (targetMsg.senderId === currentProfile.id && diffMinutes <= 15);
+
+    if (!canEdit) {
+      addToast('Cannot Edit Message', 'Messages can only be edited within 15 minutes of sending.', 'warning');
+      return;
+    }
+
+    const trimmed = newText.trim();
+    if (!trimmed) return;
+
+    const editedAt = new Date().toISOString();
+
+    setChatMessages((prev) => {
+      const updated = prev.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              message: trimmed,
+              isEdited: true,
+              editedAt
+            }
+          : m
+      );
+      try {
+        localStorage.setItem('vdx_chat_messages', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_messages').update({
+        message: trimmed,
+        is_edited: true,
+        edited_at: editedAt
+      }).eq('id', messageId);
+    } catch (e) {
+      console.warn('Supabase chat edit note:', e);
+    }
+
+    addToast('Message Edited ✏️', 'Message updated successfully.', 'info');
+  };
+
+  const deleteChatMessage = async (messageId: string): Promise<void> => {
+    const targetMsg = chatMessages.find((m) => m.id === messageId);
+    if (!targetMsg) return;
+
+    const canDelete = isSuperOrHr || targetMsg.senderId === currentProfile.id;
+    if (!canDelete) {
+      addToast('Cannot Delete Message', 'You can only delete your own messages.', 'warning');
+      return;
+    }
+
+    setChatMessages((prev) => {
+      const updated = prev.filter((m) => m.id !== messageId);
+      try {
+        localStorage.setItem('vdx_chat_messages', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    try {
+      const client = getSupabaseClient();
+      await client.from('chat_messages').delete().eq('id', messageId);
+    } catch (e) {
+      console.warn('Supabase chat delete note:', e);
+    }
+
+    addToast('Message Deleted 🗑️', 'Message was removed.', 'info');
   };
 
   const createChatChannel = async (data: {
@@ -3449,17 +3857,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ? offerLetters.filter((o) => o.orgId === currentOrg?.id)
           : offerLetters.filter(
               (o) =>
-                o.orgId === currentOrg?.id &&
-                ((o.employeeId && o.employeeId === currentProfile?.id) ||
-                  o.candidateEmail?.toLowerCase() === currentProfile?.email?.toLowerCase())
+                (o.employeeId && o.employeeId === currentProfile?.id) ||
+                (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile?.email?.toLowerCase()) ||
+                (o.orgId === currentOrg?.id)
             ),
         allOfferLetters: (isVedotrixSuperadmin || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin')
           ? (isVedotrixSuperadmin ? offerLetters : offerLetters.filter((o) => o.orgId === currentOrg?.id))
           : offerLetters.filter(
               (o) =>
-                o.orgId === currentOrg?.id &&
-                ((o.employeeId && o.employeeId === currentProfile?.id) ||
-                  o.candidateEmail?.toLowerCase() === currentProfile?.email?.toLowerCase())
+                (o.employeeId && o.employeeId === currentProfile?.id) ||
+                (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile?.email?.toLowerCase()) ||
+                (o.orgId === currentOrg?.id)
             ),
         attendanceRecords: attendanceRecords.filter((a) => a.orgId === currentOrg?.id),
         tasks: tasks.filter((t) => t.orgId === currentOrg?.id),
@@ -3516,8 +3924,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeMemberFromChannel,
         sendChatMessage,
         addChatReaction,
+        editChatMessage,
+        deleteChatMessage,
         activeChatChannel,
-        setActiveChatChannel
+        setActiveChatChannel,
+        holidays: isVedotrixSuperadmin ? holidays : holidays.filter((h) => h.orgId === currentOrg.id || !h.orgId),
+        addHoliday,
+        updateHoliday,
+        deleteHoliday
       }}
     >
       {children}

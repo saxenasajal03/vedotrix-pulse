@@ -16,6 +16,8 @@ import {
   FileText
 } from 'lucide-react';
 import { OfferLetter } from '../types';
+import { formatISTDate } from '../lib/serialUtils';
+import { INITIAL_ORGS } from '../lib/mockData';
 
 interface PublicVerifyModalProps {
   isOpen: boolean;
@@ -28,7 +30,7 @@ export const PublicVerifyModal: React.FC<PublicVerifyModalProps> = ({
   onClose,
   initialSerial = ''
 }) => {
-  const { getOfferBySerial, availableOrgs } = useApp();
+  const { getOfferBySerial, availableOrgs, allOrganizations } = useApp();
   const [serialQuery, setSerialQuery] = useState(initialSerial || 'VDX-NEX-2026-A109F2');
   const [searched, setSearched] = useState(false);
   const [foundOffer, setFoundOffer] = useState<OfferLetter | undefined>(undefined);
@@ -43,7 +45,12 @@ export const PublicVerifyModal: React.FC<PublicVerifyModalProps> = ({
     setSearched(true);
   };
 
-  const issuingOrg = foundOffer ? availableOrgs.find((o) => o.id === foundOffer.orgId) : null;
+  const orgList = (allOrganizations && allOrganizations.length > 0) ? allOrganizations : (availableOrgs && availableOrgs.length > 0 ? availableOrgs : INITIAL_ORGS);
+  const isBnkOffer = foundOffer ? (foundOffer.orgId === '11111111-2222-3333-4444-555555555555' || foundOffer.serialNumber?.toUpperCase().includes('BNK')) : false;
+  const bnkOrgFallback = orgList.find(o => o.orgCode === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555') || INITIAL_ORGS[0];
+  const issuingOrg = foundOffer
+    ? (orgList.find((o) => o.id === foundOffer.orgId) || (isBnkOffer ? bnkOrgFallback : orgList[0]))
+    : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
@@ -180,8 +187,14 @@ export const PublicVerifyModal: React.FC<PublicVerifyModalProps> = ({
                       <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center">
                         <Building className="w-3.5 h-3.5 mr-1 text-indigo-400" /> Issuing Organization
                       </span>
-                      <p className="text-sm font-bold text-white mt-1">{issuingOrg?.name || 'Authorized Tenant'}</p>
-                      <span className="text-[10px] text-cyan-400">{issuingOrg?.industry}</span>
+                      <p className="text-sm font-bold text-white mt-1">{issuingOrg?.name || (isBnkOffer ? 'BNK Digital' : 'Authorized Tenant')}</p>
+                      <span className="text-[10px] text-cyan-400 block">{issuingOrg?.industry || 'Digital Marketing'}</span>
+                      {issuingOrg?.address && (
+                        <span className="text-[10px] text-slate-400 block mt-0.5">{issuingOrg.address}</span>
+                      )}
+                      {issuingOrg?.website && (
+                        <a href={issuingOrg.website} target="_blank" rel="noreferrer" className="text-[10px] text-blue-400 hover:underline block mt-0.5">{issuingOrg.website}</a>
+                      )}
                     </div>
 
                     <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
@@ -197,14 +210,10 @@ export const PublicVerifyModal: React.FC<PublicVerifyModalProps> = ({
                         <Calendar className="w-3.5 h-3.5 mr-1 text-emerald-400" /> Scheduled Joining Date
                       </span>
                       <p className="text-sm font-bold text-white mt-1">
-                        {new Date(foundOffer.joiningDate).toLocaleDateString('en-US', {
-                          month: 'long',
-                          day: 'numeric',
-                          year: 'numeric'
-                        })}
+                        {foundOffer.joiningDate ? formatISTDate(foundOffer.joiningDate) : 'Confirmed'}
                       </p>
                       <span className="text-[10px] text-slate-400">
-                        Issued on {new Date(foundOffer.createdAt).toLocaleDateString()}
+                        Issued on {foundOffer.createdAt ? formatISTDate(foundOffer.createdAt) : 'Official Record'}
                       </span>
                     </div>
 

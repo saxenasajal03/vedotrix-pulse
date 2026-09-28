@@ -22,6 +22,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { formatCurrency } from '../lib/serialUtils';
+import { INITIAL_ORGS, INITIAL_OFFERS } from '../lib/mockData';
 
 interface OfferLettersListProps {
   onOpenCreate: () => void;
@@ -42,15 +43,27 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
     currentProfile?.role === 'superadmin';
 
   // Find the offer letter issued to the currently logged-in user
-  const myOffer = offerLetters.find(
-    (o) =>
-      (o.employeeId && o.employeeId === currentProfile?.id) ||
-      (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile.email.toLowerCase())
-  );
+  const myOffer =
+    offerLetters.find(
+      (o) =>
+        (o.employeeId && o.employeeId === currentProfile?.id) ||
+        (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile.email.toLowerCase())
+    ) ||
+    INITIAL_OFFERS.find(
+      (o) =>
+        (o.employeeId && o.employeeId === currentProfile?.id) ||
+        (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile.email.toLowerCase())
+    );
+
+  const isBnkOffer = myOffer
+    ? (myOffer.orgId === '11111111-2222-3333-4444-555555555555' || myOffer.serialNumber?.toUpperCase().includes('BNK'))
+    : (currentOrg?.orgCode === 'BNK' || currentOrg?.id === '11111111-2222-3333-4444-555555555555');
+
+  const bnkOrgFallback = allOrganizations?.find(o => o.orgCode === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555') || INITIAL_ORGS[0];
 
   const myOfferOrg = myOffer
-    ? allOrganizations?.find((o) => o.id === myOffer.orgId) || currentOrg
-    : currentOrg;
+    ? (allOrganizations?.find((o) => o.id === myOffer.orgId) || (isBnkOffer ? bnkOrgFallback : currentOrg))
+    : (isBnkOffer ? bnkOrgFallback : currentOrg);
 
   let isMyOfferLocallyAccepted = false;
   try {
@@ -153,7 +166,7 @@ export const OfferLettersList: React.FC<OfferLettersListProps> = ({
                       Official Employment Contract
                     </span>
                     <h3 className="text-lg font-bold text-white">{myOfferOrg.name}</h3>
-                    <p className="text-xs text-slate-400">{myOfferOrg.address || 'Corporate Headquarters'}</p>
+                    <p className="text-xs text-slate-400">{(myOfferOrg.address && myOfferOrg.address.trim()) || (isBnkOffer ? 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001' : 'Corporate Headquarters')}</p>
                   </div>
                 </div>
 

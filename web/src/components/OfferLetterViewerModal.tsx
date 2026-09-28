@@ -14,6 +14,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { formatCurrency, formatISTDateTime } from '../lib/serialUtils';
+import { INITIAL_ORGS } from '../lib/mockData';
 
 interface OfferLetterViewerModalProps {
   offer: OfferLetter | null;
@@ -30,8 +31,10 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
 
   if (!offer) return null;
 
-  // Resolve the specific issuing organization from offer.orgId
-  const issuingOrg = allOrganizations?.find((o) => o.id === offer.orgId) || currentOrg;
+  // Resolve the specific issuing organization accurately
+  const isBnkOffer = offer.orgId === '11111111-2222-3333-4444-555555555555' || offer.serialNumber?.toUpperCase().includes('BNK');
+  const bnkOrgFallback = allOrganizations?.find(o => o.orgCode === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555') || INITIAL_ORGS[0];
+  const issuingOrg = allOrganizations?.find((o) => o.id === offer.orgId) || (isBnkOffer ? bnkOrgFallback : (currentOrg || INITIAL_ORGS[1]));
 
   let isLocallyAccepted = false;
   try {
@@ -123,9 +126,9 @@ export const OfferLetterViewerModal: React.FC<OfferLetterViewerModalProps> = ({
                   {issuingOrg.name}
                 </h1>
                 <p className="text-xs text-slate-600 mt-1 max-w-sm leading-snug">
-                  {issuingOrg.address || 'Corporate Headquarters'} • {issuingOrg.phone || '+91 80 4400 9900'}
+                  {(issuingOrg.address && issuingOrg.address.trim()) || (isBnkOffer ? 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001' : 'Corporate Headquarters')} • {(issuingOrg.phone && issuingOrg.phone.trim()) || (isBnkOffer ? '+91 6388043581' : '+91 80 4400 9900')}
                 </p>
-                <p className="text-xs text-indigo-700 font-semibold">{issuingOrg.website || 'https://vedotrix.com'}</p>
+                <p className="text-xs text-indigo-700 font-semibold">{(issuingOrg.website && issuingOrg.website.trim()) || (isBnkOffer ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}</p>
               </div>
             </div>
 

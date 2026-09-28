@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency, formatSalaryOrStipend, getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 import { EditOrganizationModal } from './EditOrganizationModal';
+import { fetchLiveWeather } from '../lib/weather';
 
 interface DashboardOverviewProps {
   onOpenCreateOffer: () => void;
@@ -222,6 +223,30 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  const [liveWeather, setLiveWeather] = useState<{
+    temperature: number;
+    condition: string;
+    city: string;
+  }>({
+    temperature: 28.5,
+    condition: 'Partly Cloudy',
+    city: currentOrg.name.includes('BNK') ? 'Lucknow' : 'Bangalore'
+  });
+
+  useEffect(() => {
+    fetchLiveWeather(
+      currentOrg.name.includes('BNK') ? 26.8524 : 12.9716,
+      currentOrg.name.includes('BNK') ? 80.9998 : 77.5946,
+      currentOrg.name.includes('BNK') ? 'Lucknow' : 'Bangalore'
+    ).then((w) => {
+      setLiveWeather({
+        temperature: w.temperature,
+        condition: w.condition,
+        city: w.city
+      });
+    }).catch(() => {});
+  }, [currentOrg.name]);
+
   const getISTGreeting = () => {
     const istHours = parseInt(
       new Intl.DateTimeFormat('en-US', {
@@ -398,8 +423,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </p>
             <div className="flex items-center justify-end space-x-1.5 text-xs text-slate-500 mt-0.5">
               <Sun className="w-4 h-4 text-amber-500 fill-amber-500" />
-              <span className="font-bold text-slate-800">28°C</span>
-              <span className="text-slate-400 font-medium">IST Zone</span>
+              <span className="font-bold text-slate-800">{liveWeather.temperature}°C</span>
+              <span className="text-slate-400 font-medium">• {liveWeather.city} (IST)</span>
             </div>
           </div>
         </div>

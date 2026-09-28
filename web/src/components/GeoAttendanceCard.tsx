@@ -12,10 +12,15 @@ import {
   ShieldCheck,
   CalendarX,
   Undo2,
-  LocateFixed
+  LocateFixed,
+  Sun,
+  CloudSun,
+  Coffee,
+  Sparkles
 } from 'lucide-react';
 import { calculateHaversineDistance, formatDistance } from '../lib/geoUtils';
 import { formatISTTime, getTodayISTDateString } from '../lib/serialUtils';
+import { fetchLiveWeather, LiveWeatherData } from '../lib/weather';
 
 interface GeoAttendanceCardProps {
   onRequestRegularization: (attendanceId: string) => void;
@@ -31,6 +36,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
     currentProfile,
     officeLocations,
     leaveRequests,
+    holidays,
     getTodayAttendance,
     punchAttendance,
     cancelLeaveRequest,
@@ -54,6 +60,37 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
 
   const todayStr = getTodayISTDateString();
   const todayRecord = getTodayAttendance();
+
+  // 1. Week-Off Enforcement (IST)
+  const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const dayOfWeek = nowIST.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const weekOffDays = currentOrg.settings?.weekOffDays || [0];
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const isWeekOffToday = weekOffDays.includes(dayOfWeek);
+
+  // 2. Official Holiday Schedule Check
+  const holidayToday = holidays.find(
+    (h) => (h.orgId === currentOrg.id || !h.orgId) && h.date === todayStr
+  );
+
+  // 3. Live Open-Meteo Weather State
+  const [liveWeather, setLiveWeather] = useState<LiveWeatherData>({
+    temperature: 28.5,
+    condition: 'Partly Cloudy',
+    isDay: true,
+    windSpeed: 7,
+    weatherCode: 2,
+    city: currentOrg.name.includes('BNK') ? 'Lucknow' : 'Bangalore',
+    fetchedAt: new Date().toISOString()
+  });
+
+  useEffect(() => {
+    fetchLiveWeather(
+      activeOffice.latitude,
+      activeOffice.longitude,
+      currentOrg.name.includes('BNK') ? 'Lucknow' : 'Bangalore'
+    ).then((w) => setLiveWeather(w)).catch(() => {});
+  }, [activeOffice.latitude, activeOffice.longitude, currentOrg.name]);
 
   // Check if employee has an active leave request covering today
   const activeLeaveToday = leaveRequests.find(
@@ -115,6 +152,16 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
   const activeOfficeAddress = activeOffice.address || currentOrg.address || 'Corporate Headquarters';
 
   const handlePunch = () => {
+    if (isWeekOffToday) {
+      addToast('Official Week-Off 🏖️', `Today is an official weekly off (${dayNames[dayOfWeek]}). Attendance recording is blocked.`, 'info');
+      return;
+    }
+
+    if (holidayToday) {
+      addToast(`Holiday Today: ${holidayToday.name} 🎊`, `Today is an official holiday. Attendance recording is blocked.`, 'info');
+      return;
+    }
+
     if (activeLeaveToday) {
       addToast(
         'Leave Active',
@@ -159,27 +206,81 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           </div>
         </div>
 
-        {/* Live Geofence Status Pill */}
-        <div
-          className={`self-start sm:self-auto flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] sm:text-xs font-bold border shrink-0 ${
-            isInsideFence
-              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-              : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-          }`}
-        >
-          {isInsideFence ? (
-            <>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Office Geofence Matched</span>
-            </>
-          ) : (
-            <>
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-              <span>Outside Perimeter (Remote / Approval Needed)</span>
-            </>
-          )}
+        {/* Live Weather & Geofence Status Pills */}
+        <div className="flex items-center space-x-2 shrink-0 flex-wrap gap-2">
+          {/* Live Open-Meteo Weather Badge */}
+          <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] sm:text-xs font-bold border border-slate-700 bg-slate-800/80 text-amber-300 shadow-xs">
+            <Sun className="w-3.5 h-3.5 text-amber-400" />
+            <span>{liveWeather.temperature}°C</span>
+            <span className="text-slate-400 font-normal">• {liveWeather.city}</span>
+          </div>
+
+          {/* Live Geofence Status Pill */}
+          <div
+            className={`self-start sm:self-auto flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] sm:text-xs font-bold border shrink-0 ${
+              isInsideFence
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+            }`}
+          >
+            {isInsideFence ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Office Geofence Matched</span>
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                <span>Outside Perimeter (Remote / Approval Needed)</span>
+              </>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Official Week-Off Banner */}
+      {isWeekOffToday && (
+        <div className="p-4 rounded-xl border bg-slate-800/60 border-slate-700 text-slate-200 flex items-center justify-between gap-3">
+          <div className="flex items-start space-x-3">
+            <div className="p-2 rounded-lg bg-slate-700/60 text-amber-400 shrink-0">
+              <Coffee className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-400 block">
+                Official Weekly Off ({dayNames[dayOfWeek]})
+              </span>
+              <p className="text-[11px] mt-0.5 text-slate-300 leading-relaxed">
+                Today is an official weekly off day. Attendance punch is not required or allowed on week-offs. Relax and recharge!
+              </p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+            Week-Off
+          </span>
+        </div>
+      )}
+
+      {/* Official Holiday Banner */}
+      {holidayToday && (
+        <div className="p-4 rounded-xl border bg-purple-950/40 border-purple-500/40 text-purple-200 flex items-center justify-between gap-3">
+          <div className="flex items-start space-x-3">
+            <div className="p-2 rounded-lg bg-purple-500/20 text-purple-300 shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-300 block">
+                Official Holiday Today: {holidayToday.name} 🎊
+              </span>
+              <p className="text-[11px] mt-0.5 text-slate-300 leading-relaxed">
+                Today is an official scheduled holiday for {currentOrg.name}. Attendance recording is paused for official holidays.
+              </p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-purple-500/30 text-purple-300 border border-purple-500/40 shrink-0">
+            Holiday
+          </span>
+        </div>
+      )}
 
       {/* Active Leave Alert Banner (Locks attendance punch if leave is active for today) */}
       {activeLeaveToday && (
@@ -297,6 +398,10 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
                 ? '✓ Attendance Recorded for Today (IST)'
                 : activeLeaveToday
                 ? `Locked: On ${activeLeaveToday.leaveType.toUpperCase()} Leave`
+                : isWeekOffToday
+                ? `Official Week-Off (${dayNames[dayOfWeek]})`
+                : holidayToday
+                ? `Official Holiday: ${holidayToday.name}`
                 : 'Not Recorded Today'}
             </span>
           </div>
@@ -331,9 +436,9 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
           {!todayRecord ? (
             <button
               onClick={handlePunch}
-              disabled={Boolean(activeLeaveToday)}
+              disabled={Boolean(activeLeaveToday || isWeekOffToday || holidayToday)}
               className={`w-full sm:w-auto justify-center px-6 py-3.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 ${
-                activeLeaveToday
+                activeLeaveToday || isWeekOffToday || holidayToday
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                   : 'text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/30'
               }`}
@@ -342,6 +447,10 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
               <span>
                 {activeLeaveToday
                   ? `Locked: On ${activeLeaveToday.leaveType} Leave`
+                  : isWeekOffToday
+                  ? 'Locked: Official Week-Off'
+                  : holidayToday
+                  ? `Locked: Holiday (${holidayToday.name})`
                   : 'Punch In (Mark Present - IST)'}
               </span>
             </button>

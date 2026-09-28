@@ -26,12 +26,31 @@ export interface Organization {
     gracePeriodMins: number;
     wfhAllowed: boolean;
     halfDayThresholdHours: number;
+    shiftStartTime?: string; // e.g. '09:30' (IST)
+    shiftEndTime?: string; // e.g. '18:30' (IST)
+    weekOffDays?: number[]; // e.g. [0] for Sunday (0=Sun, 1=Mon, ..., 6=Sat)
+    holidays?: Holiday[];
+    employeeStatutory?: Record<string, { bankName?: string; accountNumber?: string; ifscCode?: string; pfNumber?: string }>;
     leavePolicy?: {
       casualTotal: number;
       sickTotal: number;
       privilegeTotal: number;
     };
   };
+}
+
+export type HolidayType = 'national' | 'festival' | 'company' | 'restricted' | 'gazetted' | 'optional';
+
+export interface Holiday {
+  id: string;
+  orgId: string;
+  name: string;
+  date: string; // YYYY-MM-DD (in IST)
+  type: HolidayType;
+  description?: string;
+  isMandatory?: boolean;
+  createdBy?: string;
+  createdAt?: string;
 }
 
 export interface OrganizationAdminCredentials {
@@ -62,6 +81,12 @@ export interface Profile {
   managerId?: string; // Designated Reporting Manager
   passwordHash?: string;
   modulesAccess?: string[]; // e.g. ['attendance', 'tasks', 'standups', 'offers', 'payroll']
+  
+  // Banking & Statutory info (managed by HR/Superadmin)
+  bankName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  pfNumber?: string; // Provident Fund / UAN number
 }
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected';
@@ -341,6 +366,9 @@ export interface ChatMessage {
   replyToMessageId?: string;
   replyToSnippet?: string;
   isPinned?: boolean;
+  isEdited?: boolean;
+  editedAt?: string;
+  isDeleted?: boolean;
   createdAt: string;
 }
 

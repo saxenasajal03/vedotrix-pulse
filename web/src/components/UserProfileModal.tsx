@@ -14,10 +14,12 @@ import {
   Copy,
   ExternalLink,
   UserCheck,
-  Briefcase
+  Briefcase,
+  CreditCard
 } from 'lucide-react';
 import { formatISTDate } from '../lib/serialUtils';
 import { uploadFileToStorage } from '../lib/storage';
+import { INITIAL_ORGS, INITIAL_PROFILES } from '../lib/mockData';
 
 interface UserProfileModalProps {
   profile: Profile | null;
@@ -32,7 +34,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onClose,
   onStartDirectMessage
 }) => {
-  const { currentProfile, orgProfiles, currentOrg, updateProfile, addToast } = useApp();
+  const { currentProfile, orgProfiles, currentOrg, allOrganizations, updateProfile, addToast } = useApp();
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,6 +42,17 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   if (!isOpen || !profile) return null;
 
   const isSelf = profile.id === currentProfile.id;
+
+  // Resolve Organization accurately
+  const isBnkProfile = profile.orgId === '11111111-2222-3333-4444-555555555555';
+  const bnkOrgFallback = allOrganizations?.find(o => o.orgCode === 'BNK' || o.id === '11111111-2222-3333-4444-555555555555') || INITIAL_ORGS[0];
+  const profileOrg = allOrganizations?.find((o) => o.id === profile.orgId) || (isBnkProfile ? bnkOrgFallback : currentOrg);
+
+  // Resolve Joining Date accurately from live Supabase record or baseline
+  const baselineProf = INITIAL_PROFILES.find((ip) => ip.id === profile.id || (ip.email && ip.email.toLowerCase() === profile.email.toLowerCase()));
+  const effectiveJoiningDate = (profile.joiningDate && profile.joiningDate !== '2026-01-01')
+    ? profile.joiningDate
+    : (baselineProf?.joiningDate || profile.joiningDate || '2026-09-09');
 
   // Resolve Reporting Manager
   const reportingManager = profile.managerId
@@ -223,7 +236,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <Briefcase className="w-3 h-3 text-slate-400" />
                 <span>{profile.department || 'Operations'}</span>
                 <span>•</span>
-                <span>{currentOrg.name}</span>
+                <span>{profileOrg.name}</span>
               </p>
             </div>
 
@@ -356,12 +369,125 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             {/* Joining Date */}
             <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] flex items-center justify-between">
               <span className="text-xs font-semibold text-[var(--text-secondary)] flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                Joining Date
+                <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                Official Joining Date
               </span>
-              <span className="text-xs font-mono text-[var(--text-muted)]">
-                {profile.joiningDate ? formatISTDate(profile.joiningDate) : 'Active'}
+              <span className="text-xs font-mono font-bold text-[var(--text-primary)]">
+                {formatISTDate(effectiveJoiningDate)}
               </span>
+            </div>
+
+            {/* Banking & Statutory Details (Filled by HR / Superadmin) */}
+            <div className="p-3.5 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-blue-500" />
+                  Banking & Statutory (PF / UAN)
+                </span>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-bold border border-emerald-500/20">
+                  {profile.pfNumber ? 'Active PF' : 'HR Managed'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {/* Bank Name */}
+                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)]">
+                  <span className="text-[10px] text-[var(--text-muted)] block">Bank Name</span>
+                  <span className="font-semibold text-[var(--text-primary)] block truncate text-xs mt-0.5">
+                    {profile.bankName || 'Not Configured'}
+                  </span>
+                </div>
+
+                {/* Account Number */}
+                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] flex items-center justify-between">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-[var(--text-muted)] block">Account Number</span>
+                    <span className="font-mono font-bold text-[var(--text-primary)] block truncate text-[11px] mt-0.5">
+                      {profile.accountNumber || 'Not Configured'}
+                    </span>
+                  </div>
+                  {profile.accountNumber && (
+                    <button
+                      onClick={() => copyToClipboard(profile.accountNumber || '', 'Account Number')}
+                      className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
+                      title="Copy Account Number"
+                    >
+                      {copiedField === 'Account Number' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+
+                {/* IFSC Code */}
+                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] flex items-center justify-between">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-[var(--text-muted)] block">IFSC Code</span>
+                    <span className="font-mono font-bold text-indigo-400 block truncate text-[11px] mt-0.5">
+                      {profile.ifscCode || 'Not Configured'}
+                    </span>
+                  </div>
+                  {profile.ifscCode && (
+                    <button
+                      onClick={() => copyToClipboard(profile.ifscCode || '', 'IFSC Code')}
+                      className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
+                      title="Copy IFSC Code"
+                    >
+                      {copiedField === 'IFSC Code' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+
+                {/* PF / UAN */}
+                <div className="p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] flex items-center justify-between">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-[var(--text-muted)] block">PF Number (UAN)</span>
+                    <span className="font-mono font-bold text-emerald-500 block truncate text-[10px] mt-0.5">
+                      {profile.pfNumber || 'Not Configured'}
+                    </span>
+                  </div>
+                  {profile.pfNumber && (
+                    <button
+                      onClick={() => copyToClipboard(profile.pfNumber || '', 'PF Number')}
+                      className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
+                      title="Copy PF Number"
+                    >
+                      {copiedField === 'PF Number' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Organization Info */}
+            <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-2">
+              <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold">
+                Organization Details
+              </span>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[var(--text-secondary)] flex items-center gap-1.5 font-semibold">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-400" />
+                  {profileOrg.name}
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/10 text-blue-400 font-bold">
+                  {profileOrg.orgCode}
+                </span>
+              </div>
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                {profileOrg.address || (isBnkProfile ? 'BNK Digital, 5/237, Vipul Khand, Gomtinagar, Lucknow - 226001' : 'Corporate Headquarters')}
+              </p>
+              <div className="flex items-center justify-between pt-1 border-t border-[var(--border-color)] text-[11px]">
+                <a
+                  href={profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-400 hover:underline flex items-center gap-1 font-semibold"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>{profileOrg.website || (isBnkProfile ? 'https://bnkdigitalagency.netlify.app' : 'https://vedotrix.com')}</span>
+                </a>
+                <span className="text-[var(--text-muted)] font-mono">
+                  {profileOrg.phone || (isBnkProfile ? '+91 6388043581' : '+91 80 4400 9900')}
+                </span>
+              </div>
             </div>
           </div>
         </div>

@@ -165,7 +165,6 @@ const MainLayout: React.FC = () => {
           {activeTab === 'chat' && (
             <TeamChat
               onCloseWidget={() => {
-                setIsFloatingChatWidgetOpen(true);
                 setActiveTab('dashboard');
               }}
             />

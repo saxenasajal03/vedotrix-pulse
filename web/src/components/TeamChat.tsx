@@ -45,7 +45,8 @@ import {
   AtSign,
   Menu,
   List,
-  UserCheck
+  UserCheck,
+  Pencil
 } from 'lucide-react';
 import { formatISTTime, formatISTDate } from '../lib/serialUtils';
 import {
@@ -84,6 +85,8 @@ export const TeamChat: React.FC<TeamChatProps> = ({
     removeMemberFromChannel,
     sendChatMessage,
     addChatReaction,
+    editChatMessage,
+    deleteChatMessage,
     activeChatChannel,
     setActiveChatChannel,
     isVedotrixSuperadmin,
@@ -99,6 +102,10 @@ export const TeamChat: React.FC<TeamChatProps> = ({
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [replyingTo, setReplyingTo] = useState<{ id: string; senderName: string; snippet: string } | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ url: string; name: string } | null>(null);
+
+  // Message inline edit state
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState('');
 
   // Phone & Widget responsive screen state: 'sidebar' or 'chat'
   const [mobileScreen, setMobileScreen] = useState<'sidebar' | 'chat'>('chat');
@@ -492,6 +499,24 @@ export const TeamChat: React.FC<TeamChatProps> = ({
     addToast('Copied to Clipboard 📋', 'Message text copied.', 'info');
   };
 
+  const handleStartEdit = (msg: ChatMessage) => {
+    setEditingMessageId(msg.id);
+    setEditingMessageText(msg.message);
+  };
+
+  const handleSaveEdit = async (messageId: string) => {
+    if (!editingMessageText.trim()) return;
+    await editChatMessage(messageId, editingMessageText);
+    setEditingMessageId(null);
+    setEditingMessageText('');
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (window.confirm('Delete this message for everyone? This action cannot be undone.')) {
+      await deleteChatMessage(messageId);
+    }
+  };
+
   const handlePopoutToSeparateWindow = () => {
     if (onPopoutWindow) {
       onPopoutWindow();
@@ -659,28 +684,41 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               </div>
             </div>
 
-            {/* Notification Bell Toggle */}
-            <button
-              onClick={handleRequestNotifications}
-              title={
-                notifPermission === 'granted'
-                  ? 'Device notifications active'
-                  : 'Enable phone & desktop push notifications'
-              }
-              className={`p-1.5 rounded-lg border transition ${
-                notifPermission === 'granted'
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                  : 'bg-[var(--bg-card)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-blue-500'
-              }`}
-            >
-              {notifPermission === 'granted' ? (
-                <BellRing className="w-4 h-4" />
-              ) : notifPermission === 'denied' ? (
-                <BellOff className="w-4 h-4 text-rose-500" />
-              ) : (
-                <Bell className="w-4 h-4" />
+            <div className="flex items-center space-x-1.5 shrink-0">
+              {/* Notification Bell Toggle */}
+              <button
+                onClick={handleRequestNotifications}
+                title={
+                  notifPermission === 'granted'
+                    ? 'Device notifications active'
+                    : 'Enable phone & desktop push notifications'
+                }
+                className={`p-1.5 rounded-lg border transition ${
+                  notifPermission === 'granted'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-[var(--bg-card)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-blue-500'
+                }`}
+              >
+                {notifPermission === 'granted' ? (
+                  <BellRing className="w-4 h-4" />
+                ) : notifPermission === 'denied' ? (
+                  <BellOff className="w-4 h-4 text-rose-500" />
+                ) : (
+                  <Bell className="w-4 h-4" />
+                )}
+              </button>
+
+              {/* Close Button on Mobile / Widget */}
+              {onCloseWidget && (
+                <button
+                  onClick={onCloseWidget}
+                  title="Close Team Chat"
+                  className="p-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-rose-500 hover:border-rose-500/30 transition shadow-xs"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               )}
-            </button>
+            </div>
           </div>
 
           {/* Quick Search Contacts */}
@@ -1135,14 +1173,25 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 )}
               </>
             ) : (
-              <button
-                onClick={onCloseWidget}
-                className="hidden sm:flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] text-xs font-semibold transition"
-                title="Pop out as Floating Widget"
-              >
-                <Minimize2 className="w-3.5 h-3.5" />
-                <span className="text-[11px]">Widget Mode</span>
-              </button>
+              <>
+                <button
+                  onClick={onCloseWidget}
+                  className="hidden md:flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] text-xs font-semibold transition"
+                  title="Pop out as Floating Widget"
+                >
+                  <Minimize2 className="w-3.5 h-3.5" />
+                  <span className="text-[11px]">Widget Mode</span>
+                </button>
+                {onCloseWidget && (
+                  <button
+                    onClick={onCloseWidget}
+                    className="p-1.5 hover:bg-[var(--bg-card-subtle)] rounded-lg transition text-[var(--text-muted)] hover:text-rose-500 border border-[var(--border-color)] md:hidden"
+                    title="Close Team Chat"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1273,6 +1322,43 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       <span className="text-[10px] text-[var(--text-muted)]">
                         {formatISTTime(msg.createdAt)} IST
                       </span>
+                      {msg.isEdited && (
+                        <span className="text-[9px] text-[var(--text-muted)] italic font-semibold ml-1">
+                          (edited)
+                        </span>
+                      )}
+
+                      {/* Mobile quick actions for own message */}
+                      {(() => {
+                        const msgCreatedTime = new Date(msg.createdAt).getTime();
+                        const canEditMsg = isSuperOrHr || (isMe && (Date.now() - msgCreatedTime) <= 15 * 60 * 1000);
+                        const canDeleteMsg = isSuperOrHr || isMe;
+                        if (!canEditMsg && !canDeleteMsg) return null;
+                        return (
+                          <span className="flex md:hidden items-center space-x-1 ml-1.5">
+                            {canEditMsg && (
+                              <button
+                                type="button"
+                                onClick={() => handleStartEdit(msg)}
+                                className="p-0.5 text-[var(--text-muted)] hover:text-blue-500"
+                                title="Edit message"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                            {canDeleteMsg && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                className="p-0.5 text-[var(--text-muted)] hover:text-rose-500"
+                                title="Delete message"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     {/* Quoted Reply context if any */}
@@ -1296,11 +1382,50 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                           : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-tl-none'
                       }`}
                     >
-                      {/* Message text with dynamic @mention formatting */}
-                      {msg.message && (
-                        <p className="whitespace-pre-line break-words">
-                          {renderMessageContent(msg.message)}
-                        </p>
+                      {/* Message text or inline editing */}
+                      {editingMessageId === msg.id ? (
+                        <div className="w-full space-y-2 py-1 min-w-[240px]">
+                          <textarea
+                            value={editingMessageText}
+                            onChange={(e) => setEditingMessageText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSaveEdit(msg.id);
+                              } else if (e.key === 'Escape') {
+                                setEditingMessageId(null);
+                              }
+                            }}
+                            rows={2}
+                            className="w-full p-2 bg-[var(--bg-card)] border border-blue-500 rounded-xl text-xs text-[var(--text-primary)] focus:outline-none ring-1 ring-blue-500 shadow-inner"
+                            autoFocus
+                          />
+                          <div className="flex items-center justify-between text-[11px] gap-2">
+                            <span className="text-[10px] opacity-75">
+                              Press <strong>Enter</strong> to save, <strong>Esc</strong> to cancel
+                            </span>
+                            <div className="flex items-center space-x-1.5 shrink-0">
+                              <button
+                                onClick={() => setEditingMessageId(null)}
+                                className="px-2 py-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => handleSaveEdit(msg.id)}
+                                className="px-2.5 py-0.5 rounded bg-blue-500 hover:bg-blue-400 text-white font-bold shadow-xs transition"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        msg.message && (
+                          <p className="whitespace-pre-line break-words">
+                            {renderMessageContent(msg.message)}
+                          </p>
+                        )
                       )}
 
                       {/* Attachments rendering */}
@@ -1382,38 +1507,64 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       )}
 
                       {/* Slack-style Floating Action Toolbar on Message Hover */}
-                      <div
-                        className={`absolute -top-3.5 ${
-                          isMe ? 'left-2' : 'right-2'
-                        } hidden group-hover:flex items-center space-x-0.5 bg-[var(--bg-card)] border border-[var(--border-color)] px-1 py-0.5 rounded-full shadow-lg z-10`}
-                      >
-                        {['👍', '❤️', '🚀', '🎉', '🔥'].map((emoji) => (
-                          <button
-                            key={emoji}
-                            onClick={() => addChatReaction(msg.id, emoji)}
-                            className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-xs transition"
-                            title={`React with ${emoji}`}
+                      {(() => {
+                        const msgCreatedTime = new Date(msg.createdAt).getTime();
+                        const canEditMsg = isSuperOrHr || (isMe && (Date.now() - msgCreatedTime) <= 15 * 60 * 1000);
+                        const canDeleteMsg = isSuperOrHr || isMe;
+
+                        return (
+                          <div
+                            className={`absolute -top-3.5 ${
+                              isMe ? 'left-2' : 'right-2'
+                            } hidden group-hover:flex items-center space-x-0.5 bg-[var(--bg-card)] border border-[var(--border-color)] px-1 py-0.5 rounded-full shadow-lg z-10`}
                           >
-                            {emoji}
-                          </button>
-                        ))}
-                        <button
-                          onClick={() =>
-                            setReplyingTo({ id: msg.id, senderName: msg.senderName, snippet: msg.message })
-                          }
-                          className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
-                          title="Reply in thread"
-                        >
-                          <CornerUpLeft className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={() => copyMessageText(msg.message)}
-                          className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
-                          title="Copy text"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
-                      </div>
+                            {['👍', '❤️', '🚀', '🎉', '🔥'].map((emoji) => (
+                              <button
+                                key={emoji}
+                                onClick={() => addChatReaction(msg.id, emoji)}
+                                className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-xs transition"
+                                title={`React with ${emoji}`}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                            <button
+                              onClick={() =>
+                                setReplyingTo({ id: msg.id, senderName: msg.senderName, snippet: msg.message })
+                              }
+                              className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
+                              title="Reply in thread"
+                            >
+                              <CornerUpLeft className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => copyMessageText(msg.message)}
+                              className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
+                              title="Copy text"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                            {canEditMsg && (
+                              <button
+                                onClick={() => handleStartEdit(msg)}
+                                className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-blue-500 transition"
+                                title="Edit message (within 15 mins)"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                            {canDeleteMsg && (
+                              <button
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                className="p-1 hover:bg-[var(--bg-card-subtle)] rounded text-[var(--text-muted)] hover:text-rose-500 transition"
+                                title="Delete message"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Reaction Badges */}

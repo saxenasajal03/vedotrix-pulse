@@ -107,6 +107,15 @@ export function formatISTTime(dateStrOrIso?: string): string {
 export function formatISTDate(dateStrOrIso?: string): string {
   if (!dateStrOrIso) return '';
   try {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStrOrIso)) {
+      const [y, m, d] = dateStrOrIso.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      return dt.toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    }
     const d = new Date(dateStrOrIso);
     return d.toLocaleDateString('en-IN', {
       timeZone: 'Asia/Kolkata',
