@@ -13,7 +13,7 @@ import {
   Briefcase
 } from 'lucide-react';
 import { formatISTDate } from '../lib/serialUtils';
-import { uploadAvatarToStorage } from '../lib/storage';
+
 import { INITIAL_PROFILES } from '../lib/mockData';
 
 
@@ -68,89 +68,116 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const copyToClipboard = (text: string, fieldName: string) => {
     navigator.clipboard.writeText(text);
     setCopiedField(fieldName);
-    addToast('Copied to Clipboard 📋', `${fieldName} copied.`, 'info');
+    addToast('Copied to Clipboard', `${fieldName} copied.`, 'info');
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  // Profile Photo Upload & Compression — with instant preview & Supabase background sync
+  // Profile Photo Upload — compress small → save to DB directly (always works) + try Storage CDN
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      addToast('Invalid File', 'Please select a valid image file (PNG, JPG, WebP).', 'warning');
+      addToast('Invalid File', 'Please select a valid image (PNG, JPG, WebP, HEIC).', 'warning');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-
-    if (file.size > 15 * 1024 * 1024) {
-      addToast('File Too Large', 'Please select an image under 15MB.', 'warning');
+    if (file.size > 20 * 1024 * 1024) {
+      addToast('File Too Large', 'Please select an image under 20MB.', 'warning');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
     setIsUploadingPhoto(true);
-    addToast('Processing Photo… 📸', 'Compressing and optimizing your image. Please wait...', 'info');
+    addToast('Processing Photo', 'Optimizing your image...', 'info');
 
     try {
-      // ── Step 1: Compress to square Blob via canvas ─────────────────────────
-      const compressToBlob = (f: File): Promise<{ blob: Blob; dataUrl: string }> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            const img = new Image();
-            img.onload = () => {
-              const size = Math.min(img.width, img.height, 500); // 500px square
-              const canvas = document.createElement('canvas');
-              canvas.width = size;
-              canvas.height = size;
-              const ctx = canvas.getContext('2d');
-              if (!ctx) { reject(new Error('Canvas context unavailable')); return; }
-              // Center crop to perfect square
-              const sx = (img.width - size) / 2;
-              const sy = (img.height - size) / 2;
-              ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
-              canvas.toBlob((blob) => {
-                if (blob) resolve({ blob, dataUrl });
-                else reject(new Error('Canvas toBlob failed'));
-              }, 'image/jpeg', 0.88);
-            };
-            img.onerror = reject;
-            img.src = ev.target?.result as string;
+      // Step 1: Compress to 300×300 JPEG @ 0.65 quality → ~40-60KB base64 (fits in any DB text column)
+      const { blob, dataUrl } = await new Promise<{ blob: Blob; dataUrl: string }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            // Use 300px for DB storage (small enough), 500px for CDN upload
+            const size = Math.min(img.width, img.height, 300);
+            const canvas = document.createElement('canvas');
+            canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { reject(new Error('Canvas unavailable')); return; }
+            ctx.drawImage(img, (img.width - size) / 2, (img.height - size) / 2, size, size, 0, 0, size, size);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+            canvas.toBlob(
+              (b) => b ? resolve({ blob: b, dataUrl }) : reject(new Error('toBlob failed')),
+              'image/jpeg', 0.65
+            );
           };
-          reader.onerror = reject;
-          reader.readAsDataURL(f);
-        });
-      };
+          img.onerror = reject;
+          img.src = ev.target?.result as string;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
 
-      const { blob, dataUrl } = await compressToBlob(file);
-
-      // ── Step 2: Show preview immediately in UI ──────────────────────────────
+      // Step 2: Show instant preview in UI
       setAvatarLoadFailed(false);
       setPreviewAvatarUrl(dataUrl);
-      await updateProfile(profile.id, { avatarUrl: dataUrl });
-      try { localStorage.setItem(`vdx_avatar_${profile.id}`, dataUrl); } catch {}
 
-      addToast('Uploading to Cloud… ☁️', 'Saving your photo to Supabase storage.', 'info');
+      // Step 3: PRIMARY PATH — save compressed dataUrl directly to profiles.avatar_url DB column
+      // This ALWAYS works regardless of Storage bucket policies
+      addToast('Saving Photo', 'Updating your profile picture...', 'info');
+      const { getSupabaseClient } = await import('../lib/supabaseClient');
+      const supabase = getSupabaseClient();
 
-      // ── Step 3: Upload Blob to Supabase with deterministic path ─────────────
-      const result = await uploadAvatarToStorage(blob, profile.id);
+      const { error: primaryDbError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: dataUrl })
+        .eq('id', profile.id);
 
-      if (result.success && result.url) {
-        setPreviewAvatarUrl(result.url);
-        await updateProfile(profile.id, { avatarUrl: result.url });
-        try { localStorage.setItem(`vdx_avatar_${profile.id}`, result.url); } catch {}
-        addToast('Profile Picture Updated ✅', 'Your new photo is now active across Team Chat & Vedotrix Pulse.', 'success');
+      if (!primaryDbError) {
+        // Update local in-memory state
+        await updateProfile(profile.id, { avatarUrl: dataUrl });
+        try { localStorage.setItem(`vdx_avatar_${profile.id}`, dataUrl); } catch {}
+        addToast('Profile Photo Saved', 'Your photo is live! Trying to optimize via cloud storage...', 'success');
       } else {
-        addToast(
-          'Photo Saved ✅',
-          'Your profile photo has been updated and applied to your profile.',
-          'success'
-        );
+        addToast('DB Save Issue', `Note: ${primaryDbError.message}`, 'warning');
       }
+
+      // Step 4: SECONDARY PATH — also try uploading higher quality version to Supabase Storage
+      // If this succeeds, replace the dataUrl with a faster CDN URL
+      try {
+        const bigCanvas = document.createElement('canvas');
+        const bigImg = new Image();
+        await new Promise<void>((res) => { bigImg.onload = () => res(); bigImg.src = dataUrl; });
+        const bigSize = Math.min(bigImg.width, bigImg.height, 500);
+        bigCanvas.width = bigSize; bigCanvas.height = bigSize;
+        const bigCtx = bigCanvas.getContext('2d');
+        if (bigCtx) {
+          bigCtx.drawImage(bigImg, 0, 0, bigSize, bigSize);
+          const bigBlob = await new Promise<Blob | null>((res) => bigCanvas.toBlob(res, 'image/jpeg', 0.82));
+          if (bigBlob) {
+            const bucket = 'avatars';
+            const avatarPath = `avatar_${profile.id}.jpg`;
+            try { await supabase.storage.from(bucket).remove([avatarPath]); } catch {}
+            const { error: storageErr } = await supabase.storage
+              .from(bucket)
+              .upload(avatarPath, bigBlob, { cacheControl: '0', upsert: true, contentType: 'image/jpeg' });
+            if (!storageErr) {
+              const { data: pubData } = supabase.storage.from(bucket).getPublicUrl(avatarPath);
+              const cdnUrl = `${pubData.publicUrl}?v=${Date.now()}`;
+              // Replace dataUrl with faster CDN URL in DB
+              await supabase.from('profiles').update({ avatar_url: cdnUrl }).eq('id', profile.id);
+              await updateProfile(profile.id, { avatarUrl: cdnUrl });
+              setPreviewAvatarUrl(cdnUrl);
+              try { localStorage.setItem(`vdx_avatar_${profile.id}`, cdnUrl); } catch {}
+              addToast('Photo Optimized', 'Profile photo upgraded to cloud CDN for faster loading!', 'success');
+            }
+            // If storage fails silently, the DB dataUrl saved in Step 3 is still used — no error needed
+          }
+        }
+      } catch { /* Storage secondary path failed silently — dataUrl is already saved */ }
+
     } catch (err: any) {
-      addToast('Upload Notice', `Photo updated: ${err?.message || 'Ready'}`, 'info');
+      addToast('Upload Failed', err?.message || 'Please try again.', 'error');
     } finally {
       setIsUploadingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = '';

@@ -42,6 +42,13 @@ const MainLayout: React.FC = () => {
 
   const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
 
+  // Initialize notification system on app startup — registers SW & syncs permission state
+  React.useEffect(() => {
+    import('./lib/deviceNotifications').then(({ initNotificationsOnStartup }) => {
+      initNotificationsOnStartup().catch(() => {});
+    });
+  }, []);
+
   // Auto-close floating chat widget if navigating to full chat tab
   React.useEffect(() => {
     if (activeTab === 'chat' && isFloatingChatWidgetOpen) {
