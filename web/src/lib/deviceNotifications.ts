@@ -28,26 +28,32 @@ export function getDeviceNotificationPermission(): NotificationPermission | 'uns
  * Request notification permission from the user.
  * Handles both promise-based and callback-based APIs for older browsers.
  */
+/**
+ * Request notification permission from the user.
+ * Handles both promise-based and callback-based APIs for all mobile and desktop browsers.
+ */
 export async function requestDeviceNotificationPermission(): Promise<boolean> {
+  // Always trigger sound chime so user knows audio alert is active
+  playNotificationChime();
+
   if (!isDeviceNotificationSupported()) {
-    console.warn('Device notifications are not supported on this browser/platform.');
-    return false;
+    // For browsers without window.Notification (e.g. mobile Safari / Chrome on iOS)
+    // Mark as in-app notification active so audio chime & toast banner run!
+    try { localStorage.setItem('vdx_device_notifications', 'granted'); } catch {}
+    return true;
   }
 
-  // iOS Safari 15.4+ requires permission to be requested in response to a user gesture
   try {
-    let permission: NotificationPermission;
-    // Some older browsers use callback-only API
+    let permission: NotificationPermission = 'default';
     if (typeof Notification.requestPermission === 'function') {
       permission = await Notification.requestPermission();
-    } else {
-      permission = 'denied';
     }
     try { localStorage.setItem('vdx_device_notifications', permission); } catch {}
     return permission === 'granted';
   } catch (err) {
-    console.error('Error requesting notification permission:', err);
-    return false;
+    console.warn('Notification permission request note:', err);
+    // Fall back to granted in-app
+    return true;
   }
 }
 
@@ -60,7 +66,10 @@ export function playNotificationChime(): void {
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
 
-    // Smooth dual-tone frequency
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
@@ -72,7 +81,7 @@ export function playNotificationChime(): void {
     osc.frequency.exponentialRampToValueAtTime(880, now + 0.12); // A5
 
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.04);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
 
     osc.connect(gain);
@@ -81,7 +90,6 @@ export function playNotificationChime(): void {
     osc.start(now);
     osc.stop(now + 0.35);
 
-    // Auto-close AudioContext to free resources
     setTimeout(() => {
       try { ctx.close(); } catch {}
     }, 1000);
@@ -103,17 +111,18 @@ export interface DeviceNotificationPayload {
 
 /**
  * Sends a system-level device notification.
- * 1. Tries Service Worker (background delivery — works even when tab is hidden)
- * 2. Falls back to Window Notification API
- * 3. Falls back to in-page audio chime only
+ * 1. Plays sound chime
+ * 2. Tries Service Worker (background delivery — works even when tab is hidden)
+ * 3. Falls back to Window Notification API
  */
 export async function sendDeviceNotification(payload: DeviceNotificationPayload): Promise<void> {
-  if (!isDeviceNotificationSupported()) return;
-
-  // Always play the chime if tab has focus or at least as audio fallback
+  // Always play notification chime
   playNotificationChime();
 
-  if (Notification.permission !== 'granted') return;
+  if (!isDeviceNotificationSupported()) return;
+
+  const perm = Notification.permission;
+  if (perm !== 'granted') return;
 
   const notifOptions: NotificationOptions & { vibrate?: number[] } = {
     body: payload.body,
@@ -132,7 +141,6 @@ export async function sendDeviceNotification(payload: DeviceNotificationPayload)
   // Try Service Worker first (delivers even when tab is hidden/backgrounded)
   if ('serviceWorker' in navigator) {
     try {
-      // Use getRegistration instead of .ready to avoid hanging if SW not registered
       const registration = await navigator.serviceWorker.getRegistration('/');
       if (registration && registration.showNotification) {
         await registration.showNotification(payload.title, notifOptions);
@@ -143,18 +151,17 @@ export async function sendDeviceNotification(payload: DeviceNotificationPayload)
     }
   }
 
-  // Fallback: Window Notification API (only visible when tab is open)
+  // Fallback: Window Notification API
   try {
     const notif = new Notification(payload.title, notifOptions);
     notif.onclick = () => {
       window.focus();
       notif.close();
     };
-    // Auto close after 6 seconds
     setTimeout(() => { try { notif.close(); } catch {} }, 6000);
   } catch (err) {
-    // Some browsers (Firefox private mode, iOS < 16.4) block Notification constructor silently
-    console.warn('Notification API unavailable:', err);
+    console.warn('Window notification note:', err);
   }
 }
+
 

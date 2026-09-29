@@ -71,3 +71,46 @@ export async function uploadFileToStorage(
     };
   }
 }
+
+/**
+ * Uploads a user avatar to Supabase using a FIXED deterministic path (no timestamp).
+ * Deletes any old avatar for this user first, then uploads with upsert.
+ * Returns the public CDN URL with a cache-bust query param.
+ */
+export async function uploadAvatarToStorage(
+  file: File | Blob,
+  userId: string
+): Promise<StorageUploadResult> {
+  try {
+    const supabase = getSupabaseClient();
+    const bucket = 'avatars';
+    // Fixed path: avatars/avatar_<userId>.jpg — no timestamp so it's always the same key
+    const avatarPath = `avatar_${userId}.jpg`;
+
+    // Delete old file first (ignore errors — may not exist)
+    try {
+      await supabase.storage.from(bucket).remove([avatarPath]);
+    } catch {}
+
+    // Upload (upsert) with fixed path
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(avatarPath, file, {
+        cacheControl: '0',      // no CDN cache — always fresh
+        upsert: true,
+        contentType: 'image/jpeg'
+      });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Get public URL and append cache-bust timestamp
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(avatarPath);
+    const cacheBustedUrl = `${pub.publicUrl}?v=${Date.now()}`;
+
+    return { success: true, url: cacheBustedUrl, path: data.path };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Avatar upload failed' };
+  }
+}

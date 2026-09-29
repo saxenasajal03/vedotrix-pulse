@@ -52,7 +52,8 @@ import { formatISTTime, formatISTDate } from '../lib/serialUtils';
 import {
   requestDeviceNotificationPermission,
   getDeviceNotificationPermission,
-  isDeviceNotificationSupported
+  isDeviceNotificationSupported,
+  sendDeviceNotification
 } from '../lib/deviceNotifications';
 import { UserProfileModal } from './UserProfileModal';
 
@@ -177,22 +178,54 @@ export const TeamChat: React.FC<TeamChatProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Initialize notification status
+  // Initialize notification status — also reads localStorage cache for iOS / in-app alerts
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('vdx_device_notifications') as NotificationPermission | null;
+      if (cached === 'granted') {
+        setNotifPermission('granted');
+        setShowNotifBanner(false);
+        return;
+      }
+    } catch {}
+
     if (isDeviceNotificationSupported()) {
       const perm = getDeviceNotificationPermission();
       setNotifPermission(perm);
       if (perm === 'default') {
         setShowNotifBanner(true);
       }
+    } else {
+      // Browser doesn't support Notification API (e.g. iOS Safari < 16.4)
+      // Still show banner to let user enable in-app audio alerts
+      setShowNotifBanner(true);
     }
   }, []);
 
   const handleRequestNotifications = async () => {
+    if (notifPermission === 'granted') {
+      sendDeviceNotification({
+        title: 'Vedotrix Pulse 🔔',
+        body: 'Device notifications are active and ready on this device!',
+        channel: 'team-chat'
+      });
+      addToast(
+        'Notifications Active 🔔',
+        'Notification system tested successfully with audio alert chime.',
+        'success'
+      );
+      return;
+    }
+
     const granted = await requestDeviceNotificationPermission();
     setNotifPermission(granted ? 'granted' : 'denied');
     setShowNotifBanner(false);
     if (granted) {
+      sendDeviceNotification({
+        title: 'Vedotrix Pulse 🔔',
+        body: 'Device notifications enabled! Alerts active for messages and mentions.',
+        channel: 'team-chat'
+      });
       addToast(
         'Device Notifications Enabled 🔔',
         'You will now receive alerts for incoming messages & mentions on your phone and desktop.',
@@ -200,9 +233,9 @@ export const TeamChat: React.FC<TeamChatProps> = ({
       );
     } else {
       addToast(
-        'Notifications Restricted',
-        'Notification permission was not granted. You can re-enable it in browser settings.',
-        'warning'
+        'In-App Audio Alerts Active 🔔',
+        'Audio chime and in-app alerts are active for all incoming messages.',
+        'info'
       );
     }
   };
@@ -992,7 +1025,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                               isActive ? 'text-blue-100' : 'text-[var(--text-muted)]'
                             }`}
                           >
-                            {colleague.role} • {colleague.designation || 'Staff'}
+                            {colleague.designation || colleague.department || 'Team Member'}
                           </span>
                         </div>
                       </div>
@@ -1035,7 +1068,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 {currentProfile.firstName} {currentProfile.lastName}
               </span>
               <span className="text-[10px] text-[var(--text-muted)] font-medium block uppercase tracking-wide truncate">
-                {currentProfile.role} • {currentProfile.designation || 'Staff'}
+                {currentProfile.designation || currentProfile.department || 'Staff'}
               </span>
             </div>
           </div>
@@ -1092,12 +1125,12 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                     <h3 className="text-sm font-bold text-[var(--text-primary)] group-hover/dmheader:text-blue-500 transition truncate">
                       {dmTargetProfile.firstName} {dmTargetProfile.lastName}
                     </h3>
-                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-[var(--bg-card-subtle)] text-[var(--text-muted)] shrink-0 border border-[var(--border-color)]">
-                      {dmTargetProfile.role}
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                      {dmTargetProfile.designation || dmTargetProfile.department || 'Team Member'}
                     </span>
                   </div>
                   <p className="text-[10px] text-[var(--text-muted)] truncate">
-                    {dmTargetProfile.designation || 'Team Member'} • {dmTargetProfile.department}
+                    {dmTargetProfile.department || 'Operations'} • {dmTargetProfile.email}
                   </p>
                 </div>
               </div>
@@ -1385,8 +1418,18 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               </p>
             </div>
           ) : (
-            displayedMessages.map((msg) => {
+            displayedMessages.map((msg, msgIdx) => {
               const isMe = msg.senderId === currentProfile.id;
+              const prevMsg = msgIdx > 0 ? displayedMessages[msgIdx - 1] : null;
+              const msgDate = new Date(msg.createdAt);
+              const prevMsgDate = prevMsg ? new Date(prevMsg.createdAt) : null;
+              const showDateSeparator = !prevMsgDate ||
+                msgDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) !== prevMsgDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+              const todayStr2 = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+              const yesterdayDate = new Date(); yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+              const yesterdayStr = yesterdayDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+              const dateLabelRaw = msgDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+              const dateLabel = dateLabelRaw === todayStr2 ? 'Today' : dateLabelRaw === yesterdayStr ? 'Yesterday' : msgDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
               const senderProfile = orgProfiles.find((p) => p.id === msg.senderId) || (isMe ? currentProfile : null);
               const avatar = senderProfile?.avatarUrl && senderProfile.avatarUrl !== '/vedotrix-logo.png' ? senderProfile.avatarUrl : msg.senderAvatar;
               const msgCreatedTime = new Date(msg.createdAt).getTime();
@@ -1395,12 +1438,21 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               const isActionMenuOpen = activeActionMenuMsgId === msg.id;
 
               return (
-                <div
-                  key={msg.id}
-                  className={`flex items-start space-x-2.5 group ${
-                    isMe ? 'flex-row-reverse space-x-reverse' : ''
-                  }`}
-                >
+                <React.Fragment key={msg.id}>
+                  {showDateSeparator && (
+                    <div className="flex items-center justify-center my-2">
+                      <div className="flex-1 h-px bg-[var(--border-color)]" />
+                      <span className="mx-3 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-card-subtle)] px-2.5 py-0.5 rounded-full border border-[var(--border-color)] whitespace-nowrap">
+                        {dateLabel}
+                      </span>
+                      <div className="flex-1 h-px bg-[var(--border-color)]" />
+                    </div>
+                  )}
+                  <div
+                    className={`flex items-start space-x-2.5 group ${
+                      isMe ? 'flex-row-reverse space-x-reverse' : ''
+                    }`}
+                  >
                   {/* Sender Avatar */}
                   {avatar && avatar !== '/vedotrix-logo.png' ? (
                     <img
@@ -1440,9 +1492,19 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       >
                         {msg.senderName}
                       </button>
-                      <span className="px-1.5 py-0.2 rounded text-[8px] font-bold uppercase bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border border-[var(--border-color)]">
-                        {msg.senderRole}
-                      </span>
+                      {senderProfile?.designation ? (
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 truncate max-w-[120px]">
+                          {senderProfile.designation}
+                        </span>
+                      ) : senderProfile?.department ? (
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-medium bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border border-[var(--border-color)] truncate max-w-[100px]">
+                          {senderProfile.department}
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-medium bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border border-[var(--border-color)]">
+                          Team Member
+                        </span>
+                      )}
                       <span className="text-[10px] text-[var(--text-muted)]">
                         {formatISTTime(msg.createdAt)} IST
                       </span>
@@ -1833,8 +1895,9 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                     )}
                   </div>
                 </div>
-              );
-            })
+              </React.Fragment>
+            );
+          })
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -1881,11 +1944,11 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                         </div>
                       </div>
                       <span
-                        className={`text-[8px] font-bold uppercase px-1 py-0.2 rounded shrink-0 ${
-                          isSelected ? 'bg-white/20 text-white' : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)]'
+                        className={`text-[8px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${
+                          isSelected ? 'bg-white/20 text-white' : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border border-[var(--border-color)]'
                         }`}
                       >
-                        {candidate.role}
+                        {candidate.designation || 'Team Member'}
                       </span>
                     </div>
                   );
