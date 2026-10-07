@@ -86,6 +86,7 @@ const MainLayout: React.FC = () => {
   const [viewingOffer, setViewingOffer] = useState<OfferLetter | null>(null);
 
   const [regularizeAttendanceId, setRegularizeAttendanceId] = useState<string | null>(null);
+  const [regularizeTargetDate, setRegularizeTargetDate] = useState<string | null>(null);
   const [isStandupOpen, setIsStandupOpen] = useState(false);
 
   const handleOpenVerify = (serial?: string) => {
@@ -165,11 +166,19 @@ const MainLayout: React.FC = () => {
           {activeTab === 'attendance' && (
             <div className="space-y-6">
               <GeoAttendanceCard
-                onRequestRegularization={(id) => setRegularizeAttendanceId(id)}
+                onRequestRegularization={(id) => {
+                  setRegularizeAttendanceId(id);
+                  setRegularizeTargetDate(null);
+                }}
                 onOpenStandup={() => setIsStandupOpen(true)}
               />
               <RegularizationApprovalQueue />
-              <DailyAttendanceTracker />
+              <DailyAttendanceTracker
+                onRequestRegularization={(id, date) => {
+                  setRegularizeAttendanceId(id || null);
+                  setRegularizeTargetDate(date || null);
+                }}
+              />
             </div>
           )}
 
@@ -233,7 +242,11 @@ const MainLayout: React.FC = () => {
 
       <RegularizationModal
         attendanceId={regularizeAttendanceId}
-        onClose={() => setRegularizeAttendanceId(null)}
+        targetDate={regularizeTargetDate}
+        onClose={() => {
+          setRegularizeAttendanceId(null);
+          setRegularizeTargetDate(null);
+        }}
       />
 
       <DailyStandupModal

@@ -114,7 +114,7 @@ interface AppContextType {
   
   // Actions: Attendance
   punchAttendance: (lat: number, long: number, isRemote?: boolean, distanceMeters?: number, officeAddress?: string) => { success: boolean; message: string; record?: AttendanceRecord };
-  requestRegularization: (attendanceId: string, reason: string) => void;
+  requestRegularization: (attendanceId: string, reason: string, targetDate?: string) => void;
   resolveRegularization: (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => void;
   getTodayAttendance: () => AttendanceRecord | undefined;
   
@@ -573,7 +573,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (!errProf && cloudProfiles) {
           const mappedProfiles: Profile[] = cloudProfiles.map((p: any) => {
             const baseline = INITIAL_PROFILES.find((ip) => ip.id === p.id || (ip.email && ip.email.toLowerCase() === p.email?.toLowerCase()));
-            const safeJoiningDate = p.joining_date || p.joiningDate || baseline?.joiningDate || '2026-09-09';
+            const safeJoiningDate = p.joining_date || p.joiningDate || baseline?.joiningDate || '';
             
             // Retrieve statutory banking details from org settings, local storage, or baseline
             let savedStatutory: any = null;
@@ -1361,7 +1361,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               role: p.role,
               designation: p.designation || 'Team Member',
               department: p.department || 'Operations',
-              joiningDate: p.joining_date || '2026-09-09',
+              joiningDate: p.joining_date || '',
               baseSalary: p.base_salary ? Number(p.base_salary) : 0,
               avatarUrl: p.avatar_url || '/vedotrix-logo.png',
               isActive: p.is_active ?? true,
@@ -1731,7 +1731,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
 
           const existingProf = profiles.find((p) => p.id === verifiedUser.user_id) || INITIAL_PROFILES.find((p) => p.id === verifiedUser.user_id || (p.email && p.email.toLowerCase() === cleanEmail));
-          const safeJoiningDate = verifiedUser.joining_date || verifiedUser.joiningDate || existingProf?.joiningDate || '2026-09-09';
+          const safeJoiningDate = verifiedUser.joining_date || verifiedUser.joiningDate || existingProf?.joiningDate || '';
 
           setProfiles((prev) => {
             const index = prev.findIndex((p) => p.id === verifiedUser.user_id);
@@ -2554,6 +2554,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (updates.modulesAccess !== undefined) supabaseUpdates.modules_access = updates.modulesAccess;
       if (updates.avatarUrl !== undefined) supabaseUpdates.avatar_url = updates.avatarUrl;
+      if (updates.joiningDate !== undefined) supabaseUpdates.joining_date = updates.joiningDate;
       // Handle statutory banking details via org settings JSONB & localStorage
       if (updates.bankName !== undefined || updates.accountNumber !== undefined || updates.ifscCode !== undefined || updates.pfNumber !== undefined) {
         try {
@@ -3061,32 +3062,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true, message: 'Attendance recorded successfully', record: newRecord };
   };
 
-  const requestRegularization = (attendanceId: string, reason: string) => {
-    setAttendanceRecords((prev) =>
-      prev.map((a) => {
-        if (a.id === attendanceId) {
-          return {
-            ...a,
-            regularizationReason: reason,
-            regularizationStatus: 'pending',
-            approvalStatus: 'pending_manager_approval'
-          };
-        }
-        return a;
-      })
+  const requestRegularization = (attendanceId: string, reason: string, targetDate?: string) => {
+    const effectiveDate = targetDate || (attendanceId && attendanceId.includes('-') && attendanceId.length === 10 ? attendanceId : undefined);
+    
+    // Check if an attendance record already exists for this id or for (currentProfile.id + effectiveDate)
+    const existing = attendanceRecords.find(
+      (a) => a.id === attendanceId || (effectiveDate && a.employeeId === currentProfile.id && a.date === effectiveDate)
     );
 
-    try {
-      const client = getSupabaseClient();
-      client.from('attendance').update({
-        regularization_reason: reason,
-        regularization_status: 'pending',
-        approval_status: 'pending_manager_approval'
-      }).eq('id', attendanceId);
-    } catch (e) {}
+    if (existing) {
+      setAttendanceRecords((prev) =>
+        prev.map((a) => {
+          if (a.id === existing.id) {
+            return {
+              ...a,
+              regularizationReason: reason,
+              regularizationStatus: 'pending',
+              approvalStatus: 'pending_manager_approval'
+            };
+          }
+          return a;
+        })
+      );
 
-    addToast('Presence Regularization Submitted', 'Sent to assigned Manager / HR for approval.', 'info');
-    addNotification('Regularization Submitted', 'Your punch regularization request is pending review.', 'attendance', 'attendance');
+      try {
+        const client = getSupabaseClient();
+        client.from('attendance').update({
+          regularization_reason: reason,
+          regularization_status: 'pending',
+          approval_status: 'pending_manager_approval'
+        }).eq('id', existing.id);
+      } catch (e) {}
+    } else {
+      // Create a new absent attendance record with pending regularization
+      const newId = generateUUID();
+      const dateToUse = effectiveDate || getTodayISTDateString();
+      const newRecord: AttendanceRecord = {
+        id: newId,
+        orgId: currentOrg.id,
+        employeeId: currentProfile.id,
+        date: dateToUse,
+        status: 'absent',
+        isRemote: false,
+        regularizationReason: reason,
+        regularizationStatus: 'pending',
+        approvalStatus: 'pending_manager_approval',
+        totalHours: currentOrg.settings?.workHoursPerDay || 8
+      };
+
+      setAttendanceRecords((prev) => [newRecord, ...prev]);
+
+      try {
+        const client = getSupabaseClient();
+        client.from('attendance').insert({
+          id: newId,
+          org_id: currentOrg.id,
+          employee_id: currentProfile.id,
+          date: dateToUse,
+          status: 'absent',
+          is_remote: false,
+          total_hours: currentOrg.settings?.workHoursPerDay || 8,
+          regularization_reason: reason,
+          regularization_status: 'pending',
+          approval_status: 'pending_manager_approval'
+        });
+      } catch (e) {}
+    }
+
+    addToast('Regularization Request Submitted 📋', 'Sent to assigned Manager / HR for verification.', 'info');
+    addNotification('Regularization Submitted', `Attendance regularization request for ${effectiveDate || 'shift'} submitted.`, 'attendance', 'attendance');
   };
 
   const resolveRegularization = (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => {
@@ -3100,6 +3144,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             regularizationStatus: status,
             approvalStatus: status === 'approved' ? 'approved' : 'rejected',
             status: status === 'approved' ? 'present' : 'absent',
+            totalHours: status === 'approved' && (!a.totalHours || a.totalHours === 0) ? (currentOrg.settings?.workHoursPerDay || 8) : a.totalHours,
             regularizedBy: currentProfile.id,
             approvedBy: currentProfile.id,
             regularizationNotes: notes
@@ -3111,14 +3156,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      client.from('attendance').update({
+      const updatePayload: any = {
         regularization_status: status,
         approval_status: status === 'approved' ? 'approved' : 'rejected',
         status: status === 'approved' ? 'present' : 'absent',
         regularized_by: approverUuid,
         approved_by: approverUuid,
         approval_notes: notes || null
-      }).eq('id', attendanceId).then(({ error }) => {
+      };
+      if (status === 'approved') {
+        updatePayload.total_hours = currentOrg.settings?.workHoursPerDay || 8;
+      }
+      client.from('attendance').update(updatePayload).eq('id', attendanceId).then(({ error }) => {
         if (error) console.error('Supabase attendance regularization resolve error:', error);
       });
     } catch (e) {}

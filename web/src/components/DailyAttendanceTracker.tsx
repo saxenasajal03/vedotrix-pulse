@@ -34,12 +34,21 @@ import {
   Percent,
   Settings,
   Sliders,
-  X
+  X,
+  FileEdit,
+  Edit3,
+  Send
 } from 'lucide-react';
 import { getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 import { AttendanceRecord, Profile, TaskItem, DailyStandup, Holiday, LeaveRequest } from '../types';
 
-export const DailyAttendanceTracker: React.FC = () => {
+interface DailyAttendanceTrackerProps {
+  onRequestRegularization?: (attendanceId?: string | null, date?: string | null) => void;
+}
+
+export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
+  onRequestRegularization
+}) => {
   const {
     currentOrg,
     currentProfile,
@@ -51,6 +60,8 @@ export const DailyAttendanceTracker: React.FC = () => {
     holidays,
     isVedotrixSuperadmin,
     resolveRegularization,
+    requestRegularization,
+    updateProfile,
     updateOrganization,
     addToast
   } = useApp();
@@ -97,6 +108,19 @@ export const DailyAttendanceTracker: React.FC = () => {
   const [halfDayHours, setHalfDayHours] = useState(currentOrg.settings?.halfDayThresholdHours || 4.5);
   const [weekOffs, setWeekOffs] = useState<number[]>(currentOrg.settings?.weekOffDays || [0]);
   const [isSavingShift, setIsSavingShift] = useState(false);
+
+  // Joining Date Management State (Superadmin / HR can set/edit)
+  const [isEditingJoiningDate, setIsEditingJoiningDate] = useState(false);
+  const [editingJoiningDateVal, setEditingJoiningDateVal] = useState('');
+  const [isSavingJoiningDate, setIsSavingJoiningDate] = useState(false);
+
+  // Inline Regularization Request State
+  const [regularizingDay, setRegularizingDay] = useState<string | null>(null);
+  const [regCategory, setRegCategory] = useState('Missed Punch-In / Punch-Out');
+  const [regReason, setRegReason] = useState('');
+  const [regInTime, setRegInTime] = useState(currentOrg.settings?.shiftStartTime || '09:30');
+  const [regOutTime, setRegOutTime] = useState(currentOrg.settings?.shiftEndTime || '18:30');
+  const [isSubmittingReg, setIsSubmittingReg] = useState(false);
 
   const handleSaveShiftSettings = async () => {
     setIsSavingShift(true);
@@ -189,7 +213,7 @@ export const DailyAttendanceTracker: React.FC = () => {
     return tasks.filter((t) => t.assignedTo === inspectedEmployee.id);
   }, [tasks, inspectedEmployee]);
 
-  // Calendar Days calculation
+  // Calendar Days calculation strictly from Joining Date onwards
   const calendarDays = useMemo(() => {
     const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
     // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
@@ -199,6 +223,13 @@ export const DailyAttendanceTracker: React.FC = () => {
 
     // Week-off configuration (default [0] = Sunday)
     const weekOffDays = currentOrg.settings?.weekOffDays || [0];
+    const joiningDateStr = inspectedEmployee.joiningDate || '';
+
+    // Shift timing calculation for today (IST)
+    const [shiftEndH, shiftEndM] = (currentOrg.settings?.shiftEndTime || '18:30').split(':').map(Number);
+    const shiftEndMins = (shiftEndH || 18) * 60 + (shiftEndM || 30);
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
 
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -216,10 +247,13 @@ export const DailyAttendanceTracker: React.FC = () => {
       const isToday = dateStr === todayIST;
       const isPast = dateStr < todayIST;
       const isFuture = dateStr > todayIST;
+      const isBeforeJoining = Boolean(joiningDateStr && dateStr < joiningDateStr);
 
-      let status: 'holiday' | 'week_off' | 'leave' | 'present' | 'pending' | 'absent' | 'future' = 'future';
+      let status: 'holiday' | 'week_off' | 'leave' | 'present' | 'regularized' | 'pending' | 'absent' | 'future' | 'pre_joining' = 'future';
 
-      if (holiday) {
+      if (isBeforeJoining) {
+        status = 'pre_joining';
+      } else if (holiday) {
         status = 'holiday';
       } else if (isWeekOff) {
         status = 'week_off';
@@ -228,11 +262,23 @@ export const DailyAttendanceTracker: React.FC = () => {
       } else if (punch) {
         if (punch.regularizationStatus === 'pending' || punch.approvalStatus === 'pending_manager_approval') {
           status = 'pending';
+        } else if (punch.regularizationStatus === 'approved' || punch.status === 'regularized') {
+          status = 'regularized';
+        } else if (punch.status === 'absent') {
+          status = 'absent';
         } else {
           status = 'present';
         }
       } else if (isPast) {
+        // Past working day after joining date without punch -> Automatically Absent until regularized!
         status = 'absent';
+      } else if (isToday) {
+        // Today's shift evaluation: if shift has ended and no punch -> Automatically Absent until regularized!
+        if (currentTotalMins >= shiftEndMins) {
+          status = 'absent';
+        } else {
+          status = 'future';
+        }
       } else {
         status = 'future';
       }
@@ -242,6 +288,7 @@ export const DailyAttendanceTracker: React.FC = () => {
         dateStr,
         dayOfWeek,
         isWeekOff,
+        isBeforeJoining,
         holiday,
         leave,
         punch,
@@ -253,23 +300,30 @@ export const DailyAttendanceTracker: React.FC = () => {
     }
 
     return { daysArray, firstDayIndex, daysInMonth };
-  }, [currentYear, currentMonth, currentOrg.settings, orgHolidays, employeeLeaves, employeeMonthPunches, todayIST]);
+  }, [currentYear, currentMonth, currentOrg.settings, orgHolidays, employeeLeaves, employeeMonthPunches, todayIST, inspectedEmployee.joiningDate]);
 
-  // Monthly summary metrics
+  // Monthly summary metrics strictly based on post-joining active days
   const monthlyMetrics = useMemo(() => {
     const list = calendarDays.daysArray;
     const totalDays = list.length;
-    const holidaysCount = list.filter((d) => d.status === 'holiday').length;
-    const weekOffsCount = list.filter((d) => d.status === 'week_off').length;
-    const workingDays = Math.max(0, totalDays - holidaysCount - weekOffsCount);
-    const presentCount = list.filter((d) => d.status === 'present').length;
-    const leavesCount = list.filter((d) => d.status === 'leave').length;
-    const pendingCount = list.filter((d) => d.status === 'pending').length;
-    const absentCount = list.filter((d) => d.status === 'absent').length;
+    
+    // Only evaluate days on or after employee joining date
+    const eligibleDays = list.filter((d) => !d.isBeforeJoining);
+    const holidaysCount = eligibleDays.filter((d) => d.status === 'holiday').length;
+    const weekOffsCount = eligibleDays.filter((d) => d.status === 'week_off').length;
+    const workingDays = Math.max(0, eligibleDays.length - holidaysCount - weekOffsCount);
+    
+    const presentCount = eligibleDays.filter((d) => d.status === 'present').length;
+    const regularizedCount = eligibleDays.filter((d) => d.status === 'regularized').length;
+    const leavesCount = eligibleDays.filter((d) => d.status === 'leave').length;
+    const pendingCount = eligibleDays.filter((d) => d.status === 'pending').length;
+    const absentCount = eligibleDays.filter((d) => d.status === 'absent').length;
+    const preJoiningCount = list.filter((d) => d.status === 'pre_joining').length;
 
-    const workingDaysSoFar = list.filter((d) => (d.isPast || d.isToday) && !d.isWeekOff && !d.holiday).length;
+    const workingDaysSoFar = eligibleDays.filter((d) => (d.isPast || d.isToday) && !d.isWeekOff && !d.holiday).length;
+    const totalEffectivePresent = presentCount + regularizedCount + (leavesCount * 0.5);
     const attendancePercentage = workingDaysSoFar > 0
-      ? Math.min(100, Math.round(((presentCount + leavesCount * 0.5) / workingDaysSoFar) * 100))
+      ? Math.min(100, Math.round((totalEffectivePresent / workingDaysSoFar) * 100))
       : 100;
 
     return {
@@ -279,9 +333,11 @@ export const DailyAttendanceTracker: React.FC = () => {
       holidaysCount,
       weekOffsCount,
       presentCount,
+      regularizedCount,
       leavesCount,
       pendingCount,
       absentCount,
+      preJoiningCount,
       attendancePercentage
     };
   }, [calendarDays]);
@@ -512,14 +568,32 @@ export const DailyAttendanceTracker: React.FC = () => {
                     {inspectedEmployee.role}
                   </span>
                 </div>
-                <p className="text-xs text-[var(--text-muted)] truncate mt-0.5">
-                  {inspectedEmployee.designation || 'Staff'} • {inspectedEmployee.department} • Joined: {formatISTDate(inspectedEmployee.joiningDate)}
-                </p>
+                <div className="text-xs text-[var(--text-muted)] truncate mt-0.5 flex items-center flex-wrap gap-1.5">
+                  <span>{inspectedEmployee.designation || 'Staff'} • {inspectedEmployee.department}</span>
+                  <span>•</span>
+                  <span className="font-semibold text-[var(--text-primary)]">
+                    Joined: {inspectedEmployee.joiningDate ? formatISTDate(inspectedEmployee.joiningDate) : 'Not Set'}
+                  </span>
+                  {isHrOrSuperadmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingJoiningDateVal(inspectedEmployee.joiningDate || getTodayISTDateString());
+                        setIsEditingJoiningDate(true);
+                      }}
+                      className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-blue-500 hover:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 transition cursor-pointer"
+                      title="Set/Change official joining date (Superadmin/HR only)"
+                    >
+                      <Edit3 className="w-2.5 h-2.5" />
+                      <span>{inspectedEmployee.joiningDate ? 'Edit Joining Date' : 'Set Joining Date'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* Quick Performance & Attendance Chips */}
-            <div className="flex items-center flex-wrap gap-2.5">
+            <div className="flex items-center flex-wrap gap-2">
               <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">
                 <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Attendance Rate</span>
                 <span className="text-sm font-extrabold text-emerald-400 font-mono">
@@ -533,15 +607,21 @@ export const DailyAttendanceTracker: React.FC = () => {
                 </span>
               </div>
               <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">
-                <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Logged Hours</span>
-                <span className="text-sm font-extrabold text-indigo-400 font-mono">
-                  {totalStandupHours} hrs
+                <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Regularized</span>
+                <span className="text-sm font-extrabold text-teal-400 font-mono">
+                  {monthlyMetrics.regularizedCount}
                 </span>
               </div>
               <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">
-                <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Tasks Done</span>
-                <span className="text-sm font-extrabold text-amber-400 font-mono">
-                  {taskStats.done} / {taskStats.total}
+                <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Absent</span>
+                <span className="text-sm font-extrabold text-rose-400 font-mono">
+                  {monthlyMetrics.absentCount}
+                </span>
+              </div>
+              <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">
+                <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Logged Hours</span>
+                <span className="text-sm font-extrabold text-indigo-400 font-mono">
+                  {totalStandupHours} hrs
                 </span>
               </div>
             </div>
@@ -582,19 +662,25 @@ export const DailyAttendanceTracker: React.FC = () => {
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Present
               </span>
               <span className="inline-flex items-center gap-1 font-medium">
+                <span className="w-2.5 h-2.5 rounded-full bg-teal-500" /> Regularized
+              </span>
+              <span className="inline-flex items-center gap-1 font-medium">
                 <span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Holiday
               </span>
               <span className="inline-flex items-center gap-1 font-medium">
                 <span className="w-2.5 h-2.5 rounded-full bg-slate-500" /> Week-Off
               </span>
               <span className="inline-flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Approved Leave
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Leave
               </span>
               <span className="inline-flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Pending Approval
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Pending Reg.
               </span>
               <span className="inline-flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> Absent / Unmarked
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> Absent (Unmarked)
+              </span>
+              <span className="inline-flex items-center gap-1 font-medium">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" /> Pre-Joining
               </span>
             </div>
           </div>
@@ -702,10 +788,22 @@ export const DailyAttendanceTracker: React.FC = () => {
                         </div>
                       )}
 
-                      {status === 'pending' && punch && (
+                      {status === 'regularized' && (
+                        <div className="p-1 rounded-lg bg-teal-500/15 border border-teal-500/30 text-teal-300">
+                          <div className="flex items-center justify-between text-[9px] font-bold">
+                            <span>★ Regularized</span>
+                            <span className="font-mono">{punch?.totalHours || 8}h</span>
+                          </div>
+                          <span className="block text-[8px] text-teal-400 truncate">
+                            Approved by Lead
+                          </span>
+                        </div>
+                      )}
+
+                      {status === 'pending' && (
                         <div className="p-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300">
                           <span className="block text-[9px] font-bold truncate">
-                            ⏳ Pending
+                            ⏳ Pending Reg.
                           </span>
                           <span className="block text-[8px] opacity-75 truncate">
                             Approval Req.
@@ -714,9 +812,20 @@ export const DailyAttendanceTracker: React.FC = () => {
                       )}
 
                       {status === 'absent' && (
-                        <div className="p-1 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400">
-                          <span className="block text-[9px] font-semibold truncate">
-                            ✗ Unmarked
+                        <div className="p-1 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300">
+                          <span className="block text-[9px] font-bold truncate">
+                            ✗ Absent
+                          </span>
+                          <span className="block text-[8px] text-rose-400/80 truncate">
+                            Unmarked Shift
+                          </span>
+                        </div>
+                      )}
+
+                      {status === 'pre_joining' && (
+                        <div className="p-1 rounded-lg bg-slate-800/30 border border-slate-700/40 text-slate-500">
+                          <span className="block text-[8px] font-bold truncate uppercase tracking-wider">
+                            ⚪ Pre-Joining
                           </span>
                         </div>
                       )}
@@ -1088,6 +1197,8 @@ export const DailyAttendanceTracker: React.FC = () => {
                 className={`p-3.5 rounded-xl border flex items-center justify-between ${
                   selectedCalendarDay.status === 'present'
                     ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : selectedCalendarDay.status === 'regularized'
+                    ? 'bg-teal-500/10 border-teal-500/30 text-teal-300'
                     : selectedCalendarDay.status === 'holiday'
                     ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
                     : selectedCalendarDay.status === 'week_off'
@@ -1098,6 +1209,8 @@ export const DailyAttendanceTracker: React.FC = () => {
                     ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
                     : selectedCalendarDay.status === 'absent'
                     ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                    : selectedCalendarDay.status === 'pre_joining'
+                    ? 'bg-slate-800/30 border-slate-700/40 text-slate-400'
                     : 'bg-slate-800/20 border-slate-700/40 text-slate-400'
                 }`}
               >
@@ -1105,6 +1218,8 @@ export const DailyAttendanceTracker: React.FC = () => {
                   <span className="text-base">
                     {selectedCalendarDay.status === 'present'
                       ? '✓'
+                      : selectedCalendarDay.status === 'regularized'
+                      ? '★'
                       : selectedCalendarDay.status === 'holiday'
                       ? '🎊'
                       : selectedCalendarDay.status === 'week_off'
@@ -1115,12 +1230,16 @@ export const DailyAttendanceTracker: React.FC = () => {
                       ? '⏳'
                       : selectedCalendarDay.status === 'absent'
                       ? '✗'
+                      : selectedCalendarDay.status === 'pre_joining'
+                      ? '⚪'
                       : '🗓️'}
                   </span>
                   <div>
                     <span className="font-extrabold block text-xs uppercase tracking-wide">
                       {selectedCalendarDay.status === 'present'
                         ? 'Present • Verified Punch'
+                        : selectedCalendarDay.status === 'regularized'
+                        ? 'Present • Regularized by Lead'
                         : selectedCalendarDay.status === 'holiday'
                         ? `Official Holiday: ${selectedCalendarDay.holiday?.name}`
                         : selectedCalendarDay.status === 'week_off'
@@ -1130,18 +1249,24 @@ export const DailyAttendanceTracker: React.FC = () => {
                         : selectedCalendarDay.status === 'pending'
                         ? 'Regularization Pending Approval'
                         : selectedCalendarDay.status === 'absent'
-                        ? 'Unmarked / Absent Day'
+                        ? 'Unmarked Shift • Marked as Absent'
+                        : selectedCalendarDay.status === 'pre_joining'
+                        ? 'Pre-Joining Period'
                         : 'Future Shift Scheduled'}
                     </span>
                     <span className="text-[10px] opacity-80">
                       {selectedCalendarDay.status === 'present'
                         ? `Total of ${selectedCalendarDay.punch?.totalHours || 8} hours logged`
+                        : selectedCalendarDay.status === 'regularized'
+                        ? `Attendance regularized with ${selectedCalendarDay.punch?.totalHours || 8} hours credited`
                         : selectedCalendarDay.status === 'week_off'
                         ? 'No attendance required as per organization shift schedule'
                         : selectedCalendarDay.status === 'holiday'
                         ? 'Mandatory paid corporate holiday'
                         : selectedCalendarDay.status === 'absent'
-                        ? 'Punch-in was not recorded within official shift timings'
+                        ? 'Shift completed without punch. Marked as absent until regularized by reporting lead or HR.'
+                        : selectedCalendarDay.status === 'pre_joining'
+                        ? `Employee joined on ${formatISTDate(inspectedEmployee.joiningDate)}. Attendance is only tracked from joining date onwards.`
                         : 'Scheduled according to corporate roster'}
                     </span>
                   </div>
@@ -1234,12 +1359,81 @@ export const DailyAttendanceTracker: React.FC = () => {
               )}
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-3.5 sm:p-4 border-t border-[var(--border-color)] flex items-center justify-end space-x-2 bg-[var(--bg-card-subtle)] shrink-0">
+            {/* Modal Footer with Direct Regularization Actions */}
+            <div className="p-3.5 sm:p-4 border-t border-[var(--border-color)] flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-card-subtle)] shrink-0">
+              <div className="flex items-center flex-wrap gap-2">
+                {/* 1. Request Regularization for Absent days (Employee self-service) */}
+                {selectedCalendarDay.status === 'absent' && selectedEmpId === currentProfile.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onRequestRegularization) {
+                        onRequestRegularization(selectedCalendarDay.punch?.id || null, selectedCalendarDay.dateStr);
+                        setSelectedCalendarDay(null);
+                      } else {
+                        setRegularizingDay(selectedCalendarDay.dateStr);
+                        setSelectedCalendarDay(null);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition flex items-center space-x-1.5 shadow-sm active:scale-98 cursor-pointer"
+                  >
+                    <FileEdit className="w-3.5 h-3.5" />
+                    <span>Request Regularization</span>
+                  </button>
+                )}
+
+                {/* 2. Direct Regularize for Employee (Manager / HR action) */}
+                {selectedCalendarDay.status === 'absent' && (isHrOrSuperadmin || isManager) && selectedEmpId !== currentProfile.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRegularizingDay(selectedCalendarDay.dateStr);
+                      setSelectedCalendarDay(null);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center space-x-1.5 shadow-sm active:scale-98 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Regularize for Employee</span>
+                  </button>
+                )}
+
+                {/* 3. Pending Review Actions (Manager / HR) */}
+                {selectedCalendarDay.status === 'pending' && (isHrOrSuperadmin || isManager) && (
+                  <div className="flex items-center space-x-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedCalendarDay.punch?.id) {
+                          resolveRegularization(selectedCalendarDay.punch.id, 'approved', 'Approved from Attendance Console');
+                          setSelectedCalendarDay(null);
+                        }
+                      }}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center space-x-1 shadow-sm active:scale-98 cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Approve</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedCalendarDay.punch?.id) {
+                          resolveRegularization(selectedCalendarDay.punch.id, 'rejected', 'Rejected from Attendance Console');
+                          setSelectedCalendarDay(null);
+                        }
+                      }}
+                      className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition flex items-center space-x-1 shadow-sm active:scale-98 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Reject</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={() => setSelectedCalendarDay(null)}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-[var(--bg-card)] hover:bg-[var(--border-color)] text-[var(--text-primary)] border border-[var(--border-color)] transition shadow-xs"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--bg-card)] hover:bg-[var(--border-color)] text-[var(--text-primary)] border border-[var(--border-color)] transition shadow-xs cursor-pointer ml-auto"
               >
                 Close Record
               </button>
@@ -1426,6 +1620,262 @@ export const DailyAttendanceTracker: React.FC = () => {
                 <span>{isSavingShift ? 'Saving...' : 'Save Shift Settings'}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. INLINE REGULARIZATION REQUEST MODAL (FOR ABSENT / UNMARKED SHIFTS)     */}
+      {/* ========================================================================= */}
+      {regularizingDay && (
+        <div
+          onClick={() => setRegularizingDay(null)}
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-hidden animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-lg bg-[var(--bg-card)] rounded-t-3xl sm:rounded-2xl border border-[var(--border-color)] shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh] overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200"
+          >
+            <div className="p-4 sm:p-5 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-card-subtle)] shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center font-bold">
+                  <FileEdit className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-[var(--text-primary)]">
+                    Attendance Regularization
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Target Date: <span className="font-mono font-bold text-[var(--text-primary)]">{formatISTDate(regularizingDay)}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRegularizingDay(null)}
+                className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)] rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!regReason.trim()) return;
+                setIsSubmittingReg(true);
+                try {
+                  const fullReason = `[${regCategory}] Shift Hours: ${regInTime} - ${regOutTime} IST. Justification: ${regReason.trim()}`;
+                  // If HR / Superadmin is regularizing for someone else directly:
+                  if ((isHrOrSuperadmin || isManager) && selectedEmpId !== currentProfile.id) {
+                    const existing = attendanceRecords.find((a) => a.employeeId === inspectedEmployee.id && a.date === regularizingDay);
+                    if (existing) {
+                      resolveRegularization(existing.id, 'approved', `Directly regularized by ${currentProfile.firstName} (${currentProfile.role.toUpperCase()}): ${fullReason}`);
+                    } else {
+                      // Insert approved record directly
+                      const { getSupabaseClient } = await import('../lib/supabaseClient');
+                      const client = getSupabaseClient();
+                      const newId = crypto.randomUUID ? crypto.randomUUID() : `reg-${Date.now()}`;
+                      await client.from('attendance').insert({
+                        id: newId,
+                        org_id: currentOrg.id,
+                        employee_id: inspectedEmployee.id,
+                        date: regularizingDay,
+                        status: 'present',
+                        is_remote: false,
+                        total_hours: currentOrg.settings?.workHoursPerDay || 8,
+                        regularization_status: 'approved',
+                        approval_status: 'approved',
+                        regularization_reason: fullReason,
+                        regularized_by: currentProfile.id,
+                        approved_by: currentProfile.id
+                      });
+                      addToast('Attendance Regularized ✅', `Presence record approved for ${inspectedEmployee.firstName}.`, 'success');
+                    }
+                  } else {
+                    // Employee requesting for themselves
+                    requestRegularization(regularizingDay, fullReason, regularizingDay);
+                  }
+                  setRegularizingDay(null);
+                  setRegReason('');
+                } catch (err: any) {
+                  addToast('Regularization Error', err?.message || 'Could not regularize attendance.', 'error');
+                } finally {
+                  setIsSubmittingReg(false);
+                }
+              }}
+              className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1 overscroll-contain"
+            >
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                  Regularization Reason Category *
+                </label>
+                <select
+                  value={regCategory}
+                  onChange={(e) => setRegCategory(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] text-xs font-semibold focus:outline-none focus:border-blue-500"
+                >
+                  <option value="Missed Punch-In / Punch-Out">Missed Punch-In / Punch-Out (Forgot to record)</option>
+                  <option value="Client On-Site Visit">Client On-Site Visit / Field Work</option>
+                  <option value="Approved Work-From-Home">Approved Work-From-Home (WFH)</option>
+                  <option value="Biometric / Network Glitch">Biometric / GPS Glitch</option>
+                  <option value="Official Travel">Official Travel / Corporate Conference</option>
+                  <option value="Medical / Family Emergency">Medical / Emergency Reporting</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                    Shift In Time (IST)
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={regInTime}
+                    onChange={(e) => setRegInTime(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                    Shift Out Time (IST)
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={regOutTime}
+                    onChange={(e) => setRegOutTime(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                  Detailed Justification / Official Remarks *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={regReason}
+                  onChange={(e) => setRegReason(e.target.value)}
+                  placeholder="e.g. Completed scheduled work sprint at office. Missed biometric punch out due to client meeting at departure."
+                  className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] text-xs focus:outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 space-y-1">
+                <span className="font-bold block text-[11px]">Notice:</span>
+                <p className="text-[10px] leading-relaxed">
+                  Upon approval, this day will transition from <strong>Absent</strong> to <strong>Present (Regularized)</strong> with official working hours credited.
+                </p>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setRegularizingDay(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-muted)] hover:bg-[var(--border-color)] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingReg || !regReason.trim()}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                >
+                  <span>{isSubmittingReg ? 'Submitting...' : selectedEmpId === currentProfile.id ? 'Submit Request' : 'Regularize Immediately'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. SET / EDIT JOINING DATE MODAL (SUPERADMIN / HR ONLY)                   */}
+      {/* ========================================================================= */}
+      {isEditingJoiningDate && isHrOrSuperadmin && (
+        <div
+          onClick={() => setIsEditingJoiningDate(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-hidden animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-md bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+          >
+            <div className="p-4 sm:p-5 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-card-subtle)] shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600/15 text-blue-500 flex items-center justify-center font-bold">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-[var(--text-primary)]">
+                    Official Joining Date
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Employee: {inspectedEmployee.firstName} {inspectedEmployee.lastName}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsEditingJoiningDate(false)}
+                className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)] rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!editingJoiningDateVal) return;
+                setIsSavingJoiningDate(true);
+                try {
+                  await updateProfile(inspectedEmployee.id, { joiningDate: editingJoiningDateVal });
+                  addToast('Joining Date Updated 📅', `Official joining date set to ${editingJoiningDateVal} for ${inspectedEmployee.firstName}.`, 'success');
+                  setIsEditingJoiningDate(false);
+                } catch (err: any) {
+                  addToast('Update Failed', err?.message || 'Could not update joining date.', 'error');
+                } finally {
+                  setIsSavingJoiningDate(false);
+                }
+              }}
+              className="p-5 space-y-4 text-xs"
+            >
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                  Select Official Joining Date (IST) *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={editingJoiningDateVal}
+                  onChange={(e) => setEditingJoiningDateVal(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-[10px] text-[var(--text-muted)] mt-1 block leading-relaxed">
+                  Configured strictly by HR / Superadmin. Attendance records, absent flags, and working day percentages will calculate strictly from this date onwards.
+                </span>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingJoiningDate(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-muted)] hover:bg-[var(--border-color)] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingJoiningDate || !editingJoiningDateVal}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                >
+                  <span>{isSavingJoiningDate ? 'Saving...' : 'Save Joining Date'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

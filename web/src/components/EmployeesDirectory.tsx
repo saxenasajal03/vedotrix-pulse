@@ -35,7 +35,7 @@ import {
   Clock,
   AlertTriangle
 } from 'lucide-react';
-import { formatSalaryOrStipend, formatISTDate } from '../lib/serialUtils';
+import { formatSalaryOrStipend, formatISTDate, getTodayISTDateString } from '../lib/serialUtils';
 import { sendWelcomeEmail, resendBatchWelcomeEmails } from '../lib/mailer';
 import { OrganizationTree } from './OrganizationTree';
 
@@ -91,6 +91,7 @@ export const EmployeesDirectory: React.FC = () => {
   const [editManagerId, setEditManagerId] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
   const [editPhone, setEditPhone] = useState('');
+  const [editJoiningDate, setEditJoiningDate] = useState('');
   // Statutory Banking & PF (editable by HR/Superadmin)
   const [editBankName, setEditBankName] = useState('');
   const [editAccountNumber, setEditAccountNumber] = useState('');
@@ -107,6 +108,7 @@ export const EmployeesDirectory: React.FC = () => {
     setEditManagerId(emp.managerId || '');
     setEditIsActive(emp.isActive ?? true);
     setEditPhone(emp.phone || '');
+    setEditJoiningDate(emp.joiningDate || getTodayISTDateString());
     setEditBankName(emp.bankName || '');
     setEditAccountNumber(emp.accountNumber || '');
     setEditIfscCode(emp.ifscCode || '');
@@ -125,6 +127,7 @@ export const EmployeesDirectory: React.FC = () => {
       managerId: editManagerId || undefined,
       isActive: editIsActive,
       phone: editPhone.trim(),
+      joiningDate: editJoiningDate || undefined,
       bankName: editBankName.trim() || undefined,
       accountNumber: editAccountNumber.trim() || undefined,
       ifscCode: editIfscCode.trim().toUpperCase() || undefined,
@@ -237,7 +240,7 @@ export const EmployeesDirectory: React.FC = () => {
   const [newRole, setNewRole] = useState<UserRole>('employee');
   const [newDesignation, setNewDesignation] = useState('');
   const [newDepartment, setNewDepartment] = useState('Development');
-  const [newJoiningDate, setNewJoiningDate] = useState('2026-10-01');
+  const [newJoiningDate, setNewJoiningDate] = useState(() => getTodayISTDateString());
   const [newBaseSalary, setNewBaseSalary] = useState(0);
   const [newManagerId, setNewManagerId] = useState('');
   const [newBankName, setNewBankName] = useState('');
@@ -677,6 +680,12 @@ export const EmployeesDirectory: React.FC = () => {
                       {/* Designation */}
                       <td className="p-4">
                         <span className="text-slate-800 font-medium">{emp.designation || 'Specialist'}</span>
+                        {emp.joiningDate && (
+                          <span className="text-[10px] text-slate-400 flex items-center mt-0.5">
+                            <Calendar className="w-2.5 h-2.5 mr-1 text-blue-500 shrink-0" />
+                            Joined {formatISTDate(emp.joiningDate)}
+                          </span>
+                        )}
                         {manager && (
                           <span className="text-[10px] text-slate-400 block">
                             Lead: {manager.firstName} {manager.lastName}
@@ -1307,6 +1316,23 @@ export const EmployeesDirectory: React.FC = () => {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Official Joining Date (IST) *</span>
+                  <span className="text-[10px] text-blue-600 font-normal">Attendance tracks from this date</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={editJoiningDate}
+                  onChange={(e) => setEditJoiningDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  Configured by Superadmin / HR. Attendance & absent checks apply strictly starting from this date.
+                </span>
+              </div>
+
               {/* Banking & Statutory Details (HR / Superadmin Editable) */}
               <div className="pt-3 border-t border-slate-100 space-y-3">
                 <div className="flex items-center space-x-1.5">
@@ -1565,7 +1591,20 @@ export const EmployeesDirectory: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monthly Base (₹)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Official Joining Date (IST) *</label>
+                  <input
+                    type="date"
+                    required
+                    value={newJoiningDate}
+                    onChange={(e) => setNewJoiningDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monthly Base / Stipend (₹)</label>
                   <input
                     type="number"
                     min="0"
