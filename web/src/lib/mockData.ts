@@ -526,6 +526,7 @@ export const INITIAL_NOTIFICATIONS: InAppNotification[] = [
     category: 'system',
     isRead: false,
     timestamp: 'Just now',
+    createdAt: new Date().toISOString(),
     linkTab: 'superadmin'
   }
 ];

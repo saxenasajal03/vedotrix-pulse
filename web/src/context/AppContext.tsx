@@ -44,7 +44,7 @@ import {
   INITIAL_BROADCASTS,
   INITIAL_HOLIDAYS
 } from '../lib/mockData';
-import { generateVerificationToken, generateUUID, getTodayISTDateString, formatISTTime, formatISTDateTime } from '../lib/serialUtils';
+import { generateVerificationToken, generateUUID, getTodayISTDateString, formatISTTime, formatISTDateTime, formatRelativeTime } from '../lib/serialUtils';
 import {
   getStoredSupabaseConfig,
   saveSupabaseConfig,
@@ -354,9 +354,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notifications, setNotifications] = useState<InAppNotification[]>(() => {
     try {
       const stored = localStorage.getItem('vdx_notifications');
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((n: InAppNotification) => {
+            const validCreatedAt = n.createdAt || (n.timestamp && !isNaN(new Date(n.timestamp).getTime()) ? new Date(n.timestamp).toISOString() : new Date().toISOString());
+            return {
+              ...n,
+              createdAt: validCreatedAt,
+              timestamp: formatRelativeTime(validCreatedAt)
+            };
+          });
+        }
+      }
     } catch {}
-    return [];
+    return INITIAL_NOTIFICATIONS.map((n) => {
+      const cAt = n.createdAt || new Date().toISOString();
+      return {
+        ...n,
+        createdAt: cAt,
+        timestamp: formatRelativeTime(cAt)
+      };
+    });
   });
   const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>([]);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
@@ -906,6 +925,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 1. Supabase Realtime WebSocket Subscription
     const realtimeChannel = client.channel(`vdx_live_pulse_${currentOrgId}`)
+      .on(
+        'broadcast',
+        { event: 'vdx_notification' },
+        ({ payload }: any) => {
+          if (!isMounted || !payload) return;
+          const notif = payload as InAppNotification;
+          if (notif.orgId && notif.orgId !== currentOrgId) return;
+          const activeProf = profiles.find((p) => p.id === currentProfileId);
+          const isTargetedToMe = !notif.recipientId || notif.recipientId === currentProfileId ||
+            !notif.recipientRole || notif.recipientRole === 'all' || (activeProf && (notif.recipientRole === activeProf.role || activeProf.role === 'superadmin'));
+          if (!isTargetedToMe) return;
+
+          setNotifications((prev) => {
+            if (prev.some((n) => n.id === notif.id)) return prev;
+            const updated = [{ ...notif, timestamp: formatRelativeTime(notif.createdAt || notif.timestamp) }, ...prev].slice(0, 50);
+            try { localStorage.setItem('vdx_notifications', JSON.stringify(updated)); } catch {}
+            return updated;
+          });
+
+          try {
+            sendDeviceNotification({
+              title: notif.title,
+              body: notif.message,
+              channel: notif.category,
+              tag: `vdx-notif-${notif.id}`
+            });
+          } catch {}
+        }
+      )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'chat_messages', filter: `org_id=eq.${currentOrgId}` },
@@ -1844,7 +1892,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Notification Dispatcher with Recipient & Role Scoping
+  // Notification Dispatcher with Recipient & Role Scoping + Live Supabase Broadcast + Device Alert
   const addNotification = (
     title: string,
     message: string,
@@ -1852,6 +1900,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     linkTab?: string,
     target?: { recipientId?: string; recipientRole?: UserRole | 'all'; orgId?: string }
   ) => {
+    const nowIso = new Date().toISOString();
     const newNotif: InAppNotification = {
       id: generateUUID(),
       orgId: target?.orgId || currentOrgId,
@@ -1861,9 +1910,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       message,
       category,
       isRead: false,
-      timestamp: 'Just now',
+      timestamp: formatRelativeTime(nowIso),
+      createdAt: nowIso,
       linkTab
     };
+
     setNotifications((prev) => {
       const updated = [newNotif, ...prev.filter((n) => n.id !== newNotif.id)].slice(0, 50);
       try {
@@ -1871,6 +1922,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return updated;
     });
+
+    // 1. Supabase Realtime Broadcast to other devices/tabs
+    try {
+      const client = getSupabaseClient();
+      client.channel(`vdx_live_pulse_${target?.orgId || currentOrgId}`).send({
+        type: 'broadcast',
+        event: 'vdx_notification',
+        payload: newNotif
+      });
+    } catch {}
+
+    // 2. Dispatch hardware device notification (chime sound + service worker push)
+    const isTargetedToMe = !target ||
+      (target.recipientId && target.recipientId === currentProfile?.id) ||
+      (target.recipientRole && (target.recipientRole === 'all' || target.recipientRole === currentProfile?.role || currentProfile?.role === 'superadmin'));
+
+    if (isTargetedToMe) {
+      try {
+        sendDeviceNotification({
+          title,
+          body: message,
+          channel: category,
+          tag: `vdx-notif-${newNotif.id}`,
+          url: linkTab ? `${window.location.origin}/?tab=${linkTab}` : undefined
+        });
+      } catch {}
+    }
   };
 
   const markNotificationRead = (id: string) => {
@@ -3130,11 +3208,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     addToast('Regularization Request Submitted 📋', 'Sent to assigned Manager / HR for verification.', 'info');
-    addNotification('Regularization Submitted', `Attendance regularization request for ${effectiveDate || 'shift'} submitted.`, 'attendance', 'attendance');
+    addNotification(
+      'Regularization Requested ⏰',
+      `${currentProfile.firstName} requested attendance regularization for ${effectiveDate || 'shift'}: ${reason}`,
+      'attendance',
+      'attendance',
+      { recipientRole: 'hr' }
+    );
   };
 
   const resolveRegularization = (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => {
     const approverUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
+    const targetAtt = attendanceRecords.find((a) => a.id === attendanceId);
 
     setAttendanceRecords((prev) =>
       prev.map((a) => {
@@ -3177,6 +3262,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Employee presence record ${status.toUpperCase()} by ${currentProfile.firstName} (${currentProfile.role.toUpperCase()}).`,
       status === 'approved' ? 'success' : 'info'
     );
+
+    if (targetAtt) {
+      addNotification(
+        status === 'approved' ? 'Attendance Regularized ✅' : 'Regularization Rejected ❌',
+        `Your attendance regularization for ${targetAtt.date} has been ${status.toUpperCase()} by ${currentProfile.firstName}.${notes ? ` Note: ${notes}` : ''}`,
+        'attendance',
+        'attendance',
+        { recipientId: targetAtt.employeeId }
+      );
+    }
   };
 
   // --- TASKS & STANDUP ---
@@ -3536,7 +3631,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const totalDaysInMonth = new Date(year, month, 0).getDate();
       const presentCount = empAttendance.filter((a) => a.status === 'present' || a.status === 'regularized' || a.status === 'on_leave').length;
       const halfDayCount = empAttendance.filter((a) => a.status === 'half_day').length;
-      const effectivePresent = Math.min(totalDaysInMonth, Math.max(presentCount + halfDayCount * 0.5, totalDaysInMonth));
+      const effectivePresent = Math.min(totalDaysInMonth, Math.max(0, presentCount + halfDayCount * 0.5));
       const lopDays = Math.max(0, totalDaysInMonth - effectivePresent);
 
       const baseSalary = typeof emp.baseSalary === 'number' ? emp.baseSalary : 0;

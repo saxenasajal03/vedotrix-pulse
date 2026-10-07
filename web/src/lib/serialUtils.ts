@@ -145,3 +145,38 @@ export function formatISTDateTime(dateStrOrIso?: string): string {
   }
 }
 
+/**
+ * Formats a date, ISO timestamp, or date string as human-readable relative time in IST context:
+ * "Just now", "2m ago", "1h ago", "Yesterday", or "07 Oct 2026"
+ */
+export function formatRelativeTime(dateStrOrIso?: string): string {
+  if (!dateStrOrIso) return 'Just now';
+
+  // If it's literally 'Just now' with no date available
+  if (dateStrOrIso === 'Just now') return 'Just now';
+
+  const parsed = new Date(dateStrOrIso);
+  if (isNaN(parsed.getTime())) {
+    return dateStrOrIso;
+  }
+
+  const now = Date.now();
+  const diffMs = now - parsed.getTime();
+
+  if (diffMs < 0 && Math.abs(diffMs) < 60000) return 'Just now';
+  if (diffMs < 45 * 1000) return 'Just now';
+
+  const diffMin = Math.floor(diffMs / (60 * 1000));
+  if (diffMin < 60) return `${diffMin}m ago`;
+
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h ago`;
+
+  const diffDays = Math.floor(diffHour / 24);
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  return formatISTDate(dateStrOrIso);
+}
+
+

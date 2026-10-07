@@ -321,7 +321,9 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     const preJoiningCount = list.filter((d) => d.status === 'pre_joining').length;
 
     const workingDaysSoFar = eligibleDays.filter((d) => (d.isPast || d.isToday) && !d.isWeekOff && !d.holiday).length;
-    const totalEffectivePresent = presentCount + regularizedCount + (leavesCount * 0.5);
+    // Regularized approved count strictly included in total Present Days
+    const totalPresentDays = presentCount + regularizedCount;
+    const totalEffectivePresent = totalPresentDays + (leavesCount * 0.5);
     const attendancePercentage = workingDaysSoFar > 0
       ? Math.min(100, Math.round((totalEffectivePresent / workingDaysSoFar) * 100))
       : 100;
@@ -334,6 +336,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       weekOffsCount,
       presentCount,
       regularizedCount,
+      totalPresentDays,
       leavesCount,
       pendingCount,
       absentCount,
@@ -603,13 +606,21 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
               <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">
                 <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Days Present</span>
                 <span className="text-sm font-extrabold text-blue-400 font-mono">
-                  {monthlyMetrics.presentCount} / {monthlyMetrics.workingDays}
+                  {monthlyMetrics.totalPresentDays} / {monthlyMetrics.workingDays}
                 </span>
+                {monthlyMetrics.regularizedCount > 0 && (
+                  <span className="text-[9px] text-teal-400 font-semibold block -mt-0.5">
+                    ({monthlyMetrics.presentCount} + {monthlyMetrics.regularizedCount} Reg)
+                  </span>
+                )}
               </div>
               <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">
                 <span className="text-[10px] text-[var(--text-muted)] block font-semibold">Regularized</span>
                 <span className="text-sm font-extrabold text-teal-400 font-mono">
                   {monthlyMetrics.regularizedCount}
+                </span>
+                <span className="text-[9px] text-emerald-400/90 font-medium block -mt-0.5">
+                  Counted in Present
                 </span>
               </div>
               <div className="px-3 py-1.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)] text-center shadow-xs">

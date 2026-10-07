@@ -258,6 +258,7 @@ export interface InAppNotification {
   category: 'offer' | 'attendance' | 'task' | 'payroll' | 'system' | 'broadcast' | 'leave' | 'announcement';
   isRead: boolean;
   timestamp: string;
+  createdAt?: string;
   linkTab?: string;
 }
 
