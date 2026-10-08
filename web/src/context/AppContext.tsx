@@ -239,13 +239,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', theme);
-    root.classList.remove('theme-cyber-dark', 'theme-midnight', 'theme-corporate-light', 'dark', 'light');
-    if (theme === 'cyber-dark') {
-      root.classList.add('dark', 'theme-cyber-dark');
-    } else if (theme === 'midnight') {
-      root.classList.add('dark', 'theme-midnight');
-    } else {
+    root.classList.remove(
+      'theme-cyber-dark',
+      'theme-midnight',
+      'theme-corporate-light',
+      'theme-emerald-dark',
+      'theme-crimson-dark',
+      'theme-royal-navy',
+      'dark',
+      'light'
+    );
+    if (theme === 'corporate-light') {
       root.classList.add('light', 'theme-corporate-light');
+    } else {
+      root.classList.add('dark', `theme-${theme}`);
     }
   }, [theme]);
 
@@ -357,14 +364,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((n: InAppNotification) => {
-            const validCreatedAt = n.createdAt || (n.timestamp && !isNaN(new Date(n.timestamp).getTime()) ? new Date(n.timestamp).toISOString() : new Date().toISOString());
+          const nowMs = Date.now();
+          const migrated = parsed.map((n: InAppNotification, idx: number) => {
+            let validCreatedAt = n.createdAt;
+            if (!validCreatedAt || isNaN(new Date(validCreatedAt).getTime())) {
+              if (n.timestamp && !isNaN(new Date(n.timestamp).getTime())) {
+                validCreatedAt = new Date(n.timestamp).toISOString();
+              } else {
+                // Stagger older notifications so they do not all say 'Just now'
+                validCreatedAt = new Date(nowMs - (idx + 1) * 35 * 60 * 1000).toISOString();
+              }
+            }
             return {
               ...n,
               createdAt: validCreatedAt,
               timestamp: formatRelativeTime(validCreatedAt)
             };
           });
+          try { localStorage.setItem('vdx_notifications', JSON.stringify(migrated)); } catch {}
+          return migrated;
         }
       }
     } catch {}

@@ -36,6 +36,39 @@
     --accent-blue: #818cf8;
   }
 
+  [data-theme="emerald-dark"], .theme-emerald-dark {
+    --bg-page: #04120c;
+    --bg-card: #092017;
+    --bg-card-subtle: #0f2c20;
+    --border-color: #164231;
+    --text-primary: #ecfdf5;
+    --text-secondary: #a7f3d0;
+    --text-muted: #6ee7b7;
+    --accent-blue: #10b981;
+  }
+
+  [data-theme="crimson-dark"], .theme-crimson-dark {
+    --bg-page: #12080e;
+    --bg-card: #1d0d17;
+    --bg-card-subtle: #291321;
+    --border-color: #3b192f;
+    --text-primary: #fff1f2;
+    --text-secondary: #fecdd3;
+    --text-muted: #fda4af;
+    --accent-blue: #f43f5e;
+  }
+
+  [data-theme="royal-navy"], .theme-royal-navy {
+    --bg-page: #070d1e;
+    --bg-card: #0c1633;
+    --bg-card-subtle: #132149;
+    --border-color: #1b2f63;
+    --text-primary: #f0f7ff;
+    --text-secondary: #bfdbfe;
+    --text-muted: #93c5fd;
+    --accent-blue: #3b82f6;
+  }
+
   body {
     background-color: var(--bg-page);
     color: var(--text-primary);
@@ -49,8 +82,14 @@
   .dark,
   [data-theme="cyber-dark"],
   [data-theme="midnight"],
+  [data-theme="emerald-dark"],
+  [data-theme="crimson-dark"],
+  [data-theme="royal-navy"],
   .theme-cyber-dark,
-  .theme-midnight {
+  .theme-midnight,
+  .theme-emerald-dark,
+  .theme-crimson-dark,
+  .theme-royal-navy {
     color-scheme: dark;
   }
 

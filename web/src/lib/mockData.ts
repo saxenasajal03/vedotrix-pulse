@@ -525,9 +525,29 @@ export const INITIAL_NOTIFICATIONS: InAppNotification[] = [
     message: 'System is connected to live Supabase DB. Ready to onboard real organizations and staff.',
     category: 'system',
     isRead: false,
-    timestamp: 'Just now',
-    createdAt: new Date().toISOString(),
+    timestamp: '25m ago',
+    createdAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
     linkTab: 'superadmin'
+  },
+  {
+    id: 'notif-vdx-attendance',
+    title: 'Geofence Attendance Engine Calibrated 📍',
+    message: 'Office geofence radius and strict shift timings are active for your workspace.',
+    category: 'attendance',
+    isRead: false,
+    timestamp: '2h ago',
+    createdAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    linkTab: 'attendance'
+  },
+  {
+    id: 'notif-vdx-security',
+    title: 'Tamper-Proof Serial Verification Active 🔒',
+    message: 'Cryptographic document seal and QR verification enabled across offer letters and credentials.',
+    category: 'offer',
+    isRead: true,
+    timestamp: 'Yesterday',
+    createdAt: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
+    linkTab: 'offers'
   }
 ];
 

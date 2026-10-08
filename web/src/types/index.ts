@@ -7,7 +7,13 @@ export type UserRole = 'superadmin' | 'owner' | 'hr' | 'manager' | 'employee';
 
 export type IndustryType = 'Tech' | 'Digital Marketing' | 'Hybrid';
 
-export type ThemeMode = 'cyber-dark' | 'midnight' | 'corporate-light';
+export type ThemeMode =
+  | 'corporate-light'
+  | 'cyber-dark'
+  | 'midnight'
+  | 'emerald-dark'
+  | 'crimson-dark'
+  | 'royal-navy';
 
 export interface Organization {
   id: string;

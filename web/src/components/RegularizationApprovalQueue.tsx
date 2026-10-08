@@ -3,12 +3,17 @@ import { useApp } from '../context/AppContext';
 import { Check, X, Clock, AlertCircle, User, Calendar, MapPin } from 'lucide-react';
 
 export const RegularizationApprovalQueue: React.FC = () => {
-  const { attendanceRecords, resolveRegularization, orgProfiles, currentProfile } = useApp();
+  const { attendanceRecords, resolveRegularization, orgProfiles, currentProfile, isVedotrixSuperadmin } = useApp();
 
-  const isReviewer = currentProfile.role === 'hr' || currentProfile.role === 'owner' || currentProfile.role === 'manager';
+  const isReviewer =
+    currentProfile?.role === 'superadmin' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'hr' ||
+    currentProfile?.role === 'manager' ||
+    isVedotrixSuperadmin;
   const pendingRequests = attendanceRecords.filter((a) => a.regularizationStatus === 'pending');
 
-  if (pendingRequests.length === 0) return null;
+  if (!isReviewer || pendingRequests.length === 0) return null;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
@@ -36,12 +41,16 @@ export const RegularizationApprovalQueue: React.FC = () => {
           const managerProfile = emp?.managerId ? orgProfiles.find((p) => p.id === emp.managerId) : null;
           
           // An approver can be:
-          // 1. Designated reporting manager for this employee
-          // 2. HR role
-          // 3. Org Owner
-          // 4. Superadmin
+          // 1. Superadmin (universal access)
+          // 2. HR role / Org Owner
+          // 3. Designated reporting manager for this employee
           const isAssignedManager = emp?.managerId === currentProfile?.id;
-          const canApprove = isAssignedManager || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin';
+          const canApprove =
+            currentProfile?.role === 'superadmin' ||
+            isVedotrixSuperadmin ||
+            currentProfile?.role === 'hr' ||
+            currentProfile?.role === 'owner' ||
+            isAssignedManager;
 
           return (
             <div key={req.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">

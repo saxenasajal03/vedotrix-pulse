@@ -14,7 +14,10 @@ import {
   Sun,
   Moon,
   Sparkles,
-  Palette
+  Palette,
+  Trees,
+  Flame,
+  Compass
 } from 'lucide-react';
 import { NotificationDropdown } from './NotificationDropdown';
 import { EditOrganizationModal } from './EditOrganizationModal';
@@ -62,9 +65,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canManageOrg = isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr';
 
   const themeOptions = [
-    { id: 'corporate-light', label: 'Corporate Light', icon: Sun, desc: 'Clean White & Slate' },
-    { id: 'cyber-dark', label: 'Cyber Dark', icon: Moon, desc: 'Modern Slate Dark' },
-    { id: 'midnight', label: 'Midnight Galaxy', icon: Sparkles, desc: 'Deep Space Navy' }
+    { id: 'corporate-light', label: 'Corporate Light', icon: Sun, desc: 'Clean White & Slate', colorDot: 'bg-blue-600' },
+    { id: 'cyber-dark', label: 'Cyber Dark', icon: Moon, desc: 'Modern Slate Dark', colorDot: 'bg-sky-400' },
+    { id: 'midnight', label: 'Midnight Galaxy', icon: Sparkles, desc: 'Deep Space Navy', colorDot: 'bg-indigo-400' },
+    { id: 'emerald-dark', label: 'Emerald Forest', icon: Trees, desc: 'Cyber Green & Mint', colorDot: 'bg-emerald-400' },
+    { id: 'crimson-dark', label: 'Crimson Velvet', icon: Flame, desc: 'Rose Obsidian Dark', colorDot: 'bg-rose-400' },
+    { id: 'royal-navy', label: 'Royal Cobalt', icon: Compass, desc: 'Deep Ocean & Blue', colorDot: 'bg-blue-500' }
   ];
 
   const currentThemeMeta = themeOptions.find((t) => t.id === theme) || themeOptions[0];
@@ -162,16 +168,16 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {isThemeMenuOpen && (
               <div
-                className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150"
+                className="absolute right-0 mt-2 w-56 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 overflow-hidden"
                 onClick={() => setIsThemeMenuOpen(false)}
               >
-                <div className="px-3 py-1.5 border-b border-slate-100">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                    <Palette className="w-3 h-3 text-blue-600" />
-                    Interface Theme
+                <div className="px-3 py-1.5 border-b border-[var(--border-color)] bg-[var(--bg-card-subtle)]">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+                    <Palette className="w-3 h-3 text-blue-500" />
+                    Interface Themes ({themeOptions.length})
                   </p>
                 </div>
-                <div className="py-1">
+                <div className="py-1 max-h-72 overflow-y-auto">
                   {themeOptions.map((opt) => {
                     const OptIcon = opt.icon;
                     const isActive = theme === opt.id;
@@ -181,18 +187,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                         onClick={() => setTheme(opt.id as any)}
                         className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition ${
                           isActive
-                            ? 'bg-blue-50 text-blue-700 font-bold'
-                            : 'text-slate-700 hover:bg-slate-50'
+                            ? 'bg-blue-600/10 text-blue-400 font-bold'
+                            : 'text-[var(--text-primary)] hover:bg-[var(--bg-card-subtle)]'
                         }`}
                       >
-                        <div className="flex items-center space-x-2">
-                          <OptIcon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
+                        <div className="flex items-center space-x-2.5">
+                          <span className={`w-2.5 h-2.5 rounded-full ${opt.colorDot} shrink-0 shadow-xs`} />
+                          <OptIcon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-400' : 'text-[var(--text-muted)]'}`} />
                           <div>
-                            <span className="block leading-tight">{opt.label}</span>
-                            <span className="text-[9px] text-slate-400 font-normal">{opt.desc}</span>
+                            <span className="block leading-tight font-bold">{opt.label}</span>
+                            <span className="text-[9px] text-[var(--text-muted)] font-normal">{opt.desc}</span>
                           </div>
                         </div>
-                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
+                        {isActive && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />}
                       </button>
                     );
                   })}
