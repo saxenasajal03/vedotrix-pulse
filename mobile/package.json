@@ -20,6 +20,7 @@
   "devDependencies": {
     "@babel/core": "^7.20.0",
     "@types/react": "~18.2.45",
+    "eas-cli": "^24.13.0",
     "typescript": "~5.3.3"
   },
   "private": true
