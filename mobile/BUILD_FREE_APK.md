@@ -12,20 +12,29 @@ All modules, screens, and workflows are connected to the live Supabase PostgreSQ
    - Live constant-time bcrypt verification via `verify_user_password` PostgreSQL RPC.
    - All passwords in Supabase are salted bcrypt hashes (`$2a$10$...`).
    - Generic login screen with rate-limiting lockout protection (no credential leaks).
-2. **Multi-Tenant SaaS Architecture**:
+2. **Smart Attendance & Shift Reminders**:
+   - High-precision GPS punch with radius geofence (200m).
+   - In-Office vs Remote tagging with instant device notifications.
+   - **Automatic Shift Attendance Alerts**: If an employee hasn't marked attendance when their shift starts (09:30 AM IST), a native notification and in-app reminder alert them to punch in or regularize.
+   - Interactive **"🔔 Alert Test"** button in top bar to test notification channels anytime.
+3. **Attendance Calendar & Mobile Regularization**:
+   - Monthly attendance calendar with color-coded day badges (Present, Regularized, Absent, Week Off).
+   - Monthly statistics counters (Present Days, Regularized, Absent, Attendance Rate %).
+   - 1-tap **"Request Regularize"** on any unmarked or absent day with reason, shift timings, and manager routing.
+4. **Systematic Meetings & Video Calls**:
+   - Real-time Supabase synchronization with `meetings` table.
+   - Filter by All, Today, Upcoming, and Past.
+   - 1-tap **"🎥 Join Video Call"** (opens Google Meet / Zoom directly on Android).
+   - 1-tap **"🔔 Remind Me (10m)"** (schedules a native Android notification alarm 10 minutes prior to meeting start).
+   - **"+ Schedule"** modal for HR, Managers, and Superadmins to schedule new team meetings directly from mobile.
+5. **Multi-Tenant SaaS Architecture**:
    - Organizations isolated with unique `org_code`, settings, and custom logos.
    - Root Super Controller console for Vedotrix global administration.
-3. **Offer Letter Engine**:
-   - Cryptographic serial generation (`VDX-TECH-2026-XXXX`).
-   - Public HR verification portal and automated email notifications.
-4. **Attendance & Geo-Fencing**:
-   - High-precision GPS punch with radius geofence (200m).
-   - In-Office vs Remote tagging with regularization approval queues.
-5. **Multi-Hierarchy Managers & Access Requests**:
+6. **Multi-Hierarchy Managers & Access Requests**:
    - Employees belong to designated reporting managers (`manager_id`).
    - Module access requests route strictly to their assigned manager.
    - Manager approval queues with instant status updates in DB.
-6. **Task Board & Daily Standups**:
+7. **Task Board & Daily Standups**:
    - Kanban board customized for Tech Sprints (Git PRs, Sprint points) and Digital Marketing (ROAS, Ads).
    - EOD Standup submission with Supabase synchronization.
 

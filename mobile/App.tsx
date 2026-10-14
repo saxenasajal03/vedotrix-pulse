@@ -10,11 +10,23 @@ import {
   Alert,
   Image,
   TextInput,
-  Modal
+  Modal,
+  Linking,
+  Platform
 } from 'react-native';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+// Configure foreground notifications
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 // Live Supabase Production Cluster: cqevzpvyqvckvenutuzz
 const DEFAULT_SUPABASE_URL = 'https://cqevzpvyqvckvenutuzz.supabase.co';
@@ -61,7 +73,7 @@ export default function App() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   // Active Bottom Navigation Tab
-  const [activeTab, setActiveTab] = useState<'punch' | 'org' | 'offers' | 'tasks' | 'requests'>('punch');
+  const [activeTab, setActiveTab] = useState<'punch' | 'calendar' | 'meetings' | 'tasks' | 'requests' | 'org' | 'offers'>('punch');
 
   // GPS Attendance State
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
@@ -101,11 +113,31 @@ export default function App() {
   const [verifyQuery, setVerifyQuery] = useState('');
   const [verifyResult, setVerifyResult] = useState<any>(null);
 
-  // Attendance Regularization State
+  // Attendance Regularization & Calendar State
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
   const [isRegModal, setIsRegModal] = useState(false);
   const [regCategory, setRegCategory] = useState('Client On-Site Visit');
   const [regJustification, setRegJustification] = useState('');
+  const [regTargetDate, setRegTargetDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [regInTime, setRegInTime] = useState('09:30');
+  const [regOutTime, setRegOutTime] = useState('18:30');
+  const [selectedCalMonth, setSelectedCalMonth] = useState(new Date().getMonth() + 1);
+  const [selectedCalYear, setSelectedCalYear] = useState(new Date().getFullYear());
+  const [attendanceAlertActive, setAttendanceAlertActive] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(false);
+
+  // Meetings & Events State
+  const [meetings, setMeetings] = useState<any[]>([]);
+  const [isMeetingModal, setIsMeetingModal] = useState(false);
+  const [meetingFilterTab, setMeetingFilterTab] = useState<'all' | 'today' | 'upcoming' | 'past'>('all');
+  const [newMeetingTitle, setNewMeetingTitle] = useState('');
+  const [newMeetingDesc, setNewMeetingDesc] = useState('');
+  const [newMeetingDate, setNewMeetingDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newMeetingStartTime, setNewMeetingStartTime] = useState('11:00');
+  const [newMeetingEndTime, setNewMeetingEndTime] = useState('11:45');
+  const [newMeetingUrl, setNewMeetingUrl] = useState('https://meet.google.com/new');
+  const [newMeetingDept, setNewMeetingDept] = useState('Engineering');
+  const [isSubmittingMeeting, setIsSubmittingMeeting] = useState(false);
 
   // Tasks & Standups State
   const [tasks, setTasks] = useState<any[]>([]);
@@ -156,6 +188,7 @@ export default function App() {
         setIsLoggedIn(true);
         loadSavedPunch();
         requestLocationPermission();
+        setupNotificationsAsync();
         refreshAllData(client, parsed.org_id, parsed.user_id);
       }
     } catch (e) {
@@ -198,13 +231,17 @@ export default function App() {
       }
 
       // 4. Attendance Records
+      let fetchedAttendance: any[] = [];
       if (targetOrgId) {
         const { data: att } = await client
           .from('attendance')
           .select('*')
           .eq('org_id', targetOrgId)
           .order('date', { ascending: false });
-        if (att) setAttendanceRecords(att);
+        if (att) {
+          setAttendanceRecords(att);
+          fetchedAttendance = att;
+        }
       }
 
       // 5. Tasks
@@ -232,8 +269,179 @@ export default function App() {
         .select('*')
         .order('created_at', { ascending: false });
       if (reqs) setAccessRequests(reqs);
+
+      // 8. Meetings & Schedules
+      if (targetOrgId) {
+        const { data: mtg } = await client
+          .from('meetings')
+          .select('*')
+          .eq('org_id', targetOrgId)
+          .order('date', { ascending: false });
+        if (mtg) setMeetings(mtg);
+      }
+
+      // Check daily attendance status & trigger reminder if shift started
+      checkAttendanceStatusAndNotify(fetchedAttendance);
     } catch (err) {
       console.log('Error refreshing data:', err);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // NOTIFICATIONS ENGINE FOR ANDROID (ATTENDANCE & MEETINGS)
+  // -------------------------------------------------------------
+  const setupNotificationsAsync = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('attendance-alerts', {
+          name: 'Shift Attendance Alerts',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 300, 200, 300],
+          lightColor: '#f59e0b',
+          sound: 'default'
+        });
+
+        await Notifications.setNotificationChannelAsync('meetings-alerts', {
+          name: 'Meeting & Schedule Alerts',
+          importance: Notifications.AndroidImportance.HIGH,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#6366f1',
+          sound: 'default'
+        });
+      }
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      const granted = finalStatus === 'granted';
+      setNotifPermission(granted);
+      return granted;
+    } catch (err) {
+      console.log('Error setting up notifications:', err);
+      return false;
+    }
+  };
+
+  const sendDeviceNotification = async (title: string, body: string, channelId = 'attendance-alerts', data: any = {}) => {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: true,
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+          color: '#2563eb',
+          data
+        },
+        trigger: null
+      });
+    } catch (err) {
+      console.log('Failed to trigger notification:', err);
+    }
+  };
+
+  const checkAttendanceStatusAndNotify = async (records: any[] = attendanceRecords) => {
+    try {
+      const now = new Date();
+      // Formatted date in Asia/Kolkata
+      const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+      const dayOfWeek = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getDay();
+
+      // Skip Sundays
+      if (dayOfWeek === 0) {
+        setAttendanceAlertActive(false);
+        return;
+      }
+
+      const myId = userProfile?.id || userProfile?.user_id;
+      const hasMarked = records.some(
+        (a) =>
+          (a.employee_id === myId || a.profile_id === myId) &&
+          a.date === todayStr &&
+          (a.check_in_time || a.status === 'present' || a.status === 'regularized')
+      ) || isCheckedIn;
+
+      if (!hasMarked) {
+        setAttendanceAlertActive(true);
+        const kolkataTimeStr = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata' }); // HH:MM:SS
+        const [h, m] = kolkataTimeStr.split(':').map(Number);
+        const currentTotalMins = (h || 0) * 60 + (m || 0);
+        const shiftStartMins = 9 * 60 + 30; // 09:30 AM IST
+
+        // If shift start time has arrived / passed and haven't notified today
+        const lastNotifiedDate = await AsyncStorage.getItem('@vdx_last_att_remind_date');
+        if (lastNotifiedDate !== todayStr && currentTotalMins >= shiftStartMins - 15) {
+          await AsyncStorage.setItem('@vdx_last_att_remind_date', todayStr);
+          await sendDeviceNotification(
+            '⏰ Attendance Reminder | Shift Active',
+            'Please mark your attendance! Shift started at 09:30 AM IST. Tap to punch in with GPS or request regularization.',
+            'attendance-alerts'
+          );
+        }
+      } else {
+        setAttendanceAlertActive(false);
+      }
+    } catch (e) {
+      console.log('Attendance reminder check note:', e);
+    }
+  };
+
+  const handleTestNotification = async () => {
+    const granted = await setupNotificationsAsync();
+    if (!granted) {
+      Alert.alert(
+        'Permission Needed',
+        'Please enable notifications for Vedotrix Pulse in your Android settings to receive shift and meeting alerts.'
+      );
+      return;
+    }
+    await sendDeviceNotification(
+      '🔔 Vedotrix Pulse Android Notification Active',
+      'Device notification channel is successfully connected! You will receive shift attendance and meeting alerts on time.'
+    );
+    Alert.alert('Notification Triggered 📱', 'Check your Android notification shade to view the test alert!');
+  };
+
+  const scheduleMeetingReminder = async (meeting: any) => {
+    try {
+      const meetingDateStr = meeting.date; // YYYY-MM-DD
+      const startTimeStr = meeting.start_time || meeting.startTime || '11:00';
+      const [h, m] = startTimeStr.split(':').map(Number);
+
+      const meetingTime = new Date(`${meetingDateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`);
+      const reminderTime = new Date(meetingTime.getTime() - 10 * 60 * 1000);
+      const now = new Date();
+
+      if (reminderTime.getTime() > now.getTime()) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `🔔 Upcoming Meeting: ${meeting.title}`,
+            body: `Starts in 10 minutes (${startTimeStr} IST). Organizer: ${meeting.organizer_name || meeting.organizerName || 'Host'}. Tap to join!`,
+            sound: true,
+            data: { url: meeting.meeting_url || meeting.meetingUrl }
+          },
+          trigger: {
+            date: reminderTime
+          }
+        });
+        Alert.alert(
+          'Meeting Alarm Set ⏰',
+          `You will receive an alert 10 minutes before the meeting at ${reminderTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} IST.`
+        );
+      } else {
+        await sendDeviceNotification(
+          `🔔 Meeting Starting Soon: ${meeting.title}`,
+          `Meeting is starting at ${startTimeStr} IST. Tap to open video link!`,
+          'meetings-alerts',
+          { url: meeting.meeting_url || meeting.meetingUrl }
+        );
+        Alert.alert('Reminder Triggered', 'Meeting is starting soon or in progress. Notification sent to your device!');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Could not schedule reminder.');
     }
   };
 
@@ -347,8 +555,10 @@ export default function App() {
 
       if (supabaseClient && supabaseConnected) {
         try {
+          const myId = userProfile?.user_id || userProfile?.id;
           await supabaseClient.from('attendance').insert({
-            profile_id: userProfile?.user_id,
+            employee_id: myId,
+            profile_id: myId,
             org_id: currentOrg?.id || userProfile?.org_id,
             date: new Date().toISOString().split('T')[0],
             check_in_time: new Date().toISOString(),
@@ -361,6 +571,13 @@ export default function App() {
         } catch (e) {}
       }
 
+      sendDeviceNotification(
+        '✅ Punch In Recorded | Vedotrix Pulse',
+        `Checked in at ${nowTime}. Geofence: ${isInsideFence ? 'In Office' : 'Remote'}. Have a productive day!`,
+        'attendance-alerts'
+      );
+      setAttendanceAlertActive(false);
+
       Alert.alert(
         'Punch In Recorded 📍',
         `Checked in at ${nowTime}. Geofence: ${isInsideFence ? 'In Office' : 'Remote'}`
@@ -369,6 +586,13 @@ export default function App() {
       setIsCheckedIn(false);
       setCheckInTime(null);
       await AsyncStorage.removeItem('@vdx_punch_time');
+
+      sendDeviceNotification(
+        '🌙 Punch Out Recorded | Vedotrix Pulse',
+        `Checked out at ${nowTime}. Daily attendance saved. Please submit your EOD standup!`,
+        'attendance-alerts'
+      );
+
       Alert.alert('Punch Out Recorded 🏁', 'Daily attendance saved. Please submit your EOD standup.');
     }
   };
@@ -382,19 +606,32 @@ export default function App() {
     if (!supabaseClient || !userProfile) return;
 
     try {
+      const myId = userProfile.user_id || userProfile.id;
+      const targetDate = regTargetDate || new Date().toISOString().split('T')[0];
+      const fullReason = `[${regCategory}] Shift: ${regInTime} - ${regOutTime} IST. ${regJustification.trim()}`;
+      const newId = `reg-m-${Date.now()}`;
+
       const { error } = await supabaseClient.from('attendance').insert({
-        profile_id: userProfile.user_id,
+        id: newId,
+        employee_id: myId,
+        profile_id: myId,
         org_id: currentOrg?.id || userProfile.org_id,
-        date: new Date().toISOString().split('T')[0],
-        check_in_time: new Date().toISOString(),
-        status: 'present',
+        date: targetDate,
+        check_in_time: `${targetDate}T${regInTime}:00+05:30`,
+        check_out_time: `${targetDate}T${regOutTime}:00+05:30`,
+        status: 'absent',
         regularization_status: 'pending',
-        regularization_reason: `${regCategory}: ${regJustification.trim()}`,
-        is_remote: true
+        approval_status: 'pending_manager_approval',
+        regularization_reason: fullReason,
+        total_hours: 8
       });
 
       if (!error) {
-        Alert.alert('Request Sent ⏳', 'Regularization submitted for manager approval.');
+        await sendDeviceNotification(
+          '✍️ Regularization Submitted',
+          `Attendance regularization for ${targetDate} has been sent to your manager.`
+        );
+        Alert.alert('Request Sent ⏳', `Regularization for ${targetDate} submitted for manager approval.`);
         setIsRegModal(false);
         setRegJustification('');
         if (supabaseClient) refreshAllData(supabaseClient);
@@ -403,6 +640,61 @@ export default function App() {
       }
     } catch (e: any) {
       Alert.alert('Error', e?.message);
+    }
+  };
+
+  // Create Scheduled Meeting (HR / Manager / Superadmin)
+  const handleCreateMeeting = async () => {
+    if (!newMeetingTitle.trim()) {
+      Alert.alert('Required', 'Please enter meeting title.');
+      return;
+    }
+    if (!supabaseClient || !currentOrg) return;
+
+    setIsSubmittingMeeting(true);
+    try {
+      const myId = userProfile?.user_id || userProfile?.id;
+      const myName = userProfile ? `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim() || userProfile.email : 'Host';
+      const newId = `mtg-m-${Date.now()}`;
+
+      const { error } = await supabaseClient.from('meetings').insert({
+        id: newId,
+        org_id: currentOrg.id,
+        title: newMeetingTitle.trim(),
+        description: newMeetingDesc.trim() || '',
+        date: newMeetingDate,
+        start_time: newMeetingStartTime,
+        end_time: newMeetingEndTime,
+        is_online: true,
+        meeting_url: newMeetingUrl.trim() || 'https://meet.google.com/new',
+        location: 'Google Meet',
+        organizer_id: myId,
+        organizer_name: myName,
+        department: newMeetingDept,
+        status: 'scheduled'
+      });
+
+      if (error) {
+        Alert.alert('Error', error.message || 'Could not schedule meeting.');
+        setIsSubmittingMeeting(false);
+        return;
+      }
+
+      await sendDeviceNotification(
+        '📅 Meeting Scheduled | Vedotrix Pulse',
+        `"${newMeetingTitle.trim()}" set for ${newMeetingDate} at ${newMeetingStartTime} IST.`,
+        'meetings-alerts'
+      );
+
+      Alert.alert('Meeting Scheduled ✅', `Meeting created successfully for ${newMeetingDate} at ${newMeetingStartTime} IST.`);
+      setIsMeetingModal(false);
+      setNewMeetingTitle('');
+      setNewMeetingDesc('');
+      refreshAllData(supabaseClient, currentOrg.id, myId);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to create meeting.');
+    } finally {
+      setIsSubmittingMeeting(false);
     }
   };
 
@@ -657,6 +949,7 @@ export default function App() {
   const isInside = distance !== null && distance <= OFFICE_COORDS.radiusMeters;
   const isSuperadmin = userProfile?.role === 'superadmin';
   const isOwnerOrHR = userProfile?.role === 'owner' || userProfile?.role === 'hr' || isSuperadmin;
+  const canSchedule = isOwnerOrHR || userProfile?.role === 'manager';
 
   // Filter pending regularizations
   const pendingRegularizations = attendanceRecords.filter((a) => a.regularization_status === 'pending');
@@ -745,7 +1038,10 @@ export default function App() {
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity style={styles.notifTestBtn} onPress={handleTestNotification}>
+            <Text style={styles.notifTestBtnText}>🔔 Alert Test</Text>
+          </TouchableOpacity>
           {isSuperadmin && (
             <TouchableOpacity style={styles.switchOrgBtn} onPress={() => setIsOrgModalVisible(true)}>
               <Text style={styles.switchOrgBtnText}>🏢 Switch</Text>
@@ -772,6 +1068,33 @@ export default function App() {
               <View style={styles.activeTag}>
                 <Text style={styles.activeTagText}>LIVE</Text>
               </View>
+            </View>
+          </View>
+        )}
+
+        {/* In-App Shift Attendance Reminder Banner */}
+        {attendanceAlertActive && !isCheckedIn && (
+          <View style={styles.alertBanner}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.alertBannerIcon}>⏰</Text>
+              <Text style={styles.alertBannerTitle}>Shift Active: Attendance Not Marked!</Text>
+            </View>
+            <Text style={styles.alertBannerText}>
+              Your shift has started! Please mark your attendance with GPS punch or submit a regularization request if working off-site.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+              <TouchableOpacity style={styles.alertActionBtn} onPress={handlePunchToggle}>
+                <Text style={styles.alertActionBtnText}>📍 Punch In Now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.alertActionBtn, { backgroundColor: '#f59e0b' }]}
+                onPress={() => {
+                  setRegTargetDate(new Date().toISOString().split('T')[0]);
+                  setIsRegModal(true);
+                }}
+              >
+                <Text style={[styles.alertActionBtnText, { color: '#090d16' }]}>✍️ Regularize</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -830,7 +1153,304 @@ export default function App() {
           </View>
         )}
 
-        {/* 2. HR & ORGANIZATIONS HUB TAB */}
+        {/* 2. CALENDAR & ATTENDANCE STATUS TAB */}
+        {activeTab === 'calendar' && (
+          <View style={{ gap: 14 }}>
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.cardTitle}>Attendance Calendar (IST)</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <TouchableOpacity
+                    style={styles.calNavBtn}
+                    onPress={() => {
+                      if (selectedCalMonth === 1) {
+                        setSelectedCalMonth(12);
+                        setSelectedCalYear((y) => y - 1);
+                      } else {
+                        setSelectedCalMonth((m) => m - 1);
+                      }
+                    }}
+                  >
+                    <Text style={styles.calNavBtnText}>◀</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.calMonthText}>
+                    {new Date(selectedCalYear, selectedCalMonth - 1, 1).toLocaleDateString('en-IN', {
+                      month: 'short',
+                      year: 'numeric'
+                    })}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.calNavBtn}
+                    onPress={() => {
+                      if (selectedCalMonth === 12) {
+                        setSelectedCalMonth(1);
+                        setSelectedCalYear((y) => y + 1);
+                      } else {
+                        setSelectedCalMonth((m) => m + 1);
+                      }
+                    }}
+                  >
+                    <Text style={styles.calNavBtnText}>▶</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.cardDesc}>Tap any absent / unmarked day to request regularization</Text>
+
+              {/* Month Attendance Summary Counters */}
+              {(() => {
+                const myId = userProfile?.id || userProfile?.user_id;
+                const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
+                const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
+                const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+                let present = 0;
+                let regularized = 0;
+                let absent = 0;
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                  const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+                  if (dStr > todayStr) continue; // future
+                  const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
+                  if (dayOfWeek === 0) continue; // Sunday
+                  const punch = attendanceRecords.find(
+                    (a) => (a.employee_id === myId || a.profile_id === myId) && a.date === dStr
+                  );
+                  if (punch?.status === 'present' || punch?.check_in_time) {
+                    present++;
+                  } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                    regularized++;
+                  } else {
+                    absent++;
+                  }
+                }
+                const totalWorking = present + regularized + absent;
+                const percentage = totalWorking > 0 ? (((present + regularized) / totalWorking) * 100).toFixed(1) : '100.0';
+
+                return (
+                  <View style={styles.calSummaryRow}>
+                    <View style={[styles.calSummaryBox, { borderColor: '#10b981' }]}>
+                      <Text style={[styles.calSummaryVal, { color: '#10b981' }]}>{present}</Text>
+                      <Text style={styles.calSummaryLbl}>Present</Text>
+                    </View>
+                    <View style={[styles.calSummaryBox, { borderColor: '#06b6d4' }]}>
+                      <Text style={[styles.calSummaryVal, { color: '#06b6d4' }]}>{regularized}</Text>
+                      <Text style={styles.calSummaryLbl}>Regularized</Text>
+                    </View>
+                    <View style={[styles.calSummaryBox, { borderColor: '#f43f5e' }]}>
+                      <Text style={[styles.calSummaryVal, { color: '#f43f5e' }]}>{absent}</Text>
+                      <Text style={styles.calSummaryLbl}>Absent</Text>
+                    </View>
+                    <View style={[styles.calSummaryBox, { borderColor: '#38bdf8' }]}>
+                      <Text style={[styles.calSummaryVal, { color: '#38bdf8' }]}>{percentage}%</Text>
+                      <Text style={styles.calSummaryLbl}>Rate</Text>
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* Days List */}
+              <View style={{ marginTop: 12, gap: 8 }}>
+                {(() => {
+                  const myId = userProfile?.id || userProfile?.user_id;
+                  const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
+                  const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
+                  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+                  const dayItems = [];
+
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+                    const dateObj = new Date(selectedCalYear, selectedCalMonth - 1, d);
+                    const dayOfWeek = dateObj.getDay();
+                    const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+                    const isSunday = dayOfWeek === 0;
+                    const isFuture = dStr > todayStr;
+                    const isToday = dStr === todayStr;
+
+                    const punch = attendanceRecords.find(
+                      (a) => (a.employee_id === myId || a.profile_id === myId) && a.date === dStr
+                    );
+
+                    let status = 'future';
+                    let statusLabel = 'Upcoming';
+                    let statusColor = '#64748b';
+
+                    if (isSunday) {
+                      status = 'week_off';
+                      statusLabel = 'Week Off';
+                      statusColor = '#475569';
+                    } else if (punch?.status === 'present' || punch?.check_in_time) {
+                      status = 'present';
+                      const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
+                      statusLabel = `✓ Present (${checkInFormatted})`;
+                      statusColor = '#10b981';
+                    } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                      status = 'regularized';
+                      statusLabel = '★ Regularized';
+                      statusColor = '#06b6d4';
+                    } else if (punch?.regularization_status === 'pending') {
+                      status = 'pending';
+                      statusLabel = '⏳ Reg. Pending';
+                      statusColor = '#f59e0b';
+                    } else if (!isFuture) {
+                      status = 'absent';
+                      statusLabel = '✗ Not Marked';
+                      statusColor = '#f43f5e';
+                    }
+
+                    dayItems.push(
+                      <View key={dStr} style={[styles.calDayRow, isToday && styles.calDayRowToday]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                          <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : '#1e293b' }]}>
+                            <Text style={styles.calDayNum}>{d}</Text>
+                            <Text style={styles.calDayName}>{dayName}</Text>
+                          </View>
+                          <View>
+                            <Text style={styles.calDateStr}>{dStr} {isToday ? '(Today)' : ''}</Text>
+                            <Text style={[styles.calStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                          </View>
+                        </View>
+
+                        {/* If absent or un-marked, allow quick regularization */}
+                        {status === 'absent' && (
+                          <TouchableOpacity
+                            style={styles.calRegBtn}
+                            onPress={() => {
+                              setRegTargetDate(dStr);
+                              setIsRegModal(true);
+                            }}
+                          >
+                            <Text style={styles.calRegBtnText}>Regularize</Text>
+                          </TouchableOpacity>
+                        )}
+                        {status === 'regularized' && (
+                          <View style={styles.calApprovedBadge}>
+                            <Text style={styles.calApprovedBadgeText}>Approved</Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  }
+                  return dayItems;
+                })()}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* 3. MEETINGS & SCHEDULES TAB */}
+        {activeTab === 'meetings' && (
+          <View style={{ gap: 14 }}>
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <Text style={styles.cardTitle}>Meetings & Sprints</Text>
+                  <Text style={styles.cardDesc}>Google Meet calls, 1:1 syncs & sprint reviews</Text>
+                </View>
+                {canSchedule && (
+                  <TouchableOpacity
+                    style={styles.smallAddBtn}
+                    onPress={() => setIsMeetingModal(true)}
+                  >
+                    <Text style={styles.smallAddBtnText}>+ Schedule</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filter Tabs */}
+              <View style={styles.filterRow}>
+                {[
+                  { id: 'all', label: 'All' },
+                  { id: 'today', label: 'Today' },
+                  { id: 'upcoming', label: 'Upcoming' },
+                  { id: 'past', label: 'Past' }
+                ].map((tab) => (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[styles.filterTab, meetingFilterTab === tab.id && styles.filterTabActive]}
+                    onPress={() => setMeetingFilterTab(tab.id as any)}
+                  >
+                    <Text style={[styles.filterTabText, meetingFilterTab === tab.id && styles.filterTabTextActive]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Meetings List */}
+              <View style={{ marginTop: 12, gap: 10 }}>
+                {(() => {
+                  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+                  const filtered = meetings.filter((m) => {
+                    const mDate = m.date;
+                    if (meetingFilterTab === 'today') return mDate === todayStr;
+                    if (meetingFilterTab === 'upcoming') return mDate >= todayStr && m.status !== 'completed' && m.status !== 'cancelled';
+                    if (meetingFilterTab === 'past') return mDate < todayStr || m.status === 'completed';
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 28, marginBottom: 6 }}>📅</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: 'bold' }}>No Meetings Found</Text>
+                        <Text style={{ color: '#64748b', fontSize: 11, textAlign: 'center', marginTop: 2 }}>
+                          {meetingFilterTab === 'today'
+                            ? 'No meetings scheduled for today. Have a productive day!'
+                            : 'No meetings match the selected filter.'}
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return filtered.map((m) => {
+                    const isToday = m.date === todayStr;
+                    const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
+
+                    return (
+                      <View key={m.id} style={styles.meetingCard}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={styles.meetingTitle}>{m.title}</Text>
+                            <Text style={styles.meetingMeta}>
+                              📅 {m.date} {isToday ? '• Today' : ''} • ⏰ {m.start_time || m.startTime} - {m.end_time || m.endTime} IST
+                            </Text>
+                            <Text style={styles.meetingHost}>
+                              Host: <Text style={{ color: '#38bdf8' }}>{m.organizer_name || m.organizerName || 'Organizer'}</Text> • Dept: {m.department || 'All'}
+                            </Text>
+                            {m.description ? (
+                              <Text style={styles.meetingDesc}>{m.description}</Text>
+                            ) : null}
+                          </View>
+                          <View style={[styles.meetingStatusBadge, m.status === 'completed' ? styles.statusCompleted : styles.statusScheduled]}>
+                            <Text style={styles.meetingStatusText}>{m.status?.toUpperCase() || 'SCHEDULED'}</Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.meetingActionsRow}>
+                          <TouchableOpacity
+                            style={styles.joinMeetBtn}
+                            onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Link Error', 'Could not open URL: ' + meetUrl))}
+                          >
+                            <Text style={styles.joinMeetBtnText}>🎥 Join Video Call</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.remindBtn}
+                            onPress={() => scheduleMeetingReminder(m)}
+                          >
+                            <Text style={styles.remindBtnText}>🔔 Remind Me (10m)</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  });
+                })()}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* 4. HR & ORGANIZATIONS HUB TAB */}
         {activeTab === 'org' && (
           <View style={{ gap: 14 }}>
             {/* Superadmin Tenant Management */}
@@ -1224,19 +1844,19 @@ export default function App() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'org' && styles.navItemActive]}
-          onPress={() => setActiveTab('org')}
+          style={[styles.navItem, activeTab === 'calendar' && styles.navItemActive]}
+          onPress={() => setActiveTab('calendar')}
         >
-          <Text style={styles.navIcon}>🏢</Text>
-          <Text style={[styles.navLabel, activeTab === 'org' && styles.navLabelActive]}>HR & Org</Text>
+          <Text style={styles.navIcon}>📅</Text>
+          <Text style={[styles.navLabel, activeTab === 'calendar' && styles.navLabelActive]}>Calendar</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'offers' && styles.navItemActive]}
-          onPress={() => setActiveTab('offers')}
+          style={[styles.navItem, activeTab === 'meetings' && styles.navItemActive]}
+          onPress={() => setActiveTab('meetings')}
         >
-          <Text style={styles.navIcon}>📜</Text>
-          <Text style={[styles.navLabel, activeTab === 'offers' && styles.navLabelActive]}>Offers & Pay</Text>
+          <Text style={styles.navIcon}>🎥</Text>
+          <Text style={[styles.navLabel, activeTab === 'meetings' && styles.navLabelActive]}>Meetings</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -1253,8 +1873,16 @@ export default function App() {
         >
           <Text style={styles.navIcon}>⚡</Text>
           <Text style={[styles.navLabel, activeTab === 'requests' && styles.navLabelActive]}>
-            Access {incomingApprovals.length > 0 ? `(${incomingApprovals.length})` : ''}
+            Access{incomingApprovals.length > 0 ? ` (${incomingApprovals.length})` : ''}
           </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.navItem, (activeTab === 'org' || activeTab === 'offers') && styles.navItemActive]}
+          onPress={() => setActiveTab('org')}
+        >
+          <Text style={styles.navIcon}>🏢</Text>
+          <Text style={[styles.navLabel, (activeTab === 'org' || activeTab === 'offers') && styles.navLabelActive]}>HR/Org</Text>
         </TouchableOpacity>
       </View>
 
@@ -1462,35 +2090,172 @@ export default function App() {
             <Text style={styles.modalTitle}>Attendance Regularization</Text>
             <Text style={styles.modalSub}>Submit justification to manager</Text>
 
-            <Text style={styles.inputLabel}>Category</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 }}>
-              {['Client On-Site Visit', 'Approved WFH', 'Missed Punch', 'Network Glitch'].map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[styles.indPill, regCategory === c && styles.indPillActive]}
-                  onPress={() => setRegCategory(c)}
-                >
-                  <Text style={[styles.indPillText, regCategory === c && styles.indPillTextActive]}>{c}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <ScrollView style={{ maxHeight: 380, width: '100%' }}>
+              <Text style={styles.inputLabel}>Target Date (YYYY-MM-DD) *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={regTargetDate}
+                onChangeText={setRegTargetDate}
+                placeholder="2026-10-15"
+                placeholderTextColor="#64748b"
+              />
 
-            <Text style={styles.inputLabel}>Detailed Justification *</Text>
-            <TextInput
-              style={[styles.textInput, { height: 80, textAlignVertical: 'top' }]}
-              value={regJustification}
-              onChangeText={setRegJustification}
-              placeholder="Explain field visit or reason..."
-              placeholderTextColor="#64748b"
-              multiline
-              numberOfLines={3}
-            />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Shift In (IST)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={regInTime}
+                    onChangeText={setRegInTime}
+                    placeholder="09:30"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Shift Out (IST)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={regOutTime}
+                    onChangeText={setRegOutTime}
+                    placeholder="18:30"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.inputLabel}>Category</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 }}>
+                {[
+                  'Client On-Site Visit',
+                  'Approved WFH',
+                  'Missed Punch',
+                  'Network Glitch',
+                  'Official Travel',
+                  'Medical / Emergency'
+                ].map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.indPill, regCategory === c && styles.indPillActive]}
+                    onPress={() => setRegCategory(c)}
+                  >
+                    <Text style={[styles.indPillText, regCategory === c && styles.indPillTextActive]}>{c}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.inputLabel}>Detailed Justification *</Text>
+              <TextInput
+                style={[styles.textInput, { height: 80, textAlignVertical: 'top' }]}
+                value={regJustification}
+                onChangeText={setRegJustification}
+                placeholder="Explain field visit or reason..."
+                placeholderTextColor="#64748b"
+                multiline
+                numberOfLines={3}
+              />
+            </ScrollView>
 
             <TouchableOpacity style={styles.loginBtn} onPress={handleSubmitRegularization}>
               <Text style={styles.loginBtnText}>Submit Regularization</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsRegModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: Schedule New Meeting */}
+      <Modal visible={isMeetingModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Schedule Meeting / Sync</Text>
+            <Text style={styles.modalSub}>Video call, 1:1 or team sprint review</Text>
+
+            <ScrollView style={{ maxHeight: 380, width: '100%' }}>
+              <Text style={styles.inputLabel}>Meeting Title *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newMeetingTitle}
+                onChangeText={setNewMeetingTitle}
+                placeholder="e.g. Weekly Tech Sprint & PR Review"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Date (YYYY-MM-DD) *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newMeetingDate}
+                onChangeText={setNewMeetingDate}
+                placeholder="2026-10-15"
+                placeholderTextColor="#64748b"
+              />
+
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Start Time (IST) *</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={newMeetingStartTime}
+                    onChangeText={setNewMeetingStartTime}
+                    placeholder="11:00"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>End Time (IST) *</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={newMeetingEndTime}
+                    onChangeText={setNewMeetingEndTime}
+                    placeholder="11:45"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.inputLabel}>Google Meet / Zoom URL *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newMeetingUrl}
+                onChangeText={setNewMeetingUrl}
+                placeholder="https://meet.google.com/xyz-abc"
+                placeholderTextColor="#64748b"
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.inputLabel}>Department / Audience</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newMeetingDept}
+                onChangeText={setNewMeetingDept}
+                placeholder="Engineering / Sales / All"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Agenda / Description</Text>
+              <TextInput
+                style={[styles.textInput, { height: 60, textAlignVertical: 'top' }]}
+                value={newMeetingDesc}
+                onChangeText={setNewMeetingDesc}
+                placeholder="Key discussion points, sprint targets..."
+                placeholderTextColor="#64748b"
+                multiline
+              />
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.loginBtn, { marginTop: 10 }]}
+              onPress={handleCreateMeeting}
+              disabled={isSubmittingMeeting}
+            >
+              <Text style={styles.loginBtnText}>
+                {isSubmittingMeeting ? 'Scheduling...' : 'Save & Publish Meeting'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsMeetingModal(false)}>
               <Text style={styles.modalCloseBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -2346,6 +3111,261 @@ const styles = StyleSheet.create({
   },
   indPillTextActive: {
     color: '#38bdf8',
+    fontWeight: 'bold'
+  },
+  notifTestBtn: {
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6
+  },
+  notifTestBtnText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: 'bold'
+  },
+  alertBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: '#f59e0b',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12
+  },
+  alertBannerIcon: {
+    fontSize: 16
+  },
+  alertBannerTitle: {
+    color: '#fbbf24',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  alertBannerText: {
+    color: '#cbd5e1',
+    fontSize: 10,
+    marginTop: 4,
+    lineHeight: 15
+  },
+  alertActionBtn: {
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6
+  },
+  alertActionBtnText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: 'bold'
+  },
+  calNavBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#1e293b',
+    borderRadius: 6
+  },
+  calNavBtnText: {
+    color: '#38bdf8',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  calMonthText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  calSummaryRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 10
+  },
+  calSummaryBox: {
+    flex: 1,
+    backgroundColor: '#07090e',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center'
+  },
+  calSummaryVal: {
+    fontSize: 13,
+    fontWeight: 'bold'
+  },
+  calSummaryLbl: {
+    color: '#94a3b8',
+    fontSize: 9,
+    marginTop: 2
+  },
+  calDayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#07090e',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  calDayRowToday: {
+    borderColor: '#0284c7',
+    backgroundColor: '#0d1527'
+  },
+  calDayBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  calDayNum: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  calDayName: {
+    color: '#94a3b8',
+    fontSize: 8
+  },
+  calDateStr: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  calStatusText: {
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '600'
+  },
+  calRegBtn: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8
+  },
+  calRegBtnText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    fontWeight: 'bold'
+  },
+  calApprovedBadge: {
+    backgroundColor: 'rgba(6, 182, 212, 0.15)',
+    borderWidth: 1,
+    borderColor: '#06b6d4',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6
+  },
+  calApprovedBadgeText: {
+    color: '#06b6d4',
+    fontSize: 9,
+    fontWeight: 'bold'
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8
+  },
+  filterTab: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#07090e',
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  filterTabActive: {
+    borderColor: '#38bdf8',
+    backgroundColor: '#0f172a'
+  },
+  filterTabText: {
+    color: '#94a3b8',
+    fontSize: 10
+  },
+  filterTabTextActive: {
+    color: '#38bdf8',
+    fontWeight: 'bold'
+  },
+  meetingCard: {
+    backgroundColor: '#07090e',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  meetingTitle: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold'
+  },
+  meetingMeta: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 4
+  },
+  meetingHost: {
+    color: '#64748b',
+    fontSize: 10,
+    marginTop: 2
+  },
+  meetingDesc: {
+    color: '#cbd5e1',
+    fontSize: 10,
+    marginTop: 6,
+    lineHeight: 14
+  },
+  meetingStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6
+  },
+  statusScheduled: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderWidth: 1,
+    borderColor: '#38bdf8'
+  },
+  statusCompleted: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: '#10b981'
+  },
+  meetingStatusText: {
+    color: '#38bdf8',
+    fontSize: 8,
+    fontWeight: 'bold'
+  },
+  meetingActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b'
+  },
+  joinMeetBtn: {
+    flex: 1,
+    backgroundColor: '#2563eb',
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center'
+  },
+  joinMeetBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  remindBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(139, 92, 246, 0.2)',
+    borderWidth: 1,
+    borderColor: '#8b5cf6',
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center'
+  },
+  remindBtnText: {
+    color: '#c4b5fd',
+    fontSize: 11,
     fontWeight: 'bold'
   }
 });
