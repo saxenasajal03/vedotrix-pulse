@@ -40,6 +40,15 @@ All modules, screens, and workflows are connected to the live Supabase PostgreSQ
 
 ---
 
+## 📦 Latest Generated APK Build (Production Ready)
+
+* 📥 **Direct .apk Download Link**: [Download Vedotrix Pulse APK](https://expo.dev/artifacts/eas/PEn_Ae2n95-xYceRpmyprLDwgmmTRjx8pllRp60RLdE.apk)
+* 🌐 **Expo Cloud Build Dashboard**: [Build bd0a18ef-dd8c-4440-9b85-8b9af9c4393d](https://expo.dev/accounts/sajalandroid/projects/vedotrix-pulse/builds/bd0a18ef-dd8c-4440-9b85-8b9af9c4393d)
+* 💾 **Local File**: `mobile/vedotrix-pulse.apk`
+* 📱 **Signed Package**: `com.vedotrix.pulse` (v1.0.0)
+
+---
+
 ## 🚀 Two Ways to Share the App With Clients
 
 ### Method 1: Generate the Standalone Native Android `.apk` (Free Expo Cloud Build)
