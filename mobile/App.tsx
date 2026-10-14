@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -92,6 +93,14 @@ function formatDisplayDate(dateStr?: string): string {
   }
 }
 
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function generateOfferSerial(orgCode: string = 'VDX'): string {
   const year = new Date().getFullYear();
   const hex = Math.random().toString(16).substring(2, 8).toUpperCase();
@@ -116,6 +125,10 @@ export default function App() {
 
   // Bottom Navigation Tabs: 'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'
   const [activeTab, setActiveTab] = useState<'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'>('punch');
+
+  // Theme & Auto-Update States
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
 
   // Subtabs within views
   const [calSubTab, setCalSubTab] = useState<'attendance' | 'holidays'>('attendance');
@@ -250,6 +263,82 @@ export default function App() {
 
   // Device Notifications Status
   const [notifPermission, setNotifPermission] = useState<boolean>(false);
+
+  // Dynamic Theme-Dependent Styles
+  const styles = useMemo(() => createThemedStyles(isDarkMode), [isDarkMode]);
+
+  // Load saved theme preference on mount
+  useEffect(() => {
+    AsyncStorage.getItem('@vdx_theme_mode')
+      .then((savedTheme) => {
+        if (savedTheme === 'light') {
+          setIsDarkMode(false);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Check for Over-The-Air EAS updates automatically on startup
+  useEffect(() => {
+    async function checkAutoUpdates() {
+      try {
+        if (__DEV__) return;
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          Alert.alert(
+            'App Update Ready 🚀',
+            'A new version of Vedotrix Pulse was downloaded in the background. Apply update now?',
+            [
+              { text: 'Later', style: 'cancel' },
+              { text: 'Update Now', onPress: () => Updates.reloadAsync() }
+            ]
+          );
+        }
+      } catch {}
+    }
+    checkAutoUpdates();
+  }, []);
+
+  const handleToggleTheme = async () => {
+    const next = !isDarkMode;
+    setIsDarkMode(next);
+    try {
+      await AsyncStorage.setItem('@vdx_theme_mode', next ? 'dark' : 'light');
+    } catch {}
+  };
+
+  const handleSetTheme = async (dark: boolean) => {
+    setIsDarkMode(dark);
+    try {
+      await AsyncStorage.setItem('@vdx_theme_mode', dark ? 'dark' : 'light');
+    } catch {}
+  };
+
+  const handleManualCheckUpdates = async () => {
+    try {
+      setIsCheckingUpdate(true);
+      if (__DEV__) {
+        Alert.alert('Development Mode', 'Over-the-air updates are active in APK / standalone builds.');
+        return;
+      }
+      const update = await Updates.checkForUpdateAsync();
+      if (update.isAvailable) {
+        await Updates.fetchUpdateAsync();
+        Alert.alert(
+          'Update Downloaded 🚀',
+          'Latest update installed. The app will reload now.',
+          [{ text: 'OK', onPress: () => Updates.reloadAsync() }]
+        );
+      } else {
+        Alert.alert('Up to Date ✨', 'You are running the latest version of Vedotrix Pulse.');
+      }
+    } catch (err: any) {
+      Alert.alert('Update Check', err?.message || 'Could not reach update server.');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
 
   // Initialize Supabase & Session
   useEffect(() => {
@@ -742,7 +831,7 @@ export default function App() {
         return;
       }
 
-      const newAttId = `att-m-${Date.now()}`;
+      const newAttId = generateUUID();
       const newRecord = {
         id: newAttId,
         org_id: currentOrg?.id || userProfile.org_id,
@@ -856,21 +945,37 @@ export default function App() {
 
         if (error) throw error;
       } else {
-        const newId = `reg-m-${Date.now()}`;
-        const { error } = await supabaseClient.from('attendance').insert({
+        const newId = generateUUID();
+        let checkInISO: string | null = null;
+        let checkOutISO: string | null = null;
+        try {
+          if (regInTime) {
+            const [ih, im] = regInTime.split(':');
+            const dIn = new Date(`${targetDate}T${(ih || '09').padStart(2, '0')}:${(im || '30').padStart(2, '0')}:00+05:30`);
+            if (!isNaN(dIn.getTime())) checkInISO = dIn.toISOString();
+          }
+          if (regOutTime) {
+            const [oh, om] = regOutTime.split(':');
+            const dOut = new Date(`${targetDate}T${(oh || '18').padStart(2, '0')}:${(om || '30').padStart(2, '0')}:00+05:30`);
+            if (!isNaN(dOut.getTime())) checkOutISO = dOut.toISOString();
+          }
+        } catch {}
+
+        const insertPayload: any = {
           id: newId,
           org_id: currentOrg?.id || userProfile.org_id,
           employee_id: userProfile.id,
           date: targetDate,
-          check_in_time: `${targetDate}T${regInTime}:00+05:30`,
-          check_out_time: `${targetDate}T${regOutTime}:00+05:30`,
           status: 'absent',
           regularization_status: 'pending',
           approval_status: 'pending_manager_approval',
           regularization_reason: fullReason,
           total_hours: 8
-        });
+        };
+        if (checkInISO) insertPayload.check_in_time = checkInISO;
+        if (checkOutISO) insertPayload.check_out_time = checkOutISO;
 
+        const { error } = await supabaseClient.from('attendance').insert(insertPayload);
         if (error) throw error;
       }
 
@@ -896,12 +1001,13 @@ export default function App() {
     if (!supabaseClient || !userProfile) return;
 
     try {
+      const approverUuid = (userProfile.id && userProfile.id.length === 36) ? userProfile.id : null;
       const updatePayload: any = {
         regularization_status: status,
         approval_status: status === 'approved' ? 'approved' : 'rejected',
         status: status === 'approved' ? 'present' : 'absent',
-        approved_by: userProfile.id,
-        regularized_by: userProfile.id,
+        approved_by: approverUuid,
+        regularized_by: approverUuid,
         total_hours: status === 'approved' ? 8 : 0
       };
 
@@ -939,7 +1045,7 @@ export default function App() {
       const diffDays = Math.max(1, Math.ceil((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
       const totalDays = isHalfDay ? 0.5 : diffDays;
 
-      const newId = `leave-m-${Date.now()}`;
+      const newId = generateUUID();
       const { error } = await supabaseClient.from('leave_requests').insert({
         id: newId,
         org_id: currentOrg?.id || userProfile.org_id,
@@ -1116,7 +1222,7 @@ export default function App() {
 
     setIsSavingEmp(true);
     try {
-      const newId = `usr-${Date.now()}`;
+      const newId = generateUUID();
       const { error } = await supabaseClient.from('profiles').insert({
         id: newId,
         org_id: currentOrg.id,
@@ -1189,7 +1295,7 @@ export default function App() {
 
     setIsSubmittingNotice(true);
     try {
-      const newId = `not-${Date.now()}`;
+      const newId = generateUUID();
       const { error } = await supabaseClient.from('notices').insert({
         id: newId,
         org_id: currentOrg.id,
@@ -1230,7 +1336,7 @@ export default function App() {
 
     setIsSavingStandup(true);
     try {
-      const newId = `st-${Date.now()}`;
+      const newId = generateUUID();
       const { error } = await supabaseClient.from('standups').insert({
         id: newId,
         employee_id: userProfile.id,
@@ -1329,7 +1435,7 @@ export default function App() {
 
     try {
       const { error } = await supabaseClient.from('offer_letters').insert({
-        id: `off-${Date.now()}`,
+        id: generateUUID(),
         org_id: currentOrg.id,
         serial_number: serialNumber,
         candidate_name: candName.trim(),
@@ -1451,10 +1557,15 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <SafeAreaView style={styles.loginContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#07090e" />
+        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={isDarkMode ? '#07090e' : '#f8fafc'} />
         <View style={styles.loginCard}>
           <Image source={require('./assets/icon.png')} style={styles.loginLogo} resizeMode="contain" />
-          <Text style={styles.loginTitle}>Vedotrix Pulse</Text>
+          <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'flex-end', marginBottom: -25, zIndex: 10 }}>
+          <TouchableOpacity style={styles.themeToggleBtn} onPress={handleToggleTheme}>
+            <Text style={{ fontSize: 15 }}>{isDarkMode ? '☀️' : '🌙'}</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.loginTitle}>Vedotrix Pulse</Text>
           <Text style={styles.loginSubtitle}>Multi-Tenant Enterprise HRMS & Mobile Suite</Text>
           <Text style={styles.loginBrand}>Designed & Managed by Vedotrix Technologies</Text>
 
@@ -1499,7 +1610,7 @@ export default function App() {
   // 2. MAIN LOGGED-IN SCREEN
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#07090e" />
+      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={isDarkMode ? '#07090e' : '#f8fafc'} />
 
       {/* Header */}
       <View style={styles.header}>
@@ -1523,6 +1634,14 @@ export default function App() {
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            style={styles.themeToggleBtn}
+            onPress={handleToggleTheme}
+            accessibilityLabel="Toggle Light/Dark Theme"
+          >
+            <Text style={{ fontSize: 14 }}>{isDarkMode ? '☀️' : '🌙'}</Text>
+          </TouchableOpacity>
+
           {isSuperadmin && (
             <TouchableOpacity style={styles.switchOrgBtn} onPress={() => setIsOrgModalVisible(true)}>
               <Text style={styles.switchOrgBtnText}>🏢 Switch</Text>
@@ -2593,6 +2712,59 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* Appearance & Theme Setting Card */}
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Appearance & Theme</Text>
+                  <Text style={styles.cardDesc}>Switch between deep dark cyber theme and clean corporate light theme</Text>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.themeOptionBtn, isDarkMode && styles.themeOptionBtnActive]}
+                      onPress={() => handleSetTheme(true)}
+                    >
+                      <Text style={{ fontSize: 16 }}>🌙</Text>
+                      <Text style={[styles.themeOptionText, isDarkMode && styles.themeOptionTextActive]}>
+                        Dark Mode
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.themeOptionBtn, !isDarkMode && styles.themeOptionBtnActive]}
+                      onPress={() => handleSetTheme(false)}
+                    >
+                      <Text style={{ fontSize: 16 }}>☀️</Text>
+                      <Text style={[styles.themeOptionText, !isDarkMode && styles.themeOptionTextActive]}>
+                        Light Mode
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Over-The-Air Automatic App Updates Card */}
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Instant App Updates (EAS OTA)</Text>
+                  <Text style={styles.cardDesc}>Employees receive new features automatically without re-downloading APKs</Text>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Update Channel:</Text>
+                    <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold' }]}>preview (Live OTA)</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Auto Background Check:</Text>
+                    <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>ENABLED (On Launch)</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.loginBtn, { marginTop: 12, backgroundColor: isDarkMode ? '#0284c7' : '#2563eb' }]}
+                    onPress={handleManualCheckUpdates}
+                    disabled={isCheckingUpdate}
+                  >
+                    <Text style={styles.loginBtnText}>
+                      {isCheckingUpdate ? 'Checking EAS Server...' : '🔄 Check for App Updates Now'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
                 <TouchableOpacity style={styles.profileLogoutBtn} onPress={handleLogout}>
                   <Text style={styles.profileLogoutBtnText}>Log Out from Device</Text>
                 </TouchableOpacity>
@@ -3588,25 +3760,73 @@ export default function App() {
 }
 
 // =============================================================================
-// STYLESHEET
+// THEMED STYLESHEET GENERATOR (DARK & LIGHT CORPORATE PALETTES)
 // =============================================================================
-const styles = StyleSheet.create({
+function createThemedStyles(isDark: boolean) {
+  const bg = isDark ? '#07090e' : '#f8fafc';
+  const cardBg = isDark ? '#0d121d' : '#ffffff';
+  const cardBorder = isDark ? '#1e293b' : '#e2e8f0';
+  const subtleBorder = isDark ? '#334155' : '#cbd5e1';
+  const textPrimary = isDark ? '#ffffff' : '#0f172a';
+  const textSecondary = isDark ? '#94a3b8' : '#475569';
+  const textMuted = isDark ? '#64748b' : '#94a3b8';
+  const inputBg = isDark ? '#07090e' : '#f8fafc';
+  const inputBorder = isDark ? '#1e293b' : '#cbd5e1';
+  const subtleBg = isDark ? '#141b2d' : '#f1f5f9';
+  const navBg = isDark ? '#07090e' : '#ffffff';
+  const navBorder = isDark ? '#1e293b' : '#e2e8f0';
+
+  return StyleSheet.create({
+    themeToggleBtn: {
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 8,
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      borderWidth: 1,
+      borderColor: isDark ? '#334155' : '#cbd5e1',
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    themeOptionBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: isDark ? '#07090e' : '#f1f5f9',
+      borderWidth: 1,
+      borderColor: isDark ? '#1e293b' : '#e2e8f0'
+    },
+    themeOptionBtnActive: {
+      borderColor: '#38bdf8',
+      backgroundColor: isDark ? 'rgba(56, 189, 248, 0.15)' : 'rgba(2, 132, 199, 0.12)'
+    },
+    themeOptionText: {
+      fontSize: 12,
+      fontWeight: 'bold',
+      color: textSecondary
+    },
+    themeOptionTextActive: {
+      color: '#0284c7'
+    },
   container: {
     flex: 1,
-    backgroundColor: '#07090e'
+    backgroundColor: bg
   },
   loginContainer: {
     flex: 1,
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     justifyContent: 'center',
     padding: 20
   },
   loginCard: {
-    backgroundColor: '#0d121d',
+    backgroundColor: cardBg,
     borderRadius: 24,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: cardBorder,
     alignItems: 'center'
   },
   loginLogo: {
@@ -3618,11 +3838,11 @@ const styles = StyleSheet.create({
   loginTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#ffffff'
+    color: textPrimary
   },
   loginSubtitle: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: textSecondary,
     marginTop: 2,
     textAlign: 'center'
   },
@@ -3636,20 +3856,20 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#cbd5e1',
+    color: textSecondary,
     alignSelf: 'flex-start',
     marginBottom: 5,
     marginTop: 8
   },
   textInput: {
     width: '100%',
-    backgroundColor: '#07090e',
-    borderColor: '#1e293b',
+    backgroundColor: bg,
+    borderColor: cardBorder,
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 9,
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12
   },
   loginBtn: {
@@ -3682,7 +3902,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e293b'
+    borderBottomColor: cardBorder
   },
   headerLeft: {
     flexDirection: 'row',
@@ -3697,14 +3917,14 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#ffffff'
+    color: textPrimary
   },
   brandAccent: {
     color: '#38bdf8'
   },
   brandSubtitle: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: textSecondary,
     maxWidth: 160
   },
   superBadge: {
@@ -3773,7 +3993,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   holidayAlertSub: {
-    color: '#cbd5e1',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 2
   },
@@ -3794,7 +4014,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   alertBannerText: {
-    color: '#cbd5e1',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 4,
     lineHeight: 15
@@ -3811,16 +4031,21 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   card: {
-    backgroundColor: '#0d121d',
+    backgroundColor: cardBg,
     borderRadius: 18,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder,
+    shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.06)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: isDark ? 0.3 : 1,
+    shadowRadius: 6,
+    elevation: isDark ? 2 : 1
   },
   cardTitle: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#ffffff'
+    color: textPrimary
   },
   cardDesc: {
     fontSize: 11,
@@ -3861,11 +4086,11 @@ const styles = StyleSheet.create({
   },
   metricBox: {
     flex: 1,
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   metricLabel: {
     fontSize: 9,
@@ -3917,14 +4142,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 7,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e293b'
+    borderBottomColor: cardBorder
   },
   detailLabel: {
     color: '#64748b',
     fontSize: 11
   },
   detailVal: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     maxWidth: 210,
     textAlign: 'right'
@@ -3941,7 +4166,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   calMonthText: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12,
     fontWeight: 'bold'
   },
@@ -3952,7 +4177,7 @@ const styles = StyleSheet.create({
   },
   calSummaryBox: {
     flex: 1,
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 8,
     borderRadius: 8,
     borderWidth: 1,
@@ -3963,7 +4188,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   calSummaryLbl: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 9,
     marginTop: 2
   },
@@ -3971,11 +4196,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   calDayRowToday: {
     borderColor: '#0284c7',
@@ -3989,16 +4214,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   calDayNum: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     fontWeight: 'bold'
   },
   calDayName: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 8
   },
   calDateStr: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     fontWeight: 'bold'
   },
@@ -4034,14 +4259,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   holidayCard: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   holidayName: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 13,
     fontWeight: 'bold'
   },
@@ -4051,7 +4276,7 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   holidayDesc: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 4
   },
@@ -4062,7 +4287,7 @@ const styles = StyleSheet.create({
     borderRadius: 4
   },
   todayHolBadgeText: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 8,
     fontWeight: 'bold'
   },
@@ -4084,11 +4309,11 @@ const styles = StyleSheet.create({
   },
   leaveBalanceBox: {
     flex: 1,
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: cardBorder,
     alignItems: 'center'
   },
   leaveBalanceVal: {
@@ -4098,28 +4323,28 @@ const styles = StyleSheet.create({
   },
   leaveBalanceLbl: {
     fontSize: 9,
-    color: '#94a3b8',
+    color: textSecondary,
     marginTop: 2
   },
   leaveItemCard: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   leaveTypeHeader: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     fontWeight: 'bold'
   },
   leaveDateRange: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 2
   },
   leaveReasonText: {
-    color: '#cbd5e1',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 3,
     fontStyle: 'italic'
@@ -4157,9 +4382,9 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: cardBorder,
     alignItems: 'center'
   },
   filterTabActive: {
@@ -4167,7 +4392,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0f172a'
   },
   filterTabText: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10
   },
   filterTabTextActive: {
@@ -4175,14 +4400,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   approvalItemCard: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   approvalEmpName: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12,
     fontWeight: 'bold'
   },
@@ -4192,7 +4417,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   approvalReason: {
-    color: '#cbd5e1',
+    color: textSecondary,
     fontSize: 10,
     fontStyle: 'italic',
     marginTop: 4
@@ -4225,19 +4450,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   noticeCard: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   noticeTitle: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12,
     fontWeight: 'bold'
   },
   noticeBody: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 4,
     lineHeight: 14
@@ -4264,19 +4489,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   meetingCard: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   meetingTitle: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 13,
     fontWeight: 'bold'
   },
   meetingMeta: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 4
   },
@@ -4311,7 +4536,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#1e293b'
+    borderTopColor: navBorder
   },
   joinMeetBtn: {
     flex: 1,
@@ -4321,7 +4546,7 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   joinMeetBtnText: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     fontWeight: 'bold'
   },
@@ -4352,12 +4577,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   profileName: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 16,
     fontWeight: 'bold'
   },
   profileDesig: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 11,
     marginTop: 2
   },
@@ -4391,19 +4616,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   teamCard: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   teamName: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12,
     fontWeight: 'bold'
   },
   teamDesig: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 1
   },
@@ -4447,14 +4672,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   },
   standupFeedItem: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   standupAuthor: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     fontWeight: 'bold'
   },
@@ -4463,7 +4688,7 @@ const styles = StyleSheet.create({
     fontSize: 9
   },
   standupText: {
-    color: '#cbd5e1',
+    color: textSecondary,
     fontSize: 10,
     marginTop: 3
   },
@@ -4474,7 +4699,7 @@ const styles = StyleSheet.create({
     borderRadius: 10
   },
   verifyActionBtnText: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 11,
     fontWeight: 'bold'
   },
@@ -4522,18 +4747,18 @@ const styles = StyleSheet.create({
   },
   payItem: {
     width: '48%',
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   payLabel: {
     color: '#64748b',
     fontSize: 9
   },
   payVal: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12,
     fontWeight: 'bold',
     marginTop: 2
@@ -4558,9 +4783,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 60,
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     borderTopWidth: 1,
-    borderTopColor: '#1e293b',
+    borderTopColor: navBorder,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center'
@@ -4600,7 +4825,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2
   },
   navBadgeText: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 8,
     fontWeight: 'bold'
   },
@@ -4613,16 +4838,16 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
-    backgroundColor: '#0d121d',
+    backgroundColor: cardBg,
     borderRadius: 20,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   modalTitle: {
     fontSize: 15,
     fontWeight: 'bold',
-    color: '#ffffff'
+    color: textPrimary
   },
   modalSub: {
     fontSize: 10,
@@ -4636,22 +4861,22 @@ const styles = StyleSheet.create({
     marginTop: 6
   },
   modalCloseBtnText: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 11
   },
   orgSelectItem: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     padding: 10,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: cardBorder,
     marginBottom: 6
   },
   orgSelectItemActive: {
     borderColor: '#38bdf8'
   },
   orgSelectName: {
-    color: '#ffffff',
+    color: textPrimary,
     fontSize: 12,
     fontWeight: 'bold'
   },
@@ -4661,19 +4886,19 @@ const styles = StyleSheet.create({
     marginTop: 1
   },
   indPill: {
-    backgroundColor: '#07090e',
+    backgroundColor: bg,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: cardBorder
   },
   indPillActive: {
     borderColor: '#38bdf8',
     backgroundColor: '#0f172a'
   },
   indPillText: {
-    color: '#94a3b8',
+    color: textSecondary,
     fontSize: 10
   },
   indPillTextActive: {
@@ -4696,3 +4921,4 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   }
 });
+}

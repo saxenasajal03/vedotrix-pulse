@@ -14,6 +14,12 @@
     "ios": {
       "supportsTablet": true
     },
+    "updates": {
+      "url": "https://u.expo.dev/3b136991-8621-406b-91b9-b8110ba71976"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
