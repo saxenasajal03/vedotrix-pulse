@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,8 +13,7 @@ import {
   Modal,
   Linking,
   Platform,
-  RefreshControl,
-  ActivityIndicator
+  RefreshControl
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
@@ -34,7 +33,22 @@ Notifications.setNotificationHandler({
 const DEFAULT_SUPABASE_URL = 'https://cqevzpvyqvckvenutuzz.supabase.co';
 const DEFAULT_SUPABASE_KEY = 'sb_publishable_vFIWyBN1E22I-7saEe3Yew_vV2fQkUX';
 
-// Default HQ Coordinates (Vedotrix Master HQ)
+// Master Default Indian Holidays
+const DEFAULT_HOLIDAYS = [
+  { id: 'hol-001', name: 'Republic Day', date: '2026-01-26', type: 'national', description: 'Celebration of Constitution of India', isMandatory: true },
+  { id: 'hol-002', name: 'Holi (Festival of Colors)', date: '2026-03-04', type: 'festival', description: 'Spring festival of colors and harmony', isMandatory: true },
+  { id: 'hol-003', name: 'Eid-ul-Fitr', date: '2026-03-21', type: 'festival', description: 'Eid Celebrations', isMandatory: true },
+  { id: 'hol-004', name: 'Independence Day', date: '2026-08-15', type: 'national', description: 'National Day of Indian Independence', isMandatory: true },
+  { id: 'hol-005', name: 'Gandhi Jayanti', date: '2026-10-02', type: 'national', description: 'Honoring Mahatma Gandhi', isMandatory: true },
+  { id: 'hol-006', name: 'Dussehra (Vijayadashami)', date: '2026-10-20', type: 'festival', description: 'Victory of good over evil', isMandatory: true },
+  { id: 'hol-007', name: 'Valmiki Jayanti', date: '2026-10-26', type: 'gazetted', description: 'Ashwina, Shukla Purnima', isMandatory: true },
+  { id: 'hol-008', name: 'Diwali (Deepavali)', date: '2026-11-08', type: 'festival', description: 'The Great Festival of Lights', isMandatory: true },
+  { id: 'hol-009', name: 'Govardhan Puja', date: '2026-11-09', type: 'festival', description: 'Post-Diwali festivity and thanksgiving', isMandatory: true },
+  { id: 'hol-010', name: 'Bhaiya Dooj', date: '2026-11-11', type: 'gazetted', description: 'Kartika, Shukla Dwitiya', isMandatory: true },
+  { id: 'hol-011', name: 'Guru Nanak Jayanti', date: '2026-11-24', type: 'festival', description: 'Prakash Utsav celebrating Guru Nanak Dev Ji', isMandatory: true },
+  { id: 'hol-012', name: 'Christmas Day', date: '2026-12-25', type: 'festival', description: 'Celebration of Christmas', isMandatory: true }
+];
+
 const DEFAULT_OFFICE_COORDS = {
   latitude: 12.9352,
   longitude: 77.6946,
@@ -78,6 +92,13 @@ function formatDisplayDate(dateStr?: string): string {
   }
 }
 
+function generateOfferSerial(orgCode: string = 'VDX'): string {
+  const year = new Date().getFullYear();
+  const hex = Math.random().toString(16).substring(2, 8).toUpperCase();
+  const cleanCode = (orgCode || 'VDX').replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4);
+  return `VDX-${cleanCode}-${year}-${hex}`;
+}
+
 export default function App() {
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseConnected, setSupabaseConnected] = useState<boolean>(false);
@@ -93,15 +114,29 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Bottom Navigation Tabs: 'punch' | 'calendar' | 'leaves' | 'approvals' | 'meetings' | 'profile'
-  const [activeTab, setActiveTab] = useState<'punch' | 'calendar' | 'leaves' | 'approvals' | 'meetings' | 'profile'>('punch');
+  // Bottom Navigation Tabs: 'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'
+  const [activeTab, setActiveTab] = useState<'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'>('punch');
+
+  // Subtabs within views
+  const [calSubTab, setCalSubTab] = useState<'attendance' | 'holidays'>('attendance');
+  const [noticesSubTab, setNoticesSubTab] = useState<'notices' | 'meetings'>('notices');
+  const [hubSubTab, setHubSubTab] = useState<'profile' | 'team' | 'standups' | 'offers'>('profile');
+  const [approvalsTab, setApprovalsTab] = useState<'regularization' | 'leaves' | 'access'>('regularization');
 
   // Multi-Tenant Organizations & Locations
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [currentOrg, setCurrentOrg] = useState<any>(null);
-  const [officeLocations, setOfficeLocations] = useState<any[]>([]);
   const [activeOfficeCoords, setActiveOfficeCoords] = useState(DEFAULT_OFFICE_COORDS);
   const [isOrgModalVisible, setIsOrgModalVisible] = useState(false);
+
+  // Holidays
+  const [holidays, setHolidays] = useState<any[]>(DEFAULT_HOLIDAYS);
+  const [isHolidayModal, setIsHolidayModal] = useState(false);
+  const [newHolName, setNewHolName] = useState('');
+  const [newHolDate, setNewHolDate] = useState(() => getTodayISTDate());
+  const [newHolType, setNewHolType] = useState('festival');
+  const [newHolDesc, setNewHolDesc] = useState('');
+  const [isSavingHoliday, setIsSavingHoliday] = useState(false);
 
   // GPS Attendance State
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
@@ -114,6 +149,7 @@ export default function App() {
 
   // Team Profiles & Hierarchy
   const [teamProfiles, setTeamProfiles] = useState<any[]>([]);
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
 
   // Attendance Records & Calendar
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
@@ -142,14 +178,14 @@ export default function App() {
   // Meetings & Events State
   const [meetings, setMeetings] = useState<any[]>([]);
   const [isMeetingModal, setIsMeetingModal] = useState(false);
-  const [meetingFilterTab, setMeetingFilterTab] = useState<'all' | 'today' | 'upcoming' | 'past'>('all');
+  const [meetingFilterTab, setMeetingFilterTab] = useState<'all' | 'today' | 'upcoming'>('all');
   const [newMeetingTitle, setNewMeetingTitle] = useState('');
   const [newMeetingDesc, setNewMeetingDesc] = useState('');
   const [newMeetingDate, setNewMeetingDate] = useState(() => getTodayISTDate());
   const [newMeetingStartTime, setNewMeetingStartTime] = useState('11:00');
   const [newMeetingEndTime, setNewMeetingEndTime] = useState('11:45');
   const [newMeetingUrl, setNewMeetingUrl] = useState('https://meet.google.com/new');
-  const [newMeetingDept, setNewMeetingDept] = useState('Engineering');
+  const [newMeetingDept, setNewMeetingDept] = useState('All');
   const [isSubmittingMeeting, setIsSubmittingMeeting] = useState(false);
 
   // Access Requests State
@@ -161,6 +197,12 @@ export default function App() {
 
   // Notices & Announcements
   const [notices, setNotices] = useState<any[]>([]);
+  const [isNoticeModal, setIsNoticeModal] = useState(false);
+  const [newNoticeTitle, setNewNoticeTitle] = useState('');
+  const [newNoticeContent, setNewNoticeContent] = useState('');
+  const [newNoticePriority, setNewNoticePriority] = useState('high');
+  const [newNoticeCategory, setNewNoticeCategory] = useState('announcement');
+  const [isSubmittingNotice, setIsSubmittingNotice] = useState(false);
 
   // Profile Edit Modal State
   const [isEditProfileModal, setIsEditProfileModal] = useState(false);
@@ -168,11 +210,46 @@ export default function App() {
   const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  // Add Employee Modal (HR / Superadmin / Owner)
+  const [isAddEmpModal, setIsAddEmpModal] = useState(false);
+  const [newEmpFirst, setNewEmpFirst] = useState('');
+  const [newEmpLast, setNewEmpLast] = useState('');
+  const [newEmpEmail, setNewEmpEmail] = useState('');
+  const [newEmpRole, setNewEmpRole] = useState('employee');
+  const [newEmpDesig, setNewEmpDesig] = useState('');
+  const [newEmpDept, setNewEmpDept] = useState('Operations');
+  const [newEmpJoiningDate, setNewEmpJoiningDate] = useState(() => getTodayISTDate());
+  const [newEmpManagerId, setNewEmpManagerId] = useState('');
+  const [isSavingEmp, setIsSavingEmp] = useState(false);
+
+  // Edit Employee Joining Date Modal (HR / Superadmin)
+  const [isEditJoiningModal, setIsEditJoiningModal] = useState(false);
+  const [targetEmpForJoining, setTargetEmpForJoining] = useState<any>(null);
+  const [updatedJoiningDateVal, setUpdatedJoiningDateVal] = useState('');
+  const [isSavingJoiningDate, setIsSavingJoiningDate] = useState(false);
+
+  // EOD Standup
+  const [standups, setStandups] = useState<any[]>([]);
+  const [isStandupModal, setIsStandupModal] = useState(false);
+  const [standupDone, setStandupDone] = useState('');
+  const [standupNext, setStandupNext] = useState('');
+  const [standupBlockers, setStandupBlockers] = useState('');
+  const [standupHours, setStandupHours] = useState('8');
+  const [isSavingStandup, setIsSavingStandup] = useState(false);
+
+  // Offer Letters & Serial Verification
+  const [offerLetters, setOfferLetters] = useState<any[]>([]);
+  const [verifyQuery, setVerifyQuery] = useState('');
+  const [verifyResult, setVerifyResult] = useState<any>(null);
+  const [isNewOfferModal, setIsNewOfferModal] = useState(false);
+  const [candName, setCandName] = useState('');
+  const [candEmail, setCandEmail] = useState('');
+  const [candDesig, setCandDesig] = useState('');
+  const [candCtc, setCandCtc] = useState('1200000');
+  const [isSavingOffer, setIsSavingOffer] = useState(false);
+
   // Device Notifications Status
   const [notifPermission, setNotifPermission] = useState<boolean>(false);
-
-  // Approvals Subtab inside Approvals: 'regularization' | 'leaves' | 'access'
-  const [approvalsTab, setApprovalsTab] = useState<'regularization' | 'leaves' | 'access'>('regularization');
 
   // Initialize Supabase & Session
   useEffect(() => {
@@ -203,7 +280,6 @@ export default function App() {
 
       if (token && email) {
         const cleanEmail = email.trim().toLowerCase();
-        // Fetch latest full profile from Supabase profiles table
         const { data: fullProfile } = await client
           .from('profiles')
           .select('*')
@@ -229,7 +305,6 @@ export default function App() {
           setupNotificationsAsync();
           await refreshAllData(client, unifiedUser.org_id, unifiedUser.id);
         } else {
-          // Fallback to local cache if offline
           const savedProfile = await AsyncStorage.getItem('@vdx_user_profile');
           if (savedProfile) {
             const parsed = JSON.parse(savedProfile);
@@ -254,13 +329,18 @@ export default function App() {
     try {
       setIsRefreshing(true);
 
-      // 1. Organizations
+      // 1. Organizations & Holidays
       const { data: orgs } = await client.from('organizations').select('*');
       if (orgs && orgs.length > 0) {
         setOrganizations(orgs);
-        if (targetOrgId) {
-          const match = orgs.find((o) => o.id === targetOrgId);
-          if (match) setCurrentOrg(match);
+        const match = targetOrgId ? orgs.find((o) => o.id === targetOrgId) : orgs[0];
+        if (match) {
+          setCurrentOrg(match);
+          if (match.settings?.holidays && Array.isArray(match.settings.holidays) && match.settings.holidays.length > 0) {
+            setHolidays(match.settings.holidays);
+          } else {
+            setHolidays(DEFAULT_HOLIDAYS);
+          }
         }
       }
 
@@ -272,7 +352,6 @@ export default function App() {
           .eq('org_id', targetOrgId)
           .eq('is_active', true);
         if (offices && offices.length > 0) {
-          setOfficeLocations(offices);
           setActiveOfficeCoords({
             latitude: offices[0].latitude,
             longitude: offices[0].longitude,
@@ -344,10 +423,30 @@ export default function App() {
         if (nots) setNotices(nots);
       }
 
-      // 9. Check Today's Punch Record
+      // 9. Daily Standups
+      if (targetOrgId) {
+        const { data: st } = await client
+          .from('standups')
+          .select('*')
+          .eq('org_id', targetOrgId)
+          .order('date', { ascending: false });
+        if (st) setStandups(st);
+      }
+
+      // 10. Offer Letters
+      if (targetOrgId) {
+        const { data: offers } = await client
+          .from('offer_letters')
+          .select('*')
+          .eq('org_id', targetOrgId)
+          .order('created_at', { ascending: false });
+        if (offers) setOfferLetters(offers);
+      }
+
+      // 11. Check Today's Punch Record
       const todayStr = getTodayISTDate();
       const todayRecord = fetchedAttendance.find(
-        (a) => (a.employee_id === myId) && a.date === todayStr
+        (a) => a.employee_id === myId && a.date === todayStr
       );
       if (todayRecord) {
         setTodayAttendanceRecord(todayRecord);
@@ -366,10 +465,10 @@ export default function App() {
         setTodayAttendanceRecord(null);
       }
 
-      // 10. Request GPS Location
+      // 12. Request GPS Coordinates
       await requestLocationPermission();
 
-      // 11. Run Shift Liveness Check
+      // 13. Run Shift Liveness Check
       checkAttendanceStatusAndNotify(fetchedAttendance, myId);
     } catch (err) {
       console.log('Error refreshing data:', err);
@@ -378,7 +477,7 @@ export default function App() {
     }
   };
 
-  // Setup Push Notification Channels for Android
+  // Push Notifications Setup
   const setupNotificationsAsync = async () => {
     try {
       if (Platform.OS === 'android') {
@@ -446,8 +545,14 @@ export default function App() {
       const todayStr = getTodayISTDate();
       const dayOfWeek = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getDay();
 
-      // Skip Sundays (Week-off)
       if (dayOfWeek === 0) {
+        setAttendanceAlertActive(false);
+        return;
+      }
+
+      // Check if today is an official organization holiday
+      const isHolidayToday = holidays.some((h) => h.date === todayStr);
+      if (isHolidayToday) {
         setAttendanceAlertActive(false);
         return;
       }
@@ -518,7 +623,7 @@ export default function App() {
     }
   };
 
-  // Bcrypt RPC Authentication + Full Profile Ingestion
+  // Login
   const handleMobileLogin = async () => {
     if (!loginEmail.trim() || !loginPass.trim()) {
       Alert.alert('Required', 'Please enter both work email and security password.');
@@ -544,8 +649,6 @@ export default function App() {
 
         if (rpcData && rpcData.length > 0 && rpcData[0].is_valid === true) {
           const rpcUser = rpcData[0];
-
-          // Fetch complete profile row from Supabase profiles table
           const { data: fullProfile } = await supabaseClient
             .from('profiles')
             .select('*')
@@ -623,7 +726,6 @@ export default function App() {
 
     // Punch IN
     if (!isCheckedIn) {
-      // 1. Shift Gate Enforcement (allow up to 30 min before shift start)
       if (currentTotalMins < (shiftStartTotalMins - 30)) {
         Alert.alert(
           'Too Early to Punch In ⏰',
@@ -632,7 +734,6 @@ export default function App() {
         return;
       }
 
-      // 2. Block punch-in after shift end
       if (currentTotalMins > shiftEndTotalMins) {
         Alert.alert(
           'Shift Has Ended 🌙',
@@ -739,7 +840,6 @@ export default function App() {
       const targetDate = regTargetDate || getTodayISTDate();
       const fullReason = `[${regCategory}] Shift: ${regInTime} - ${regOutTime} IST. ${regJustification.trim()}`;
 
-      // Check if attendance row already exists for target date
       const existing = attendanceRecords.find(
         (a) => a.employee_id === userProfile.id && a.date === targetDate
       );
@@ -903,47 +1003,7 @@ export default function App() {
     }
   };
 
-  // Submit Access Request
-  const handleSubmitAccessRequest = async () => {
-    if (!accessJustification.trim()) {
-      Alert.alert('Required', 'Please explain your business justification.');
-      return;
-    }
-    if (!supabaseClient || !userProfile) return;
-
-    setIsSubmittingAccess(true);
-    try {
-      const { error } = await supabaseClient.from('access_requests').insert({
-        org_id: currentOrg?.id || userProfile.org_id,
-        requester_id: userProfile.id,
-        request_type: 'module_access',
-        target_module: targetModule,
-        justification: accessJustification.trim(),
-        status: 'pending',
-        assigned_approver_id: userProfile.manager_id || null
-      });
-
-      if (!error) {
-        Alert.alert(
-          'Request Submitted 🎯',
-          userProfile.manager_id
-            ? 'Your request has been routed to your designated reporting manager.'
-            : 'Submitted to organization administrator for review.'
-        );
-        setIsAccessModal(false);
-        setAccessJustification('');
-        refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
-      } else {
-        Alert.alert('Error', error.message);
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e?.message);
-    } finally {
-      setIsSubmittingAccess(false);
-    }
-  };
-
-  // Resolve Access Request
+  // Resolve Module Access Request
   const handleResolveAccessRequest = async (requestId: string, status: 'approved' | 'rejected') => {
     if (!supabaseClient || !userProfile) return;
 
@@ -952,13 +1012,13 @@ export default function App() {
         .from('access_requests')
         .update({
           status,
-          approver_decision_notes: `${status === 'approved' ? 'Approved' : 'Rejected'} via Vedotrix Mobile App by ${userProfile.first_name} ${userProfile.last_name}`,
+          approver_decision_notes: `${status === 'approved' ? 'Approved' : 'Rejected'} via Mobile App by ${userProfile.first_name} ${userProfile.last_name}`,
           approved_at: new Date().toISOString()
         })
         .eq('id', requestId);
 
       if (!error) {
-        Alert.alert('Status Updated', `Request has been marked as ${status}.`);
+        Alert.alert('Access Request Updated', `Request has been marked as ${status}.`);
         refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
       } else {
         Alert.alert('Error', error.message);
@@ -968,7 +1028,238 @@ export default function App() {
     }
   };
 
-  // Create Scheduled Meeting
+  // Add Organization Holiday (HR / Superadmin / Owner)
+  const handleAddHoliday = async () => {
+    if (!newHolName.trim() || !newHolDate.trim()) {
+      Alert.alert('Required', 'Please enter holiday name and date.');
+      return;
+    }
+    if (!supabaseClient || !currentOrg) return;
+
+    setIsSavingHoliday(true);
+    try {
+      const newHol = {
+        id: `hol-${Date.now()}`,
+        name: newHolName.trim(),
+        date: newHolDate.trim(),
+        type: newHolType,
+        description: newHolDesc.trim() || 'Official company holiday',
+        isMandatory: true,
+        orgId: currentOrg.id
+      };
+
+      const curSettings = currentOrg.settings || {};
+      const updatedList = [...(curSettings.holidays || holidays), newHol].sort((a, b) => a.date.localeCompare(b.date));
+
+      const { error } = await supabaseClient
+        .from('organizations')
+        .update({
+          settings: {
+            ...curSettings,
+            holidays: updatedList
+          }
+        })
+        .eq('id', currentOrg.id);
+
+      if (!error) {
+        setHolidays(updatedList);
+        Alert.alert('Holiday Added 🌴', `${newHolName} (${newHolDate}) added to company calendar.`);
+        setIsHolidayModal(false);
+        setNewHolName('');
+        setNewHolDesc('');
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSavingHoliday(false);
+    }
+  };
+
+  // Delete Holiday (HR / Superadmin)
+  const handleDeleteHoliday = async (holId: string) => {
+    if (!supabaseClient || !currentOrg) return;
+
+    try {
+      const curSettings = currentOrg.settings || {};
+      const updatedList = (curSettings.holidays || holidays).filter((h: any) => h.id !== holId);
+
+      const { error } = await supabaseClient
+        .from('organizations')
+        .update({
+          settings: {
+            ...curSettings,
+            holidays: updatedList
+          }
+        })
+        .eq('id', currentOrg.id);
+
+      if (!error) {
+        setHolidays(updatedList);
+        Alert.alert('Holiday Removed', 'Holiday removed from organization calendar.');
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    }
+  };
+
+  // Add Team Member (HR / Superadmin / Owner)
+  const handleAddEmployee = async () => {
+    if (!newEmpFirst.trim() || !newEmpEmail.trim() || !newEmpDesig.trim()) {
+      Alert.alert('Required', 'Please fill in First Name, Email, and Designation.');
+      return;
+    }
+    if (!supabaseClient || !currentOrg) return;
+
+    setIsSavingEmp(true);
+    try {
+      const newId = `usr-${Date.now()}`;
+      const { error } = await supabaseClient.from('profiles').insert({
+        id: newId,
+        org_id: currentOrg.id,
+        first_name: newEmpFirst.trim(),
+        last_name: newEmpLast.trim() || 'Team',
+        email: newEmpEmail.trim().toLowerCase(),
+        role: newEmpRole,
+        designation: newEmpDesig.trim(),
+        department: newEmpDept,
+        joining_date: newEmpJoiningDate || getTodayISTDate(),
+        manager_id: newEmpManagerId || null,
+        is_active: true
+      });
+
+      if (!error) {
+        Alert.alert('Employee Created 👤', `${newEmpFirst} added with joining date ${newEmpJoiningDate}.`);
+        setIsAddEmpModal(false);
+        setNewEmpFirst('');
+        setNewEmpLast('');
+        setNewEmpEmail('');
+        setNewEmpDesig('');
+        refreshAllData(supabaseClient, currentOrg.id);
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSavingEmp(false);
+    }
+  };
+
+  // Update Employee Joining Date (HR / Superadmin)
+  const handleUpdateJoiningDate = async () => {
+    if (!targetEmpForJoining || !updatedJoiningDateVal.trim()) return;
+    if (!supabaseClient) return;
+
+    setIsSavingJoiningDate(true);
+    try {
+      const { error } = await supabaseClient
+        .from('profiles')
+        .update({ joining_date: updatedJoiningDateVal.trim() })
+        .eq('id', targetEmpForJoining.id);
+
+      if (!error) {
+        Alert.alert(
+          'Joining Date Updated 📅',
+          `Joining date for ${targetEmpForJoining.first_name} set to ${updatedJoiningDateVal.trim()}.`
+        );
+        setIsEditJoiningModal(false);
+        setTargetEmpForJoining(null);
+        refreshAllData(supabaseClient, currentOrg?.id);
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSavingJoiningDate(false);
+    }
+  };
+
+  // Post Notice / Announcement (HR / Superadmin / Owner)
+  const handlePostNotice = async () => {
+    if (!newNoticeTitle.trim() || !newNoticeContent.trim()) {
+      Alert.alert('Required', 'Please enter notice title and message content.');
+      return;
+    }
+    if (!supabaseClient || !currentOrg) return;
+
+    setIsSubmittingNotice(true);
+    try {
+      const newId = `not-${Date.now()}`;
+      const { error } = await supabaseClient.from('notices').insert({
+        id: newId,
+        org_id: currentOrg.id,
+        title: newNoticeTitle.trim(),
+        content: newNoticeContent.trim(),
+        priority: newNoticePriority,
+        category: newNoticeCategory,
+        author_id: userProfile?.id,
+        author_name: `${userProfile?.first_name || ''} ${userProfile?.last_name || ''}`.trim() || 'HR',
+        author_role: userProfile?.role || 'hr',
+        date: getTodayISTDate(),
+        is_pinned: newNoticePriority === 'critical'
+      });
+
+      if (!error) {
+        Alert.alert('Notice Published 📢', 'Company announcement broadcasted to all employees.');
+        setIsNoticeModal(false);
+        setNewNoticeTitle('');
+        setNewNoticeContent('');
+        refreshAllData(supabaseClient, currentOrg.id);
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSubmittingNotice(false);
+    }
+  };
+
+  // Submit EOD Standup
+  const handleSubmitStandup = async () => {
+    if (!standupDone.trim() || !standupNext.trim()) {
+      Alert.alert('Required', 'Please enter completed work and planned priorities.');
+      return;
+    }
+    if (!supabaseClient || !userProfile) return;
+
+    setIsSavingStandup(true);
+    try {
+      const newId = `st-${Date.now()}`;
+      const { error } = await supabaseClient.from('standups').insert({
+        id: newId,
+        employee_id: userProfile.id,
+        org_id: currentOrg?.id || userProfile.org_id,
+        date: getTodayISTDate(),
+        completed_today: standupDone.trim(),
+        planned_tomorrow: standupNext.trim(),
+        blockers: standupBlockers.trim() || null,
+        hours_logged: Number(standupHours) || 8
+      });
+
+      if (!error) {
+        Alert.alert('EOD Standup Logged 🚀', 'Your daily accomplishment is saved to cloud.');
+        setIsStandupModal(false);
+        setStandupDone('');
+        setStandupNext('');
+        setStandupBlockers('');
+        refreshAllData(supabaseClient, currentOrg?.id, userProfile.id);
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSavingStandup(false);
+    }
+  };
+
+  // Schedule Meeting
   const handleCreateMeeting = async () => {
     if (!newMeetingTitle.trim()) {
       Alert.alert('Required', 'Please enter meeting title.');
@@ -1020,48 +1311,67 @@ export default function App() {
     }
   };
 
-  // Schedule Reminder Alarm for a Meeting
-  const scheduleMeetingReminder = async (meeting: any) => {
+  // Issue Offer Letter
+  const handleCreateOffer = async () => {
+    if (!candName.trim() || !candEmail.trim() || !candDesig.trim()) {
+      Alert.alert('Required', 'Candidate name, email, and designation are required.');
+      return;
+    }
+    if (!supabaseClient || !currentOrg) return;
+
+    setIsSavingOffer(true);
+    const annualCtcNum = Number(candCtc) || 1200000;
+    const monthlyTotal = Math.round(annualCtcNum / 12);
+    const basicMonthly = Math.round(monthlyTotal * 0.5);
+    const hraMonthly = Math.round(monthlyTotal * 0.25);
+    const specialAllowance = monthlyTotal - (basicMonthly + hraMonthly);
+    const serialNumber = generateOfferSerial(currentOrg.org_code);
+
     try {
-      const meetingDateStr = meeting.date;
-      const startTimeStr = meeting.start_time || meeting.startTime || '11:00';
-      const [h, m] = startTimeStr.split(':').map(Number);
+      const { error } = await supabaseClient.from('offer_letters').insert({
+        id: `off-${Date.now()}`,
+        org_id: currentOrg.id,
+        serial_number: serialNumber,
+        candidate_name: candName.trim(),
+        candidate_email: candEmail.trim().toLowerCase(),
+        candidate_phone: '+91 9876543210',
+        designation: candDesig.trim(),
+        department: 'Operations',
+        annual_ctc: annualCtcNum,
+        basic_monthly: basicMonthly,
+        hra_monthly: hraMonthly,
+        special_allowance: specialAllowance,
+        joining_date: getTodayISTDate(),
+        status: 'issued',
+        verification_token: `vdx_${Date.now()}_token`,
+        issued_by: userProfile?.id || 'hr_manager'
+      });
 
-      const meetingTime = new Date(`${meetingDateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`);
-      const reminderTime = new Date(meetingTime.getTime() - 10 * 60 * 1000);
-      const now = new Date();
-
-      if (reminderTime.getTime() > now.getTime()) {
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: `🔔 Upcoming Meeting: ${meeting.title}`,
-            body: `Starts in 10 minutes (${startTimeStr} IST). Host: ${meeting.organizer_name || 'Organizer'}. Tap to join!`,
-            sound: true,
-            data: { url: meeting.meeting_url || meeting.meetingUrl }
-          },
-          trigger: {
-            date: reminderTime
-          }
-        });
-        Alert.alert(
-          'Meeting Alarm Set ⏰',
-          `Reminder scheduled for ${reminderTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} IST.`
-        );
+      if (!error) {
+        Alert.alert('Offer Letter Issued 📜', `Generated Serial: ${serialNumber}`);
+        setIsNewOfferModal(false);
+        setCandName('');
+        setCandEmail('');
+        setCandDesig('');
+        refreshAllData(supabaseClient, currentOrg.id);
       } else {
-        await sendDeviceNotification(
-          `🔔 Meeting Starting Soon: ${meeting.title}`,
-          `Meeting starting at ${startTimeStr} IST. Tap to join!`,
-          'meetings-alerts',
-          { url: meeting.meeting_url || meeting.meetingUrl }
-        );
-        Alert.alert('Alert Sent', 'Notification sent to your device shade.');
+        Alert.alert('Error', error.message);
       }
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Could not schedule reminder.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSavingOffer(false);
     }
   };
 
-  // Update Profile Phone / Avatar
+  const handleVerifySerial = () => {
+    if (!verifyQuery.trim()) return;
+    const clean = verifyQuery.trim().toUpperCase();
+    const found = offerLetters.find((o) => o.serial_number?.toUpperCase() === clean);
+    setVerifyResult(found || 'NOT_FOUND');
+  };
+
+  // Update Profile
   const handleSaveProfile = async () => {
     if (!supabaseClient || !userProfile) return;
 
@@ -1077,10 +1387,7 @@ export default function App() {
         .eq('id', userProfile.id);
 
       if (!error) {
-        const updated = {
-          ...userProfile,
-          ...updates
-        };
+        const updated = { ...userProfile, ...updates };
         setUserProfile(updated);
         await AsyncStorage.setItem('@vdx_user_profile', JSON.stringify(updated));
         Alert.alert('Profile Updated ✅', 'Your contact details have been updated.');
@@ -1103,13 +1410,12 @@ export default function App() {
   const isPrivileged = isSuperadmin || isOwner || isHR;
   const canApprove = isPrivileged || isManager;
 
-  // Filter pending approvals for user
+  // Filter pending approvals
   const pendingRegularizations = useMemo(() => {
     if (!canApprove) return [];
     return attendanceRecords.filter((a) => {
       if (a.regularization_status !== 'pending') return false;
       if (isSuperadmin || isHR || isOwner) return true;
-      // Direct report check
       const emp = teamProfiles.find((p) => p.id === a.employee_id);
       return emp?.manager_id === userProfile?.id;
     });
@@ -1137,14 +1443,9 @@ export default function App() {
 
   const totalPendingApprovals = pendingRegularizations.length + pendingLeaves.length + pendingAccess.length;
 
-  // Resolved Manager Profile
-  const myReportingManager = useMemo(() => {
-    if (!userProfile?.manager_id) return null;
-    return teamProfiles.find((p) => p.id === userProfile.manager_id);
-  }, [userProfile, teamProfiles]);
-
-  // Inside / Remote Status
   const isInside = distance !== null && distance <= activeOfficeCoords.radiusMeters;
+  const todayStr = getTodayISTDate();
+  const todayHoliday = holidays.find((h) => h.date === todayStr);
 
   // 1. LOGIN SCREEN
   if (!isLoggedIn) {
@@ -1228,10 +1529,12 @@ export default function App() {
             </TouchableOpacity>
           )}
 
-          {/* Quick Profile Avatar Shortcut */}
           <TouchableOpacity
             style={styles.avatarHeaderBtn}
-            onPress={() => setActiveTab('profile')}
+            onPress={() => {
+              setActiveTab('hub');
+              setHubSubTab('profile');
+            }}
           >
             {userProfile?.avatar_url ? (
               <Image source={{ uri: userProfile.avatar_url }} style={styles.avatarHeaderImg} />
@@ -1255,25 +1558,19 @@ export default function App() {
           />
         }
       >
-        {/* Organization Info Banner */}
-        {currentOrg && (
-          <View style={styles.orgBanner}>
-            <View style={styles.orgBannerHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.orgNameText}>{currentOrg.name}</Text>
-                <Text style={styles.orgMetaText}>
-                  Code: <Text style={{ color: '#38bdf8', fontWeight: 'bold' }}>{currentOrg.org_code}</Text> • {currentOrg.industry} • Shift: {currentOrg.settings?.shiftStartTime || '09:30'} - {currentOrg.settings?.shiftEndTime || '19:00'} IST
-                </Text>
-              </View>
-              <View style={styles.activeTag}>
-                <Text style={styles.activeTagText}>LIVE</Text>
-              </View>
+        {/* Today Holiday Banner */}
+        {todayHoliday && (
+          <View style={styles.holidayAlertBanner}>
+            <Text style={{ fontSize: 18 }}>🎉</Text>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={styles.holidayAlertTitle}>Official Holiday Today: {todayHoliday.name}</Text>
+              <Text style={styles.holidayAlertSub}>{todayHoliday.description || 'Enjoy your day off!'}</Text>
             </View>
           </View>
         )}
 
-        {/* Shift Active Attendance Reminder Banner */}
-        {attendanceAlertActive && !isCheckedIn && (
+        {/* Shift Attendance Reminder */}
+        {attendanceAlertActive && !isCheckedIn && !todayHoliday && (
           <View style={styles.alertBanner}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={styles.alertBannerIcon}>⏰</Text>
@@ -1300,7 +1597,7 @@ export default function App() {
         )}
 
         {/* ========================================================================= */}
-        {/* 1. GPS PUNCH TAB */}
+        {/* 1. PUNCH TAB */}
         {/* ========================================================================= */}
         {activeTab === 'punch' && (
           <View style={{ gap: 14 }}>
@@ -1357,7 +1654,7 @@ export default function App() {
                     setIsRegModal(true);
                   }}
                 >
-                  <Text style={styles.actionBtnSecondaryText}>✍️ Request Regularization</Text>
+                  <Text style={styles.actionBtnSecondaryText}>✍️ Regularize Attendance</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1373,7 +1670,7 @@ export default function App() {
               </View>
             </View>
 
-            {/* Today's Punch Details Card */}
+            {/* Today's Punch Details */}
             {todayAttendanceRecord && (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Today's Punch Record</Text>
@@ -1383,7 +1680,7 @@ export default function App() {
                   <Text style={styles.detailLabel}>Check-In Time:</Text>
                   <Text style={styles.detailVal}>
                     {todayAttendanceRecord.check_in_time
-                      ? new Date(todayAttendanceRecord.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' IST'
+                      ? new Date(todayAttendanceRecord.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' IST'
                       : '--'}
                   </Text>
                 </View>
@@ -1392,7 +1689,7 @@ export default function App() {
                   <Text style={styles.detailLabel}>Check-Out Time:</Text>
                   <Text style={styles.detailVal}>
                     {todayAttendanceRecord.check_out_time
-                      ? new Date(todayAttendanceRecord.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' IST'
+                      ? new Date(todayAttendanceRecord.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' IST'
                       : 'Shift in progress'}
                   </Text>
                 </View>
@@ -1413,241 +1710,351 @@ export default function App() {
               </View>
             )}
 
-            {/* Company Announcements / Notices */}
-            {notices.length > 0 && (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>📢 Company Announcements</Text>
-                <Text style={styles.cardDesc}>Important updates from organization administrators</Text>
-                {notices.slice(0, 3).map((notice) => (
-                  <View key={notice.id} style={styles.noticeCard}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={styles.noticeTitle}>{notice.title}</Text>
-                      <View style={[styles.priorityTag, notice.priority === 'critical' ? styles.priorityCritical : styles.priorityHigh]}>
-                        <Text style={styles.priorityText}>{notice.priority?.toUpperCase()}</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.noticeBody}>{notice.content}</Text>
-                    <Text style={styles.noticeDate}>
-                      {notice.date} • {notice.author_name || 'Management'}
-                    </Text>
+            {/* Upcoming Next Holiday Highlight Card */}
+            {(() => {
+              const upcoming = holidays.find((h) => h.date >= todayStr);
+              if (!upcoming) return null;
+              return (
+                <View style={[styles.card, { borderColor: '#f59e0b' }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={[styles.cardTitle, { color: '#fbbf24' }]}>🌴 Next Upcoming Holiday</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setActiveTab('calendar');
+                        setCalSubTab('holidays');
+                      }}
+                    >
+                      <Text style={{ color: '#38bdf8', fontSize: 10, fontWeight: 'bold' }}>View All →</Text>
+                    </TouchableOpacity>
                   </View>
-                ))}
-              </View>
-            )}
+                  <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: 'bold', marginTop: 4 }}>
+                    {upcoming.name}
+                  </Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>
+                    📅 {formatDisplayDate(upcoming.date)} • {upcoming.type?.toUpperCase()}
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
         )}
 
         {/* ========================================================================= */}
-        {/* 2. CALENDAR & ATTENDANCE STATUS TAB */}
+        {/* 2. CALENDAR & HOLIDAYS TAB */}
         {/* ========================================================================= */}
         {activeTab === 'calendar' && (
           <View style={{ gap: 14 }}>
             <View style={styles.card}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={styles.cardTitle}>Attendance Calendar (IST)</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <TouchableOpacity
-                    style={styles.calNavBtn}
-                    onPress={() => {
-                      if (selectedCalMonth === 1) {
-                        setSelectedCalMonth(12);
-                        setSelectedCalYear((y) => y - 1);
-                      } else {
-                        setSelectedCalMonth((m) => m - 1);
-                      }
-                    }}
-                  >
-                    <Text style={styles.calNavBtnText}>◀</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.calMonthText}>
-                    {new Date(selectedCalYear, selectedCalMonth - 1, 1).toLocaleDateString('en-IN', {
-                      month: 'short',
-                      year: 'numeric'
-                    })}
+              {/* Subtab Toggle: Attendance vs Holiday Calendar */}
+              <View style={styles.filterRow}>
+                <TouchableOpacity
+                  style={[styles.filterTab, calSubTab === 'attendance' && styles.filterTabActive]}
+                  onPress={() => setCalSubTab('attendance')}
+                >
+                  <Text style={[styles.filterTabText, calSubTab === 'attendance' && styles.filterTabTextActive]}>
+                    📅 My Attendance
                   </Text>
-                  <TouchableOpacity
-                    style={styles.calNavBtn}
-                    onPress={() => {
-                      if (selectedCalMonth === 12) {
-                        setSelectedCalMonth(1);
-                        setSelectedCalYear((y) => y + 1);
-                      } else {
-                        setSelectedCalMonth((m) => m + 1);
-                      }
-                    }}
-                  >
-                    <Text style={styles.calNavBtnText}>▶</Text>
-                  </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterTab, calSubTab === 'holidays' && styles.filterTabActive]}
+                  onPress={() => setCalSubTab('holidays')}
+                >
+                  <Text style={[styles.filterTabText, calSubTab === 'holidays' && styles.filterTabTextActive]}>
+                    🌴 Holiday Calendar ({holidays.length})
+                  </Text>
+                </TouchableOpacity>
               </View>
 
-              <Text style={styles.cardDesc}>
-                Synced from joining date: {formatDisplayDate(userProfile?.joining_date)}
-              </Text>
-
-              {/* Monthly Attendance Stats Computed from Joining Date */}
-              {(() => {
-                const myId = userProfile?.id;
-                const joiningDateStr = userProfile?.joining_date || '2026-01-01';
-                const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
-                const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
-                const todayStr = getTodayISTDate();
-
-                let present = 0;
-                let regularized = 0;
-                let absent = 0;
-
-                for (let d = 1; d <= daysInMonth; d++) {
-                  const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
-                  if (dStr > todayStr) continue; // Future
-                  if (dStr < joiningDateStr) continue; // Before joining date
-
-                  const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
-                  if (dayOfWeek === 0) continue; // Sunday week-off
-
-                  const punch = attendanceRecords.find(
-                    (a) => a.employee_id === myId && a.date === dStr
-                  );
-
-                  if (punch?.status === 'present' || punch?.check_in_time) {
-                    present++;
-                  } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
-                    regularized++;
-                  } else {
-                    absent++;
-                  }
-                }
-
-                const totalWorking = present + regularized + absent;
-                const percentage = totalWorking > 0 ? (((present + regularized) / totalWorking) * 100).toFixed(1) : '100.0';
-
-                return (
-                  <View style={styles.calSummaryRow}>
-                    <View style={[styles.calSummaryBox, { borderColor: '#10b981' }]}>
-                      <Text style={[styles.calSummaryVal, { color: '#10b981' }]}>{present}</Text>
-                      <Text style={styles.calSummaryLbl}>Present</Text>
-                    </View>
-                    <View style={[styles.calSummaryBox, { borderColor: '#06b6d4' }]}>
-                      <Text style={[styles.calSummaryVal, { color: '#06b6d4' }]}>{regularized}</Text>
-                      <Text style={styles.calSummaryLbl}>Regularized</Text>
-                    </View>
-                    <View style={[styles.calSummaryBox, { borderColor: '#f43f5e' }]}>
-                      <Text style={[styles.calSummaryVal, { color: '#f43f5e' }]}>{absent}</Text>
-                      <Text style={styles.calSummaryLbl}>Absent</Text>
-                    </View>
-                    <View style={[styles.calSummaryBox, { borderColor: '#38bdf8' }]}>
-                      <Text style={[styles.calSummaryVal, { color: '#38bdf8' }]}>{percentage}%</Text>
-                      <Text style={styles.calSummaryLbl}>Presence</Text>
+              {/* VIEW A: MY ATTENDANCE CALENDAR */}
+              {calSubTab === 'attendance' && (
+                <View style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Monthly Attendance</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity
+                        style={styles.calNavBtn}
+                        onPress={() => {
+                          if (selectedCalMonth === 1) {
+                            setSelectedCalMonth(12);
+                            setSelectedCalYear((y) => y - 1);
+                          } else {
+                            setSelectedCalMonth((m) => m - 1);
+                          }
+                        }}
+                      >
+                        <Text style={styles.calNavBtnText}>◀</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.calMonthText}>
+                        {new Date(selectedCalYear, selectedCalMonth - 1, 1).toLocaleDateString('en-IN', {
+                          month: 'short',
+                          year: 'numeric'
+                        })}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.calNavBtn}
+                        onPress={() => {
+                          if (selectedCalMonth === 12) {
+                            setSelectedCalMonth(1);
+                            setSelectedCalYear((y) => y + 1);
+                          } else {
+                            setSelectedCalMonth((m) => m + 1);
+                          }
+                        }}
+                      >
+                        <Text style={styles.calNavBtnText}>▶</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
-                );
-              })()}
 
-              {/* Day List */}
-              <View style={{ marginTop: 12, gap: 8 }}>
-                {(() => {
-                  const myId = userProfile?.id;
-                  const joiningDateStr = userProfile?.joining_date || '2026-01-01';
-                  const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
-                  const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
-                  const todayStr = getTodayISTDate();
-                  const dayItems = [];
+                  <Text style={styles.cardDesc}>
+                    Synced from joining date: {formatDisplayDate(userProfile?.joining_date)}
+                  </Text>
 
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
-                    const dateObj = new Date(selectedCalYear, selectedCalMonth - 1, d);
-                    const dayOfWeek = dateObj.getDay();
-                    const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
-                    const isSunday = dayOfWeek === 0;
-                    const isFuture = dStr > todayStr;
-                    const isToday = dStr === todayStr;
-                    const isBeforeJoining = dStr < joiningDateStr;
+                  {/* Summary Counters */}
+                  {(() => {
+                    const myId = userProfile?.id;
+                    const joiningDateStr = userProfile?.joining_date || '2026-01-01';
+                    const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
+                    const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
 
-                    const punch = attendanceRecords.find(
-                      (a) => a.employee_id === myId && a.date === dStr
-                    );
+                    let present = 0;
+                    let regularized = 0;
+                    let absent = 0;
+                    let holidayCount = 0;
 
-                    let status = 'future';
-                    let statusLabel = 'Upcoming';
-                    let statusColor = '#64748b';
+                    for (let d = 1; d <= daysInMonth; d++) {
+                      const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+                      if (dStr > todayStr) continue;
+                      if (dStr < joiningDateStr) continue;
 
-                    if (isBeforeJoining) {
-                      status = 'before_joining';
-                      statusLabel = 'Before Joining';
-                      statusColor = '#475569';
-                    } else if (isSunday) {
-                      status = 'week_off';
-                      statusLabel = 'Week Off';
-                      statusColor = '#475569';
-                    } else if (punch?.status === 'present' || punch?.check_in_time) {
-                      status = 'present';
-                      const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
-                      statusLabel = `✓ Present (${checkInFormatted})`;
-                      statusColor = '#10b981';
-                    } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
-                      status = 'regularized';
-                      statusLabel = '★ Regularized Approved';
-                      statusColor = '#06b6d4';
-                    } else if (punch?.regularization_status === 'pending') {
-                      status = 'pending';
-                      statusLabel = '⏳ Regularization Pending';
-                      statusColor = '#f59e0b';
-                    } else if (!isFuture) {
-                      status = 'absent';
-                      statusLabel = '✗ Unmarked / Absent';
-                      statusColor = '#f43f5e';
+                      const isHol = holidays.some((h) => h.date === dStr);
+                      if (isHol) {
+                        holidayCount++;
+                        continue;
+                      }
+
+                      const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
+                      if (dayOfWeek === 0) continue; // Sunday
+
+                      const punch = attendanceRecords.find(
+                        (a) => a.employee_id === myId && a.date === dStr
+                      );
+
+                      if (punch?.status === 'present' || punch?.check_in_time) {
+                        present++;
+                      } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                        regularized++;
+                      } else {
+                        absent++;
+                      }
                     }
 
-                    dayItems.push(
-                      <View
-                        key={dStr}
-                        style={[
-                          styles.calDayRow,
-                          isToday && styles.calDayRowToday,
-                          isBeforeJoining && { opacity: 0.5 }
-                        ]}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                          <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : '#1e293b' }]}>
-                            <Text style={styles.calDayNum}>{d}</Text>
-                            <Text style={styles.calDayName}>{dayName}</Text>
-                          </View>
-                          <View>
-                            <Text style={styles.calDateStr}>{dStr} {isToday ? '(Today)' : ''}</Text>
-                            <Text style={[styles.calStatusText, { color: statusColor }]}>{statusLabel}</Text>
-                          </View>
+                    const totalWorking = present + regularized + absent;
+                    const percentage = totalWorking > 0 ? (((present + regularized) / totalWorking) * 100).toFixed(1) : '100.0';
+
+                    return (
+                      <View style={styles.calSummaryRow}>
+                        <View style={[styles.calSummaryBox, { borderColor: '#10b981' }]}>
+                          <Text style={[styles.calSummaryVal, { color: '#10b981' }]}>{present}</Text>
+                          <Text style={styles.calSummaryLbl}>Present</Text>
                         </View>
-
-                        {/* Allow quick regularization for absent days */}
-                        {status === 'absent' && (
-                          <TouchableOpacity
-                            style={styles.calRegBtn}
-                            onPress={() => {
-                              setRegTargetDate(dStr);
-                              setIsRegModal(true);
-                            }}
-                          >
-                            <Text style={styles.calRegBtnText}>Regularize</Text>
-                          </TouchableOpacity>
-                        )}
-
-                        {status === 'regularized' && (
-                          <View style={styles.calApprovedBadge}>
-                            <Text style={styles.calApprovedBadgeText}>Approved</Text>
-                          </View>
-                        )}
+                        <View style={[styles.calSummaryBox, { borderColor: '#06b6d4' }]}>
+                          <Text style={[styles.calSummaryVal, { color: '#06b6d4' }]}>{regularized}</Text>
+                          <Text style={styles.calSummaryLbl}>Regularized</Text>
+                        </View>
+                        <View style={[styles.calSummaryBox, { borderColor: '#f43f5e' }]}>
+                          <Text style={[styles.calSummaryVal, { color: '#f43f5e' }]}>{absent}</Text>
+                          <Text style={styles.calSummaryLbl}>Absent</Text>
+                        </View>
+                        <View style={[styles.calSummaryBox, { borderColor: '#38bdf8' }]}>
+                          <Text style={[styles.calSummaryVal, { color: '#38bdf8' }]}>{percentage}%</Text>
+                          <Text style={styles.calSummaryLbl}>Presence</Text>
+                        </View>
                       </View>
                     );
-                  }
-                  return dayItems;
-                })()}
-              </View>
+                  })()}
+
+                  {/* Day Rows List */}
+                  <View style={{ marginTop: 12, gap: 8 }}>
+                    {(() => {
+                      const myId = userProfile?.id;
+                      const joiningDateStr = userProfile?.joining_date || '2026-01-01';
+                      const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
+                      const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
+                      const dayItems = [];
+
+                      for (let d = 1; d <= daysInMonth; d++) {
+                        const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+                        const dateObj = new Date(selectedCalYear, selectedCalMonth - 1, d);
+                        const dayOfWeek = dateObj.getDay();
+                        const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+                        const isSunday = dayOfWeek === 0;
+                        const isFuture = dStr > todayStr;
+                        const isToday = dStr === todayStr;
+                        const isBeforeJoining = dStr < joiningDateStr;
+                        const matchingHoliday = holidays.find((h) => h.date === dStr);
+
+                        const punch = attendanceRecords.find(
+                          (a) => a.employee_id === myId && a.date === dStr
+                        );
+
+                        let status = 'future';
+                        let statusLabel = 'Upcoming';
+                        let statusColor = '#64748b';
+
+                        if (isBeforeJoining) {
+                          status = 'before_joining';
+                          statusLabel = 'Before Joining';
+                          statusColor = '#475569';
+                        } else if (matchingHoliday) {
+                          status = 'holiday';
+                          statusLabel = `🌴 Holiday: ${matchingHoliday.name}`;
+                          statusColor = '#fbbf24';
+                        } else if (isSunday) {
+                          status = 'week_off';
+                          statusLabel = 'Week Off';
+                          statusColor = '#475569';
+                        } else if (punch?.status === 'present' || punch?.check_in_time) {
+                          status = 'present';
+                          const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
+                          statusLabel = `✓ Present (${checkInFormatted})`;
+                          statusColor = '#10b981';
+                        } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                          status = 'regularized';
+                          statusLabel = '★ Regularized Approved';
+                          statusColor = '#06b6d4';
+                        } else if (punch?.regularization_status === 'pending') {
+                          status = 'pending';
+                          statusLabel = '⏳ Regularization Pending';
+                          statusColor = '#f59e0b';
+                        } else if (!isFuture) {
+                          status = 'absent';
+                          statusLabel = '✗ Unmarked / Absent';
+                          statusColor = '#f43f5e';
+                        }
+
+                        dayItems.push(
+                          <View
+                            key={dStr}
+                            style={[
+                              styles.calDayRow,
+                              isToday && styles.calDayRowToday,
+                              matchingHoliday && { borderColor: '#f59e0b' },
+                              isBeforeJoining && { opacity: 0.5 }
+                            ]}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                              <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : matchingHoliday ? '#78350f' : '#1e293b' }]}>
+                                <Text style={styles.calDayNum}>{d}</Text>
+                                <Text style={styles.calDayName}>{dayName}</Text>
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.calDateStr}>{dStr} {isToday ? '(Today)' : ''}</Text>
+                                <Text style={[styles.calStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                              </View>
+                            </View>
+
+                            {status === 'absent' && (
+                              <TouchableOpacity
+                                style={styles.calRegBtn}
+                                onPress={() => {
+                                  setRegTargetDate(dStr);
+                                  setIsRegModal(true);
+                                }}
+                              >
+                                <Text style={styles.calRegBtnText}>Regularize</Text>
+                              </TouchableOpacity>
+                            )}
+
+                            {status === 'regularized' && (
+                              <View style={styles.calApprovedBadge}>
+                                <Text style={styles.calApprovedBadgeText}>Approved</Text>
+                              </View>
+                            )}
+                          </View>
+                        );
+                      }
+                      return dayItems;
+                    })()}
+                  </View>
+                </View>
+              )}
+
+              {/* VIEW B: COMPANY HOLIDAY SCHEDULE */}
+              {calSubTab === 'holidays' && (
+                <View style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Official Holiday Calendar</Text>
+                    {isPrivileged && (
+                      <TouchableOpacity
+                        style={styles.smallAddBtn}
+                        onPress={() => setIsHolidayModal(true)}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Add Holiday</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.cardDesc}>Company-wide declared holidays for {new Date().getFullYear()}</Text>
+
+                  <View style={{ gap: 8, marginTop: 10 }}>
+                    {holidays.map((hol) => {
+                      const isPast = hol.date < todayStr;
+                      const isToday = hol.date === todayStr;
+
+                      return (
+                        <View
+                          key={hol.id}
+                          style={[
+                            styles.holidayCard,
+                            isToday && { borderColor: '#10b981', backgroundColor: '#064e3b20' },
+                            isPast && { opacity: 0.6 }
+                          ]}
+                        >
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <View style={{ flex: 1, paddingRight: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={styles.holidayName}>{hol.name}</Text>
+                                {isToday && (
+                                  <View style={styles.todayHolBadge}>
+                                    <Text style={styles.todayHolBadgeText}>TODAY</Text>
+                                  </View>
+                                )}
+                              </View>
+                              <Text style={styles.holidayDate}>
+                                📅 {formatDisplayDate(hol.date)} ({new Date(hol.date).toLocaleDateString('en-IN', { weekday: 'long' })})
+                              </Text>
+                              {hol.description && (
+                                <Text style={styles.holidayDesc}>{hol.description}</Text>
+                              )}
+                            </View>
+
+                            <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                              <View style={styles.holTypeBadge}>
+                                <Text style={styles.holTypeBadgeText}>{hol.type?.toUpperCase() || 'OFFICIAL'}</Text>
+                              </View>
+                              {isPrivileged && (
+                                <TouchableOpacity
+                                  onPress={() => handleDeleteHoliday(hol.id)}
+                                  style={{ padding: 2 }}
+                                >
+                                  <Text style={{ color: '#f87171', fontSize: 10 }}>🗑️ Delete</Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
             </View>
           </View>
         )}
 
         {/* ========================================================================= */}
-        {/* 3. LEAVE MANAGEMENT TAB */}
+        {/* 3. LEAVES TAB */}
         {/* ========================================================================= */}
         {activeTab === 'leaves' && (
           <View style={{ gap: 14 }}>
@@ -1655,7 +2062,7 @@ export default function App() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View>
                   <Text style={styles.cardTitle}>My Leave Requests</Text>
-                  <Text style={styles.cardDesc}>Casual, sick & privilege leave balance</Text>
+                  <Text style={styles.cardDesc}>Casual, sick & privilege balances</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.smallAddBtn}
@@ -1669,7 +2076,6 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* Leave Balances Grid */}
               <View style={styles.leaveBalanceRow}>
                 <View style={styles.leaveBalanceBox}>
                   <Text style={styles.leaveBalanceVal}>12</Text>
@@ -1691,7 +2097,6 @@ export default function App() {
                 </View>
               </View>
 
-              {/* My Applications List */}
               <View style={{ marginTop: 14, gap: 8 }}>
                 {(() => {
                   const myLeaves = leaveRequests.filter((l) => l.employee_id === userProfile?.id);
@@ -1713,7 +2118,7 @@ export default function App() {
                             {leave.leave_type?.toUpperCase()} LEAVE ({leave.total_days} {leave.total_days === 1 ? 'day' : 'days'})
                           </Text>
                           <Text style={styles.leaveDateRange}>
-                            📅 {leave.start_date} {leave.start_date !== leave.end_date ? `to ${leave.end_date}` : ''}
+                            📅 {formatDisplayDate(leave.start_date)} {leave.start_date !== leave.end_date ? `to ${formatDisplayDate(leave.end_date)}` : ''}
                           </Text>
                           <Text style={styles.leaveReasonText}>"{leave.reason}"</Text>
                         </View>
@@ -1735,7 +2140,7 @@ export default function App() {
         )}
 
         {/* ========================================================================= */}
-        {/* 4. CONSOLIDATED APPROVALS QUEUE TAB (MANAGERS / HR / SUPERADMIN) */}
+        {/* 4. APPROVALS HUB TAB (MANAGERS / HR / SUPERADMIN) */}
         {/* ========================================================================= */}
         {activeTab === 'approvals' && (
           <View style={{ gap: 14 }}>
@@ -1755,7 +2160,6 @@ export default function App() {
                 )}
               </View>
 
-              {/* Subtab Selector */}
               <View style={styles.filterRow}>
                 <TouchableOpacity
                   style={[styles.filterTab, approvalsTab === 'regularization' && styles.filterTabActive]}
@@ -1785,7 +2189,7 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* Subtab 1: Attendance Regularizations */}
+              {/* Subtab 1: Regularizations */}
               {approvalsTab === 'regularization' && (
                 <View style={{ marginTop: 12, gap: 10 }}>
                   {pendingRegularizations.length === 0 ? (
@@ -1806,7 +2210,7 @@ export default function App() {
                             <Text style={styles.approvalEmpRole}>{emp?.designation || 'Staff'}</Text>
                           </View>
                           <Text style={styles.approvalReason}>"{reg.regularization_reason}"</Text>
-                          <Text style={styles.approvalMeta}>📅 Target Date: {reg.date}</Text>
+                          <Text style={styles.approvalMeta}>📅 Target Date: {formatDisplayDate(reg.date)}</Text>
 
                           <View style={styles.btnRow}>
                             <TouchableOpacity
@@ -1829,7 +2233,7 @@ export default function App() {
                 </View>
               )}
 
-              {/* Subtab 2: Leave Requests */}
+              {/* Subtab 2: Leaves */}
               {approvalsTab === 'leaves' && (
                 <View style={{ marginTop: 12, gap: 10 }}>
                   {pendingLeaves.length === 0 ? (
@@ -1850,7 +2254,7 @@ export default function App() {
                             <Text style={styles.approvalEmpRole}>{leave.leave_type?.toUpperCase()} LEAVE</Text>
                           </View>
                           <Text style={styles.approvalMeta}>
-                            📅 {leave.start_date} {leave.start_date !== leave.end_date ? `to ${leave.end_date}` : ''} ({leave.total_days} days)
+                            📅 {formatDisplayDate(leave.start_date)} {leave.start_date !== leave.end_date ? `to ${formatDisplayDate(leave.end_date)}` : ''} ({leave.total_days} days)
                           </Text>
                           <Text style={styles.approvalReason}>"{leave.reason}"</Text>
 
@@ -1875,7 +2279,7 @@ export default function App() {
                 </View>
               )}
 
-              {/* Subtab 3: Access Requests */}
+              {/* Subtab 3: Access */}
               {approvalsTab === 'access' && (
                 <View style={{ marginTop: 12, gap: 10 }}>
                   {pendingAccess.length === 0 ? (
@@ -1923,249 +2327,500 @@ export default function App() {
         )}
 
         {/* ========================================================================= */}
-        {/* 5. MEETINGS & SCHEDULES TAB */}
+        {/* 5. NOTICES & MEETINGS TAB */}
         {/* ========================================================================= */}
-        {activeTab === 'meetings' && (
+        {activeTab === 'notices' && (
           <View style={{ gap: 14 }}>
             <View style={styles.card}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View>
-                  <Text style={styles.cardTitle}>Meetings & Sprints</Text>
-                  <Text style={styles.cardDesc}>Google Meet calls, 1:1 syncs & sprint reviews</Text>
-                </View>
-                {canApprove && (
-                  <TouchableOpacity
-                    style={styles.smallAddBtn}
-                    onPress={() => setIsMeetingModal(true)}
-                  >
-                    <Text style={styles.smallAddBtnText}>+ Schedule</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* Filter Tabs */}
               <View style={styles.filterRow}>
-                {[
-                  { id: 'all', label: 'All' },
-                  { id: 'today', label: 'Today' },
-                  { id: 'upcoming', label: 'Upcoming' },
-                  { id: 'past', label: 'Past' }
-                ].map((tab) => (
-                  <TouchableOpacity
-                    key={tab.id}
-                    style={[styles.filterTab, meetingFilterTab === tab.id && styles.filterTabActive]}
-                    onPress={() => setMeetingFilterTab(tab.id as any)}
-                  >
-                    <Text style={[styles.filterTabText, meetingFilterTab === tab.id && styles.filterTabTextActive]}>
-                      {tab.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                <TouchableOpacity
+                  style={[styles.filterTab, noticesSubTab === 'notices' && styles.filterTabActive]}
+                  onPress={() => setNoticesSubTab('notices')}
+                >
+                  <Text style={[styles.filterTabText, noticesSubTab === 'notices' && styles.filterTabTextActive]}>
+                    📢 Notice Board ({notices.length})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterTab, noticesSubTab === 'meetings' && styles.filterTabActive]}
+                  onPress={() => setNoticesSubTab('meetings')}
+                >
+                  <Text style={[styles.filterTabText, noticesSubTab === 'meetings' && styles.filterTabTextActive]}>
+                    🎥 Meetings ({meetings.length})
+                  </Text>
+                </TouchableOpacity>
               </View>
 
-              {/* Meetings List */}
-              <View style={{ marginTop: 12, gap: 10 }}>
-                {(() => {
-                  const todayStr = getTodayISTDate();
-                  const filtered = meetings.filter((m) => {
-                    const mDate = m.date;
-                    if (meetingFilterTab === 'today') return mDate === todayStr;
-                    if (meetingFilterTab === 'upcoming') return mDate >= todayStr && m.status !== 'completed' && m.status !== 'cancelled';
-                    if (meetingFilterTab === 'past') return mDate < todayStr || m.status === 'completed';
-                    return true;
-                  });
+              {/* VIEW A: NOTICE BOARD */}
+              {noticesSubTab === 'notices' && (
+                <View style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Company Notice Board</Text>
+                    {isPrivileged && (
+                      <TouchableOpacity
+                        style={styles.smallAddBtn}
+                        onPress={() => setIsNoticeModal(true)}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Post Notice</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.cardDesc}>Official company policies, announcements & alerts</Text>
 
-                  if (filtered.length === 0) {
-                    return (
-                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                        <Text style={{ fontSize: 28, marginBottom: 6 }}>📅</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: 'bold' }}>No Meetings Found</Text>
-                        <Text style={{ color: '#64748b', fontSize: 11, textAlign: 'center', marginTop: 2 }}>
-                          {meetingFilterTab === 'today'
-                            ? 'No meetings scheduled for today. Have a productive day!'
-                            : 'No meetings match the selected filter.'}
-                        </Text>
+                  <View style={{ gap: 10, marginTop: 10 }}>
+                    {notices.length === 0 ? (
+                      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 24, marginBottom: 4 }}>📢</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Notices Published</Text>
                       </View>
-                    );
-                  }
-
-                  return filtered.map((m) => {
-                    const isToday = m.date === todayStr;
-                    const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
-
-                    return (
-                      <View key={m.id} style={styles.meetingCard}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <View style={{ flex: 1, paddingRight: 8 }}>
-                            <Text style={styles.meetingTitle}>{m.title}</Text>
-                            <Text style={styles.meetingMeta}>
-                              📅 {m.date} {isToday ? '• Today' : ''} • ⏰ {m.start_time || m.startTime} - {m.end_time || m.endTime} IST
-                            </Text>
-                            <Text style={styles.meetingHost}>
-                              Host: <Text style={{ color: '#38bdf8' }}>{m.organizer_name || m.organizerName || 'Organizer'}</Text> • Dept: {m.department || 'All'}
-                            </Text>
-                            {m.description ? (
-                              <Text style={styles.meetingDesc}>{m.description}</Text>
-                            ) : null}
+                    ) : (
+                      notices.map((n) => (
+                        <View key={n.id} style={[styles.noticeCard, n.is_pinned && { borderColor: '#f59e0b' }]}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <View style={{ flex: 1, paddingRight: 6 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                {n.is_pinned && <Text style={{ fontSize: 12 }}>📌</Text>}
+                                <Text style={styles.noticeTitle}>{n.title}</Text>
+                              </View>
+                            </View>
+                            <View style={[styles.priorityTag, n.priority === 'critical' ? styles.priorityCritical : styles.priorityHigh]}>
+                              <Text style={styles.priorityText}>{n.priority?.toUpperCase()}</Text>
+                            </View>
                           </View>
-                          <View style={[styles.meetingStatusBadge, m.status === 'completed' ? styles.statusCompleted : styles.statusScheduled]}>
-                            <Text style={styles.meetingStatusText}>{m.status?.toUpperCase() || 'SCHEDULED'}</Text>
-                          </View>
+                          <Text style={styles.noticeBody}>{n.content}</Text>
+                          <Text style={styles.noticeDate}>
+                            📅 {formatDisplayDate(n.date)} • Published by: {n.author_name} ({n.author_role?.toUpperCase()})
+                          </Text>
                         </View>
+                      ))
+                    )}
+                  </View>
+                </View>
+              )}
 
-                        <View style={styles.meetingActionsRow}>
-                          <TouchableOpacity
-                            style={styles.joinMeetBtn}
-                            onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Link Error', 'Could not open URL: ' + meetUrl))}
-                          >
-                            <Text style={styles.joinMeetBtnText}>🎥 Join Video Call</Text>
-                          </TouchableOpacity>
+              {/* VIEW B: MEETINGS */}
+              {noticesSubTab === 'meetings' && (
+                <View style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Scheduled Meetings</Text>
+                    {canApprove && (
+                      <TouchableOpacity
+                        style={styles.smallAddBtn}
+                        onPress={() => setIsMeetingModal(true)}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Schedule</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.cardDesc}>Video calls & sprint syncs</Text>
 
-                          <TouchableOpacity
-                            style={styles.remindBtn}
-                            onPress={() => scheduleMeetingReminder(m)}
-                          >
-                            <Text style={styles.remindBtnText}>🔔 Remind (10m)</Text>
-                          </TouchableOpacity>
-                        </View>
+                  <View style={{ gap: 10, marginTop: 10 }}>
+                    {meetings.length === 0 ? (
+                      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 24, marginBottom: 4 }}>📅</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Meetings Scheduled</Text>
                       </View>
-                    );
-                  });
-                })()}
-              </View>
+                    ) : (
+                      meetings.map((m) => {
+                        const isToday = m.date === todayStr;
+                        const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
+
+                        return (
+                          <View key={m.id} style={styles.meetingCard}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <View style={{ flex: 1, paddingRight: 8 }}>
+                                <Text style={styles.meetingTitle}>{m.title}</Text>
+                                <Text style={styles.meetingMeta}>
+                                  📅 {formatDisplayDate(m.date)} {isToday ? '• Today' : ''} • ⏰ {m.start_time || m.startTime} - {m.end_time || m.endTime} IST
+                                </Text>
+                                <Text style={styles.meetingHost}>
+                                  Host: <Text style={{ color: '#38bdf8' }}>{m.organizer_name || 'Organizer'}</Text> • Dept: {m.department || 'All'}
+                                </Text>
+                              </View>
+                              <View style={[styles.meetingStatusBadge, m.status === 'completed' ? styles.statusCompleted : styles.statusScheduled]}>
+                                <Text style={styles.meetingStatusText}>{m.status?.toUpperCase() || 'SCHEDULED'}</Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.meetingActionsRow}>
+                              <TouchableOpacity
+                                style={styles.joinMeetBtn}
+                                onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Link Error', 'Could not open URL: ' + meetUrl))}
+                              >
+                                <Text style={styles.joinMeetBtnText}>🎥 Join Video Call</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })
+                    )}
+                  </View>
+                </View>
+              )}
             </View>
           </View>
         )}
 
         {/* ========================================================================= */}
-        {/* 6. DEDICATED USER PROFILE SCREEN */}
+        {/* 6. PROFILE & HUB TAB */}
         {/* ========================================================================= */}
-        {activeTab === 'profile' && (
+        {activeTab === 'hub' && (
           <View style={{ gap: 14 }}>
-            {/* Top Profile Card */}
-            <View style={styles.card}>
-              <View style={styles.profileHeaderBox}>
-                <View style={styles.profileAvatarLarge}>
-                  {userProfile?.avatar_url ? (
-                    <Image source={{ uri: userProfile.avatar_url }} style={styles.profileAvatarLargeImg} />
-                  ) : (
-                    <Text style={styles.profileAvatarLargeText}>
-                      {(userProfile?.first_name?.[0] || 'U') + (userProfile?.last_name?.[0] || '')}
-                    </Text>
-                  )}
+            {/* Hub Subtab Selector */}
+            <View style={styles.filterRow}>
+              <TouchableOpacity
+                style={[styles.filterTab, hubSubTab === 'profile' && styles.filterTabActive]}
+                onPress={() => setHubSubTab('profile')}
+              >
+                <Text style={[styles.filterTabText, hubSubTab === 'profile' && styles.filterTabTextActive]}>
+                  👤 Profile
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.filterTab, hubSubTab === 'team' && styles.filterTabActive]}
+                onPress={() => setHubSubTab('team')}
+              >
+                <Text style={[styles.filterTabText, hubSubTab === 'team' && styles.filterTabTextActive]}>
+                  👥 Team ({teamProfiles.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.filterTab, hubSubTab === 'standups' && styles.filterTabActive]}
+                onPress={() => setHubSubTab('standups')}
+              >
+                <Text style={[styles.filterTabText, hubSubTab === 'standups' && styles.filterTabTextActive]}>
+                  🚀 Standups
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.filterTab, hubSubTab === 'offers' && styles.filterTabActive]}
+                onPress={() => setHubSubTab('offers')}
+              >
+                <Text style={[styles.filterTabText, hubSubTab === 'offers' && styles.filterTabTextActive]}>
+                  📜 Offers/Pay
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* SUBTAB 1: USER PROFILE */}
+            {hubSubTab === 'profile' && (
+              <View style={{ gap: 14 }}>
+                <View style={styles.card}>
+                  <View style={styles.profileHeaderBox}>
+                    <View style={styles.profileAvatarLarge}>
+                      {userProfile?.avatar_url ? (
+                        <Image source={{ uri: userProfile.avatar_url }} style={styles.profileAvatarLargeImg} />
+                      ) : (
+                        <Text style={styles.profileAvatarLargeText}>
+                          {(userProfile?.first_name?.[0] || 'U') + (userProfile?.last_name?.[0] || '')}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.profileName}>
+                        {userProfile?.first_name} {userProfile?.last_name}
+                      </Text>
+                      <Text style={styles.profileDesig}>{userProfile?.designation || 'Team Member'}</Text>
+                      <View style={styles.profileRoleBadge}>
+                        <Text style={styles.profileRoleBadgeText}>{userProfile?.role?.toUpperCase() || 'EMPLOYEE'}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.editProfileBtn}
+                    onPress={() => {
+                      setEditPhone(userProfile?.phone || '');
+                      setEditAvatarUrl(userProfile?.avatar_url || '');
+                      setIsEditProfileModal(true);
+                    }}
+                  >
+                    <Text style={styles.editProfileBtnText}>✏️ Edit Contact / Avatar</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.profileName}>
-                    {userProfile?.first_name} {userProfile?.last_name}
-                  </Text>
-                  <Text style={styles.profileDesig}>{userProfile?.designation || 'Team Member'}</Text>
-                  <View style={styles.profileRoleBadge}>
-                    <Text style={styles.profileRoleBadgeText}>{userProfile?.role?.toUpperCase() || 'EMPLOYEE'}</Text>
+
+                {/* Details Card */}
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Work Profile & Organization</Text>
+                  <Text style={styles.cardDesc}>Verified employee record in Supabase cluster</Text>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Work Email:</Text>
+                    <Text style={styles.detailVal}>{userProfile?.email}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Contact Phone:</Text>
+                    <Text style={styles.detailVal}>{userProfile?.phone || 'Not Provided'}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Department:</Text>
+                    <Text style={styles.detailVal}>{userProfile?.department || 'Operations'}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Date of Joining:</Text>
+                    <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>
+                      {formatDisplayDate(userProfile?.joining_date)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Reporting Manager:</Text>
+                    <Text style={styles.detailVal}>
+                      {(() => {
+                        const mgr = teamProfiles.find((p) => p.id === userProfile?.manager_id);
+                        return mgr ? `${mgr.first_name} ${mgr.last_name} (${mgr.designation || 'Lead'})` : isSuperadmin ? 'Superadmin Master' : 'Executive Head';
+                      })()}
+                    </Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Active Tenant:</Text>
+                    <Text style={styles.detailVal}>{currentOrg?.name} ({currentOrg?.org_code})</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Push Channel Status:</Text>
+                    <Text style={[styles.detailVal, { color: notifPermission ? '#10b981' : '#f59e0b', fontWeight: 'bold' }]}>
+                      {notifPermission ? 'CONNECTED (MAX)' : 'ACTIVE'}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity style={styles.profileLogoutBtn} onPress={handleLogout}>
+                  <Text style={styles.profileLogoutBtnText}>Log Out from Device</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* SUBTAB 2: TEAM DIRECTORY (WITH JOINING DATE EDITING FOR HR) */}
+            {hubSubTab === 'team' && (
+              <View style={{ gap: 14 }}>
+                <View style={styles.card}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Team Directory ({teamProfiles.length})</Text>
+                    {isPrivileged && (
+                      <TouchableOpacity
+                        style={styles.smallAddBtn}
+                        onPress={() => setIsAddEmpModal(true)}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Add Member</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.cardDesc}>Company organization hierarchy for {currentOrg?.name}</Text>
+
+                  <TextInput
+                    style={[styles.textInput, { marginVertical: 8 }]}
+                    value={teamSearchQuery}
+                    onChangeText={setTeamSearchQuery}
+                    placeholder="Search by name, role or designation..."
+                    placeholderTextColor="#64748b"
+                  />
+
+                  <View style={{ gap: 8, marginTop: 6 }}>
+                    {teamProfiles
+                      .filter((p) => {
+                        if (!teamSearchQuery.trim()) return true;
+                        const q = teamSearchQuery.toLowerCase();
+                        return (
+                          p.first_name?.toLowerCase().includes(q) ||
+                          p.last_name?.toLowerCase().includes(q) ||
+                          p.designation?.toLowerCase().includes(q) ||
+                          p.role?.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((member) => {
+                        const mgr = teamProfiles.find((p) => p.id === member.manager_id);
+                        return (
+                          <View key={member.id} style={styles.teamCard}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.teamName}>
+                                  {member.first_name} {member.last_name}
+                                </Text>
+                                <Text style={styles.teamDesig}>
+                                  {member.designation || 'Staff'} • {member.department || 'Operations'}
+                                </Text>
+                                <Text style={styles.teamEmail}>{member.email}</Text>
+                                <Text style={styles.teamJoining}>
+                                  Joined: {formatDisplayDate(member.joining_date)}
+                                </Text>
+                                {mgr && (
+                                  <Text style={styles.teamManager}>
+                                    Reports To: {mgr.first_name} {mgr.last_name}
+                                  </Text>
+                                )}
+                              </View>
+
+                              <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                                <View style={styles.rolePill}>
+                                  <Text style={styles.rolePillText}>{member.role?.toUpperCase()}</Text>
+                                </View>
+
+                                {/* Joining Date Edit Button for HR / Superadmin */}
+                                {isPrivileged && (
+                                  <TouchableOpacity
+                                    style={styles.editJoiningBtn}
+                                    onPress={() => {
+                                      setTargetEmpForJoining(member);
+                                      setUpdatedJoiningDateVal(member.joining_date || getTodayISTDate());
+                                      setIsEditJoiningModal(true);
+                                    }}
+                                  >
+                                    <Text style={styles.editJoiningBtnText}>Edit Joining 📅</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
                   </View>
                 </View>
               </View>
+            )}
 
-              <TouchableOpacity
-                style={styles.editProfileBtn}
-                onPress={() => {
-                  setEditPhone(userProfile?.phone || '');
-                  setEditAvatarUrl(userProfile?.avatar_url || '');
-                  setIsEditProfileModal(true);
-                }}
-              >
-                <Text style={styles.editProfileBtnText}>✏️ Edit Contact / Avatar</Text>
-              </TouchableOpacity>
-            </View>
+            {/* SUBTAB 3: EOD STANDUPS */}
+            {hubSubTab === 'standups' && (
+              <View style={{ gap: 14 }}>
+                <View style={styles.card}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Daily EOD Standup</Text>
+                    <TouchableOpacity
+                      style={styles.smallAddBtn}
+                      onPress={() => setIsStandupModal(true)}
+                    >
+                      <Text style={styles.smallAddBtnText}>+ Submit Today</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.cardDesc}>Accountability & daily accomplishment logs</Text>
 
-            {/* Employment & Organization Details */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Employment Details</Text>
-              <Text style={styles.cardDesc}>Verified employee record in Supabase cluster</Text>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Work Email:</Text>
-                <Text style={styles.detailVal}>{userProfile?.email}</Text>
+                  <View style={{ gap: 10, marginTop: 10 }}>
+                    {standups.length === 0 ? (
+                      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 24, marginBottom: 4 }}>🚀</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Standups Logged Today</Text>
+                        <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Tap "+ Submit Today" to log accomplishments.</Text>
+                      </View>
+                    ) : (
+                      standups.map((st) => {
+                        const emp = teamProfiles.find((p) => p.id === st.employee_id);
+                        return (
+                          <View key={st.id} style={styles.standupFeedItem}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                              <Text style={styles.standupAuthor}>
+                                {emp ? `${emp.first_name} ${emp.last_name}` : 'Team Member'}
+                              </Text>
+                              <Text style={styles.standupDate}>{formatDisplayDate(st.date)} • {st.hours_logged}h</Text>
+                            </View>
+                            <Text style={styles.standupText}>
+                              <Text style={{ color: '#10b981', fontWeight: 'bold' }}>Done: </Text>
+                              {st.completed_today}
+                            </Text>
+                            <Text style={styles.standupText}>
+                              <Text style={{ color: '#38bdf8', fontWeight: 'bold' }}>Next: </Text>
+                              {st.planned_tomorrow}
+                            </Text>
+                            {st.blockers ? (
+                              <Text style={[styles.standupText, { color: '#f59e0b' }]}>
+                                ⚠️ Blocker: {st.blockers}
+                              </Text>
+                            ) : null}
+                          </View>
+                        );
+                      })
+                    )}
+                  </View>
+                </View>
               </View>
+            )}
 
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Contact Phone:</Text>
-                <Text style={styles.detailVal}>{userProfile?.phone || 'Not Provided'}</Text>
+            {/* SUBTAB 4: OFFERS & PAYROLL */}
+            {hubSubTab === 'offers' && (
+              <View style={{ gap: 14 }}>
+                {/* Anti-Fraud Offer Verification */}
+                <View style={styles.card}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.cardTitle}>Offer Letter Verification</Text>
+                    {isPrivileged && (
+                      <TouchableOpacity
+                        style={styles.smallAddBtn}
+                        onPress={() => setIsNewOfferModal(true)}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Issue Offer</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.cardDesc}>Cryptographic anti-fraud letterhead verification</Text>
+
+                  <View style={{ flexDirection: 'row', gap: 6, marginVertical: 8 }}>
+                    <TextInput
+                      style={[styles.textInput, { flex: 1, textTransform: 'uppercase' }]}
+                      value={verifyQuery}
+                      onChangeText={setVerifyQuery}
+                      placeholder="e.g. VDX-BNK-2026-F98A"
+                      placeholderTextColor="#64748b"
+                    />
+                    <TouchableOpacity style={styles.verifyActionBtn} onPress={handleVerifySerial}>
+                      <Text style={styles.verifyActionBtnText}>Verify</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {verifyResult && verifyResult !== 'NOT_FOUND' && (
+                    <View style={styles.verifySuccess}>
+                      <Text style={styles.verifySuccessTitle}>✅ GENUINE & AUTHENTIC OFFER</Text>
+                      <Text style={styles.verifySuccessSub}>Candidate: {verifyResult.candidate_name}</Text>
+                      <Text style={styles.verifySuccessSub}>Role: {verifyResult.designation} • {verifyResult.department}</Text>
+                      <Text style={styles.verifySuccessSerial}>Serial: {verifyResult.serial_number}</Text>
+                    </View>
+                  )}
+
+                  {verifyResult === 'NOT_FOUND' && (
+                    <View style={styles.verifyFail}>
+                      <Text style={styles.verifyFailText}>❌ SERIAL RECORD NOT FOUND</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* My Compensation Card */}
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>My Compensation Structure</Text>
+                  <Text style={styles.cardDesc}>Tax-compliant salary details</Text>
+
+                  <View style={styles.payGrid}>
+                    <View style={styles.payItem}>
+                      <Text style={styles.payLabel}>Annual Fixed CTC</Text>
+                      <Text style={styles.payVal}>₹{(userProfile?.base_salary ? userProfile.base_salary * 12 : 1200000).toLocaleString('en-IN')}</Text>
+                    </View>
+                    <View style={styles.payItem}>
+                      <Text style={styles.payLabel}>Monthly Basic (50%)</Text>
+                      <Text style={styles.payVal}>₹{(userProfile?.base_salary ? Math.round(userProfile.base_salary * 0.5) : 50000).toLocaleString('en-IN')}</Text>
+                    </View>
+                    <View style={styles.payItem}>
+                      <Text style={styles.payLabel}>HRA (25%)</Text>
+                      <Text style={styles.payVal}>₹{(userProfile?.base_salary ? Math.round(userProfile.base_salary * 0.25) : 25000).toLocaleString('en-IN')}</Text>
+                    </View>
+                    <View style={styles.payItem}>
+                      <Text style={styles.payLabel}>Special Allowance</Text>
+                      <Text style={styles.payVal}>₹{(userProfile?.base_salary ? Math.round(userProfile.base_salary * 0.25) : 25000).toLocaleString('en-IN')}</Text>
+                    </View>
+                  </View>
+                </View>
               </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Department:</Text>
-                <Text style={styles.detailVal}>{userProfile?.department || 'General'}</Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Date of Joining:</Text>
-                <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>
-                  {formatDisplayDate(userProfile?.joining_date)}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Reporting Manager:</Text>
-                <Text style={styles.detailVal}>
-                  {myReportingManager
-                    ? `${myReportingManager.first_name} ${myReportingManager.last_name} (${myReportingManager.designation || 'Lead'})`
-                    : isSuperadmin ? 'Top Executive / Superadmin' : 'Organization Administrator'}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Organization:</Text>
-                <Text style={styles.detailVal}>{currentOrg?.name} ({currentOrg?.org_code})</Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Status:</Text>
-                <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold' }]}>
-                  {userProfile?.is_active ? 'ACTIVE & VERIFIED' : 'ACTIVE'}
-                </Text>
-              </View>
-            </View>
-
-            {/* Notification & Device Settings */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Device & Notification Channels</Text>
-              <Text style={styles.cardDesc}>Android notification channels and permissions</Text>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Push Notification Permission:</Text>
-                <Text style={[styles.detailVal, { color: notifPermission ? '#10b981' : '#f59e0b', fontWeight: 'bold' }]}>
-                  {notifPermission ? 'GRANTED' : 'CHECKING / DEFAULT'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.actionBtnSecondary, { marginTop: 8 }]}
-                onPress={async () => {
-                  const granted = await setupNotificationsAsync();
-                  await sendDeviceNotification(
-                    '🔔 Vedotrix Pulse Notification Test',
-                    'Push alert channel is connected and active!'
-                  );
-                  Alert.alert(
-                    'Notification Test Sent 📱',
-                    'Check your notification shade to verify shift and meeting alarms.'
-                  );
-                }}
-              >
-                <Text style={styles.actionBtnSecondaryText}>🔔 Send Test Device Notification</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Logout Action Card */}
-            <TouchableOpacity style={styles.profileLogoutBtn} onPress={handleLogout}>
-              <Text style={styles.profileLogoutBtnText}>Log Out from Vedotrix Pulse</Text>
-            </TouchableOpacity>
+            )}
           </View>
         )}
       </ScrollView>
 
       {/* ========================================================================= */}
-      {/* MODERN BOTTOM NAVIGATION BAR (6 TABS) */}
+      {/* BOTTOM NAVIGATION (6 TABS) */}
       {/* ========================================================================= */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
@@ -2208,24 +2863,374 @@ export default function App() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'meetings' && styles.navItemActive]}
-          onPress={() => setActiveTab('meetings')}
+          style={[styles.navItem, activeTab === 'notices' && styles.navItemActive]}
+          onPress={() => setActiveTab('notices')}
         >
-          <Text style={styles.navIcon}>🎥</Text>
-          <Text style={[styles.navLabel, activeTab === 'meetings' && styles.navLabelActive]}>Meetings</Text>
+          <Text style={styles.navIcon}>📢</Text>
+          <Text style={[styles.navLabel, activeTab === 'notices' && styles.navLabelActive]}>Notices</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'profile' && styles.navItemActive]}
-          onPress={() => setActiveTab('profile')}
+          style={[styles.navItem, activeTab === 'hub' && styles.navItemActive]}
+          onPress={() => setActiveTab('hub')}
         >
           <Text style={styles.navIcon}>👤</Text>
-          <Text style={[styles.navLabel, activeTab === 'profile' && styles.navLabelActive]}>Profile</Text>
+          <Text style={[styles.navLabel, activeTab === 'hub' && styles.navLabelActive]}>Hub/Profile</Text>
         </TouchableOpacity>
       </View>
 
       {/* ========================================================================= */}
-      {/* MODAL: EDIT USER PROFILE */}
+      {/* MODAL 1: ADD ORGANIZATION HOLIDAY (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isHolidayModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Add Organization Holiday</Text>
+            <Text style={styles.modalSub}>Declares holiday for all employees in {currentOrg?.name}</Text>
+
+            <Text style={styles.inputLabel}>Holiday Name *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={newHolName}
+              onChangeText={setNewHolName}
+              placeholder="e.g. Mahashivratri / Foundation Day"
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>Date (YYYY-MM-DD) *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={newHolDate}
+              onChangeText={setNewHolDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>Holiday Type</Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginVertical: 4 }}>
+              {['national', 'festival', 'gazetted', 'company'].map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.indPill, newHolType === t && styles.indPillActive]}
+                  onPress={() => setNewHolType(t)}
+                >
+                  <Text style={[styles.indPillText, newHolType === t && styles.indPillTextActive]}>{t.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.inputLabel}>Description / Notes</Text>
+            <TextInput
+              style={styles.textInput}
+              value={newHolDesc}
+              onChangeText={setNewHolDesc}
+              placeholder="Optional description..."
+              placeholderTextColor="#64748b"
+            />
+
+            <TouchableOpacity style={styles.loginBtn} onPress={handleAddHoliday} disabled={isSavingHoliday}>
+              <Text style={styles.loginBtnText}>{isSavingHoliday ? 'Saving...' : 'Add to Calendar'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsHolidayModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 2: EDIT EMPLOYEE JOINING DATE (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isEditJoiningModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Set Employee Joining Date</Text>
+            <Text style={styles.modalSub}>
+              Employee: {targetEmpForJoining?.first_name} {targetEmpForJoining?.last_name} ({targetEmpForJoining?.designation})
+            </Text>
+
+            <Text style={styles.inputLabel}>Joining Date (YYYY-MM-DD) *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={updatedJoiningDateVal}
+              onChangeText={setUpdatedJoiningDateVal}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#64748b"
+            />
+            <Text style={{ color: '#64748b', fontSize: 10, marginTop: 4 }}>
+              Attendance calculations and absent markings will strictly take effect from this date onwards.
+            </Text>
+
+            <TouchableOpacity style={styles.loginBtn} onPress={handleUpdateJoiningDate} disabled={isSavingJoiningDate}>
+              <Text style={styles.loginBtnText}>{isSavingJoiningDate ? 'Updating...' : 'Save Joining Date'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsEditJoiningModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 3: ADD NEW TEAM MEMBER (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isAddEmpModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Register Team Member</Text>
+            <Text style={styles.modalSub}>Assign to {currentOrg?.name}</Text>
+
+            <ScrollView style={{ maxHeight: 380, width: '100%' }}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>First Name *</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={newEmpFirst}
+                    onChangeText={setNewEmpFirst}
+                    placeholder="Priya"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Last Name</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={newEmpLast}
+                    onChangeText={setNewEmpLast}
+                    placeholder="Sharma"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.inputLabel}>Work Email *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newEmpEmail}
+                onChangeText={setNewEmpEmail}
+                placeholder="priya@company.com"
+                placeholderTextColor="#64748b"
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+
+              <Text style={styles.inputLabel}>Designation *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newEmpDesig}
+                onChangeText={setNewEmpDesig}
+                placeholder="Senior Operations Lead"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Department</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newEmpDept}
+                onChangeText={setNewEmpDept}
+                placeholder="Operations / Tech / Marketing"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Joining Date (YYYY-MM-DD) *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newEmpJoiningDate}
+                onChangeText={setNewEmpJoiningDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Role</Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginVertical: 4 }}>
+                {['employee', 'manager', 'hr'].map((r) => (
+                  <TouchableOpacity
+                    key={r}
+                    style={[styles.indPill, newEmpRole === r && styles.indPillActive]}
+                    onPress={() => setNewEmpRole(r)}
+                  >
+                    <Text style={[styles.indPillText, newEmpRole === r && styles.indPillTextActive]}>{r.toUpperCase()}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity style={styles.loginBtn} onPress={handleAddEmployee} disabled={isSavingEmp}>
+              <Text style={styles.loginBtnText}>{isSavingEmp ? 'Creating...' : 'Create Employee Profile'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsAddEmpModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 4: POST COMPANY NOTICE (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isNoticeModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Publish Notice / Announcement</Text>
+            <Text style={styles.modalSub}>Broadcasted to all team members</Text>
+
+            <Text style={styles.inputLabel}>Notice Title *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={newNoticeTitle}
+              onChangeText={setNewNoticeTitle}
+              placeholder="e.g. Diwali Holiday Announcement & Office Closure"
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>Priority</Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginVertical: 4 }}>
+              {['critical', 'high', 'medium'].map((p) => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.indPill, newNoticePriority === p && styles.indPillActive]}
+                  onPress={() => setNewNoticePriority(p)}
+                >
+                  <Text style={[styles.indPillText, newNoticePriority === p && styles.indPillTextActive]}>{p.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.inputLabel}>Message Content *</Text>
+            <TextInput
+              style={[styles.textInput, { height: 80, textAlignVertical: 'top' }]}
+              value={newNoticeContent}
+              onChangeText={setNewNoticeContent}
+              placeholder="Announcement text..."
+              placeholderTextColor="#64748b"
+              multiline
+            />
+
+            <TouchableOpacity style={styles.loginBtn} onPress={handlePostNotice} disabled={isSubmittingNotice}>
+              <Text style={styles.loginBtnText}>{isSubmittingNotice ? 'Publishing...' : 'Publish Announcement'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsNoticeModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 5: SUBMIT EOD STANDUP */}
+      {/* ========================================================================= */}
+      <Modal visible={isStandupModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Submit EOD Standup</Text>
+            <Text style={styles.modalSub}>Daily accomplishment log for {currentOrg?.name}</Text>
+
+            <Text style={styles.inputLabel}>1. What did you accomplish today? *</Text>
+            <TextInput
+              style={[styles.textInput, { height: 50, textAlignVertical: 'top' }]}
+              value={standupDone}
+              onChangeText={setStandupDone}
+              placeholder="e.g. Completed client sprint review & fixed GPS punch"
+              placeholderTextColor="#64748b"
+              multiline
+            />
+
+            <Text style={styles.inputLabel}>2. Key priorities for tomorrow? *</Text>
+            <TextInput
+              style={[styles.textInput, { height: 50, textAlignVertical: 'top' }]}
+              value={standupNext}
+              onChangeText={setStandupNext}
+              placeholder="e.g. Deploy attendance regularization queue tests"
+              placeholderTextColor="#64748b"
+              multiline
+            />
+
+            <Text style={styles.inputLabel}>3. Blockers / Roadblocks</Text>
+            <TextInput
+              style={styles.textInput}
+              value={standupBlockers}
+              onChangeText={setStandupBlockers}
+              placeholder="Optional: Any blockers..."
+              placeholderTextColor="#64748b"
+            />
+
+            <TouchableOpacity style={styles.loginBtn} onPress={handleSubmitStandup} disabled={isSavingStandup}>
+              <Text style={styles.loginBtnText}>{isSavingStandup ? 'Saving...' : 'Submit Standup'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsStandupModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 6: ISSUE OFFER LETTER (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isNewOfferModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Issue Official Offer Letter</Text>
+            <Text style={styles.modalSub}>Auto-generates cryptographic serial</Text>
+
+            <Text style={styles.inputLabel}>Candidate Full Name *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={candName}
+              onChangeText={setCandName}
+              placeholder="e.g. Rahul Verma"
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>Candidate Email *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={candEmail}
+              onChangeText={setCandEmail}
+              placeholder="rahul@example.com"
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+
+            <Text style={styles.inputLabel}>Designation *</Text>
+            <TextInput
+              style={styles.textInput}
+              value={candDesig}
+              onChangeText={setCandDesig}
+              placeholder="e.g. Growth Specialist"
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>Annual Fixed CTC (₹ INR)</Text>
+            <TextInput
+              style={styles.textInput}
+              value={candCtc}
+              onChangeText={setCandCtc}
+              placeholder="1200000"
+              placeholderTextColor="#64748b"
+              keyboardType="numeric"
+            />
+
+            <TouchableOpacity style={styles.loginBtn} onPress={handleCreateOffer} disabled={isSavingOffer}>
+              <Text style={styles.loginBtnText}>{isSavingOffer ? 'Issuing...' : 'Issue Offer Letter'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsNewOfferModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 7: EDIT USER PROFILE */}
       {/* ========================================================================= */}
       <Modal visible={isEditProfileModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -2271,7 +3276,7 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL: REQUEST ATTENDANCE REGULARIZATION */}
+      {/* MODAL 8: REGULARIZATION REQUEST */}
       {/* ========================================================================= */}
       <Modal visible={isRegModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -2362,7 +3367,7 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL: APPLY FOR LEAVE */}
+      {/* MODAL 9: APPLY FOR LEAVE */}
       {/* ========================================================================= */}
       <Modal visible={isLeaveModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -2446,7 +3451,7 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL: SCHEDULE NEW MEETING */}
+      {/* MODAL 10: SCHEDULE MEETING */}
       {/* ========================================================================= */}
       <Modal visible={isMeetingModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -2544,65 +3549,7 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL: REQUEST ACCESS */}
-      {/* ========================================================================= */}
-      <Modal visible={isAccessModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Request Module Access</Text>
-            <Text style={styles.modalSub}>Permission escalation to manager</Text>
-
-            <Text style={styles.inputLabel}>Select Module / Feature</Text>
-            <View style={styles.moduleSelector}>
-              {[
-                { id: 'tech_sprints', label: 'Tech Sprints & Git' },
-                { id: 'offers', label: 'Offer Letters & Verification' },
-                { id: 'payroll', label: 'Payroll & Disbursals' },
-                { id: 'geo_override', label: 'Remote Geo Punch' },
-                { id: 'admin_console', label: 'Admin Settings' }
-              ].map((m) => (
-                <TouchableOpacity
-                  key={m.id}
-                  style={[styles.modOption, targetModule === m.id && styles.modOptionActive]}
-                  onPress={() => setTargetModule(m.id)}
-                >
-                  <Text style={[styles.modOptionText, targetModule === m.id && styles.modOptionTextActive]}>
-                    {m.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.inputLabel}>Business Justification *</Text>
-            <TextInput
-              style={[styles.textInput, { height: 80, textAlignVertical: 'top' }]}
-              value={accessJustification}
-              onChangeText={setAccessJustification}
-              placeholder="Explain why you require this capability..."
-              placeholderTextColor="#64748b"
-              multiline
-              numberOfLines={3}
-            />
-
-            <TouchableOpacity
-              style={[styles.loginBtn, { marginTop: 10 }]}
-              onPress={handleSubmitAccessRequest}
-              disabled={isSubmittingAccess}
-            >
-              <Text style={styles.loginBtnText}>
-                {isSubmittingAccess ? 'Submitting...' : 'Submit Request'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsAccessModal(false)}>
-              <Text style={styles.modalCloseBtnText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ========================================================================= */}
-      {/* MODAL: SWITCH ORGANIZATION (SUPERADMIN) */}
+      {/* MODAL 11: SWITCH ORGANIZATION (SUPERADMIN) */}
       {/* ========================================================================= */}
       <Modal visible={isOrgModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -2810,41 +3757,25 @@ const styles = StyleSheet.create({
     padding: 14,
     paddingBottom: 85
   },
-  orgBanner: {
-    backgroundColor: '#0f172a',
-    borderRadius: 14,
-    padding: 12,
+  holidayAlertBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: '#f59e0b',
+    borderRadius: 12,
+    padding: 12,
     marginBottom: 12
   },
-  orgBannerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  orgNameText: {
-    color: '#ffffff',
-    fontSize: 14,
+  holidayAlertTitle: {
+    color: '#fbbf24',
+    fontSize: 12,
     fontWeight: 'bold'
   },
-  orgMetaText: {
-    color: '#94a3b8',
+  holidayAlertSub: {
+    color: '#cbd5e1',
     fontSize: 10,
     marginTop: 2
-  },
-  activeTag: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)'
-  },
-  activeTagText: {
-    color: '#34d399',
-    fontSize: 9,
-    fontWeight: 'bold'
   },
   alertBanner: {
     backgroundColor: 'rgba(245, 158, 11, 0.12)',
@@ -2998,46 +3929,6 @@ const styles = StyleSheet.create({
     maxWidth: 210,
     textAlign: 'right'
   },
-  noticeCard: {
-    backgroundColor: '#07090e',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    marginTop: 8
-  },
-  noticeTitle: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 'bold'
-  },
-  noticeBody: {
-    color: '#94a3b8',
-    fontSize: 10,
-    marginTop: 3,
-    lineHeight: 14
-  },
-  noticeDate: {
-    color: '#64748b',
-    fontSize: 9,
-    marginTop: 4
-  },
-  priorityTag: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4
-  },
-  priorityCritical: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)'
-  },
-  priorityHigh: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)'
-  },
-  priorityText: {
-    color: '#f87171',
-    fontSize: 8,
-    fontWeight: 'bold'
-  },
   calNavBtn: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -3142,6 +4033,50 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: 'bold'
   },
+  holidayCard: {
+    backgroundColor: '#07090e',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  holidayName: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold'
+  },
+  holidayDate: {
+    color: '#38bdf8',
+    fontSize: 10,
+    marginTop: 2
+  },
+  holidayDesc: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 4
+  },
+  todayHolBadge: {
+    backgroundColor: '#10b981',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4
+  },
+  todayHolBadgeText: {
+    color: '#ffffff',
+    fontSize: 8,
+    fontWeight: 'bold'
+  },
+  holTypeBadge: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6
+  },
+  holTypeBadgeText: {
+    color: '#f59e0b',
+    fontSize: 9,
+    fontWeight: 'bold'
+  },
   leaveBalanceRow: {
     flexDirection: 'row',
     gap: 6,
@@ -3216,7 +4151,7 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     gap: 6,
-    marginTop: 8
+    marginTop: 4
   },
   filterTab: {
     flex: 1,
@@ -3289,6 +4224,45 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold'
   },
+  noticeCard: {
+    backgroundColor: '#07090e',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  noticeTitle: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  noticeBody: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 4,
+    lineHeight: 14
+  },
+  noticeDate: {
+    color: '#64748b',
+    fontSize: 9,
+    marginTop: 5
+  },
+  priorityTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  priorityCritical: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)'
+  },
+  priorityHigh: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)'
+  },
+  priorityText: {
+    color: '#f87171',
+    fontSize: 8,
+    fontWeight: 'bold'
+  },
   meetingCard: {
     backgroundColor: '#07090e',
     padding: 12,
@@ -3310,12 +4284,6 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 10,
     marginTop: 2
-  },
-  meetingDesc: {
-    color: '#cbd5e1',
-    fontSize: 10,
-    marginTop: 6,
-    lineHeight: 14
   },
   meetingStatusBadge: {
     paddingHorizontal: 6,
@@ -3354,20 +4322,6 @@ const styles = StyleSheet.create({
   },
   joinMeetBtnText: {
     color: '#ffffff',
-    fontSize: 11,
-    fontWeight: 'bold'
-  },
-  remindBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(139, 92, 246, 0.2)',
-    borderWidth: 1,
-    borderColor: '#8b5cf6',
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center'
-  },
-  remindBtnText: {
-    color: '#c4b5fd',
     fontSize: 11,
     fontWeight: 'bold'
   },
@@ -3435,6 +4389,154 @@ const styles = StyleSheet.create({
     color: '#38bdf8',
     fontSize: 11,
     fontWeight: 'bold'
+  },
+  teamCard: {
+    backgroundColor: '#07090e',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  teamName: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  teamDesig: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 1
+  },
+  teamEmail: {
+    color: '#64748b',
+    fontSize: 9,
+    marginTop: 1
+  },
+  teamJoining: {
+    color: '#38bdf8',
+    fontSize: 9,
+    marginTop: 2
+  },
+  teamManager: {
+    color: '#f59e0b',
+    fontSize: 9,
+    marginTop: 1
+  },
+  rolePill: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6
+  },
+  rolePillText: {
+    color: '#38bdf8',
+    fontSize: 8,
+    fontWeight: 'bold'
+  },
+  editJoiningBtn: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#38bdf8'
+  },
+  editJoiningBtnText: {
+    color: '#38bdf8',
+    fontSize: 8,
+    fontWeight: 'bold'
+  },
+  standupFeedItem: {
+    backgroundColor: '#07090e',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  standupAuthor: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  standupDate: {
+    color: '#64748b',
+    fontSize: 9
+  },
+  standupText: {
+    color: '#cbd5e1',
+    fontSize: 10,
+    marginTop: 3
+  },
+  verifyActionBtn: {
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    borderRadius: 10
+  },
+  verifyActionBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  verifySuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)'
+  },
+  verifySuccessTitle: {
+    color: '#34d399',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  verifySuccessSub: {
+    color: '#e2e8f0',
+    fontSize: 10,
+    marginTop: 2
+  },
+  verifySuccessSerial: {
+    color: '#64748b',
+    fontSize: 9,
+    marginTop: 2
+  },
+  verifyFail: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)'
+  },
+  verifyFailText: {
+    color: '#f87171',
+    fontSize: 10,
+    fontWeight: 'bold'
+  },
+  payGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginVertical: 8
+  },
+  payItem: {
+    width: '48%',
+    backgroundColor: '#07090e',
+    padding: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  payLabel: {
+    color: '#64748b',
+    fontSize: 9
+  },
+  payVal: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 2
   },
   profileLogoutBtn: {
     backgroundColor: 'rgba(239, 68, 68, 0.15)',
@@ -3592,31 +4694,5 @@ const styles = StyleSheet.create({
   checkboxRow: {
     flexDirection: 'row',
     alignItems: 'center'
-  },
-  moduleSelector: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginVertical: 6
-  },
-  modOption: {
-    backgroundColor: '#07090e',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#1e293b'
-  },
-  modOptionActive: {
-    borderColor: '#0284c7',
-    backgroundColor: '#0f172a'
-  },
-  modOptionText: {
-    color: '#94a3b8',
-    fontSize: 10
-  },
-  modOptionTextActive: {
-    color: '#38bdf8',
-    fontWeight: 'bold'
   }
 });
