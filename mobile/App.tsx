@@ -71,6 +71,26 @@ function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: numbe
   return Math.round(R * c);
 }
 
+function getYesterdayISTDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function formatISTTimeOnly(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    return new Date(isoString).toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch {
+    return isoString;
+  }
+}
+
 function getTodayISTDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
@@ -123,8 +143,23 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Bottom Navigation Tabs: 'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'
-  const [activeTab, setActiveTab] = useState<'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'>('punch');
+  // Bottom Navigation Tabs: 'punch' | 'chat' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'
+  const [activeTab, setActiveTab] = useState<'punch' | 'chat' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'>('punch');
+
+  // Realtime Live Clock (ticking every second)
+  const [liveClockTime, setLiveClockTime] = useState<string>(() => {
+    return new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  });
+
+  // Slack-Style Team Chat States
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [activeChatChannel, setActiveChatChannel] = useState<string>('general');
+  const [chatRecipient, setChatRecipient] = useState<any | null>(null);
+  const [chatInputText, setChatInputText] = useState<string>('');
+  const [isSendingMessage, setIsSendingMessage] = useState<boolean>(false);
+
+  // Selected Notice for Full Screen Reading Modal
+  const [selectedNoticeForView, setSelectedNoticeForView] = useState<any | null>(null);
 
   // Theme & Auto-Update States
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
@@ -340,6 +375,95 @@ export default function App() {
     }
   };
 
+  // Live Clock Ticker Interval (1s updates)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveClockTime(
+        new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+      );
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Compute Elapsed Work Hours if Punched In
+  const elapsedWorkTime = useMemo(() => {
+    if (!isCheckedIn || !todayAttendanceRecord?.check_in_time) return null;
+    try {
+      const diffMs = Date.now() - new Date(todayAttendanceRecord.check_in_time).getTime();
+      if (diffMs < 0) return '00h 00m';
+      const totalMinutes = Math.floor(diffMs / (1000 * 60));
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      return `${String(hours).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
+    } catch {
+      return null;
+    }
+  }, [isCheckedIn, todayAttendanceRecord, liveClockTime]);
+
+  // Realtime Supabase Subscription for Team Chat
+  useEffect(() => {
+    if (!supabaseClient || !currentOrg?.id) return;
+    const channel = supabaseClient
+      .channel('mobile_chat_' + currentOrg.id)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `org_id=eq.${currentOrg.id}`
+        },
+        (payload) => {
+          if (payload?.new) {
+            setChatMessages((prev) => {
+              if (prev.some((m) => m.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabaseClient.removeChannel(channel);
+    };
+  }, [supabaseClient, currentOrg?.id]);
+
+  // Send Chat Message Handler
+  const handleSendMessage = async () => {
+    if (!chatInputText.trim() || !supabaseClient || !userProfile || !currentOrg) return;
+
+    const trimmed = chatInputText.trim();
+    setChatInputText('');
+    setIsSendingMessage(true);
+
+    const newMsg = {
+      id: generateUUID(),
+      org_id: currentOrg.id,
+      sender_id: userProfile.id,
+      sender_name: `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim() || 'Team Member',
+      sender_role: userProfile.role || 'employee',
+      sender_avatar: userProfile.avatar_url || null,
+      channel: chatRecipient ? `dm_${chatRecipient.id}` : activeChatChannel,
+      recipient_id: chatRecipient ? chatRecipient.id : null,
+      message: trimmed,
+      attachments: [],
+      reactions: [],
+      created_at: new Date().toISOString()
+    };
+
+    setChatMessages((prev) => [...prev, newMsg]);
+
+    try {
+      const { error } = await supabaseClient.from('chat_messages').insert([newMsg]);
+      if (error) console.warn('Chat send error:', error);
+    } catch (err: any) {
+      console.warn('Chat exception:', err);
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
   // Initialize Supabase & Session
   useEffect(() => {
     initSupabase();
@@ -530,6 +654,17 @@ export default function App() {
           .eq('org_id', targetOrgId)
           .order('created_at', { ascending: false });
         if (offers) setOfferLetters(offers);
+      }
+
+      // 12. Chat Messages
+      if (targetOrgId) {
+        const { data: msgs } = await client
+          .from('chat_messages')
+          .select('*')
+          .eq('org_id', targetOrgId)
+          .order('created_at', { ascending: true })
+          .limit(150);
+        if (msgs) setChatMessages(msgs);
       }
 
       // 11. Check Today's Punch Record
@@ -1516,6 +1651,15 @@ export default function App() {
   const isPrivileged = isSuperadmin || isOwner || isHR;
   const canApprove = isPrivileged || isManager;
 
+  // STRICTLY identify Vedotrix Root Superadmin (ONLY they can switch organizations)
+  const isVedotrixSuperadmin = Boolean(
+    isSuperadmin &&
+    (userProfile?.org_id === '00000000-0000-0000-0000-000000000001' ||
+     userProfile?.email?.toLowerCase() === 'admin@vedotrix.com' ||
+     userProfile?.email?.toLowerCase() === 'sajal@vedotrix.com' ||
+     userProfile?.email?.toLowerCase() === 'sajalsaxenagola@gmail.com')
+  );
+
   // Filter pending approvals
   const pendingRegularizations = useMemo(() => {
     if (!canApprove) return [];
@@ -1548,6 +1692,33 @@ export default function App() {
   }, [accessRequests, userProfile, canApprove, isSuperadmin, isOwner, currentOrg]);
 
   const totalPendingApprovals = pendingRegularizations.length + pendingLeaves.length + pendingAccess.length;
+  // Filter messages for active chat channel / conversation
+  const activeConversationMessages = useMemo(() => {
+    if (chatRecipient) {
+      return chatMessages.filter(
+        (m) =>
+          (m.sender_id === userProfile?.id && m.recipient_id === chatRecipient.id) ||
+          (m.sender_id === chatRecipient.id && m.recipient_id === userProfile?.id)
+      );
+    }
+    return chatMessages.filter(
+      (m) => !m.recipient_id && (m.channel === activeChatChannel || (!m.channel && activeChatChannel === 'general'))
+    );
+  }, [chatMessages, activeChatChannel, chatRecipient, userProfile?.id]);
+
+  // Today Team Presence Counts
+  const todayPresentCount = useMemo(() => {
+    const today = getTodayISTDate();
+    return attendanceRecords.filter((a) => a.date === today && a.status === 'present').length;
+  }, [attendanceRecords]);
+
+  const todayOnLeaveCount = useMemo(() => {
+    const today = getTodayISTDate();
+    return leaveRequests.filter(
+      (l) => l.status === 'approved' && l.start_date <= today && l.end_date >= today
+    ).length;
+  }, [leaveRequests]);
+
 
   const isInside = distance !== null && distance <= activeOfficeCoords.radiusMeters;
   const todayStr = getTodayISTDate();
@@ -1621,7 +1792,7 @@ export default function App() {
               <Text style={styles.brandTitle}>
                 Vedotrix <Text style={styles.brandAccent}>Pulse</Text>
               </Text>
-              {isSuperadmin && (
+              {isVedotrixSuperadmin && (
                 <View style={styles.superBadge}>
                   <Text style={styles.superBadgeText}>SUPER</Text>
                 </View>
@@ -1642,7 +1813,7 @@ export default function App() {
             <Text style={{ fontSize: 14 }}>{isDarkMode ? '☀️' : '🌙'}</Text>
           </TouchableOpacity>
 
-          {isSuperadmin && (
+          {isVedotrixSuperadmin && (
             <TouchableOpacity style={styles.switchOrgBtn} onPress={() => setIsOrgModalVisible(true)}>
               <Text style={styles.switchOrgBtnText}>🏢 Switch</Text>
             </TouchableOpacity>
@@ -1718,8 +1889,36 @@ export default function App() {
         {/* ========================================================================= */}
         {/* 1. PUNCH TAB */}
         {/* ========================================================================= */}
+        {/* ========================================================================= */}
+        {/* 1. DASHBOARD & SMART PUNCH TAB (OVERHAULED FIRST PAGE) */}
+        {/* ========================================================================= */}
         {activeTab === 'punch' && (
           <View style={{ gap: 14 }}>
+            {/* Realtime Live Clock & Shift Tracker Card */}
+            <View style={styles.clockCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <View>
+                  <Text style={styles.liveClockText}>{liveClockTime}</Text>
+                  <Text style={styles.liveClockSub}>
+                    {new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })} IST
+                  </Text>
+                </View>
+                <View style={[styles.shiftStatusPill, isCheckedIn ? styles.shiftStatusPillActive : styles.shiftStatusPillInactive]}>
+                  <Text style={styles.shiftStatusPillText}>
+                    {isCheckedIn ? '🟢 ACTIVE ON SHIFT' : '⚪ READY TO PUNCH'}
+                  </Text>
+                </View>
+              </View>
+
+              {isCheckedIn && elapsedWorkTime && (
+                <View style={styles.elapsedBox}>
+                  <Text style={styles.elapsedLabel}>Current Shift Logged:</Text>
+                  <Text style={styles.elapsedValue}>⏱️ {elapsedWorkTime}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Geo-Fenced Smart Punch Card */}
             <View style={styles.card}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text style={styles.cardTitle}>Geo-Fenced Smart Punch</Text>
@@ -1729,12 +1928,12 @@ export default function App() {
               </View>
 
               <Text style={styles.cardDesc}>
-                Office: {activeOfficeCoords.name} (Radius: {activeOfficeCoords.radiusMeters}m)
+                Office: {activeOfficeCoords.name} • Shift: {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'} IST
               </Text>
 
               <View style={[styles.statusBadge, isInside ? styles.statusBadgeInside : styles.statusBadgeRemote]}>
                 <Text style={[styles.statusText, isInside ? styles.statusTextInside : styles.statusTextRemote]}>
-                  {isInside ? '● INSIDE OFFICE GEOFENCE' : '▲ REMOTE / OFF-SITE LOCATION'}
+                  {isInside ? '● INSIDE OFFICE GEOFENCE' : '▲ REMOTE / FIELD LOCATION'}
                 </Text>
               </View>
 
@@ -1746,9 +1945,9 @@ export default function App() {
                   </Text>
                 </View>
                 <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Shift Hours (IST)</Text>
+                  <Text style={styles.metricLabel}>Geofence Radius</Text>
                   <Text style={styles.metricValue}>
-                    {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'}
+                    {activeOfficeCoords.radiusMeters} m
                   </Text>
                 </View>
               </View>
@@ -1789,17 +1988,17 @@ export default function App() {
               </View>
             </View>
 
-            {/* Today's Punch Details */}
+            {/* Today's Punch Details if available */}
             {todayAttendanceRecord && (
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Today's Punch Record</Text>
-                <Text style={styles.cardDesc}>Recorded in live cloud database</Text>
+                <Text style={styles.cardTitle}>Today's Attendance Punch</Text>
+                <Text style={styles.cardDesc}>Cloud attendance log for {todayStr}</Text>
 
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Check-In Time:</Text>
                   <Text style={styles.detailVal}>
                     {todayAttendanceRecord.check_in_time
-                      ? new Date(todayAttendanceRecord.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' IST'
+                      ? formatISTTimeOnly(todayAttendanceRecord.check_in_time)
                       : '--'}
                   </Text>
                 </View>
@@ -1808,7 +2007,7 @@ export default function App() {
                   <Text style={styles.detailLabel}>Check-Out Time:</Text>
                   <Text style={styles.detailVal}>
                     {todayAttendanceRecord.check_out_time
-                      ? new Date(todayAttendanceRecord.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' IST'
+                      ? formatISTTimeOnly(todayAttendanceRecord.check_out_time)
                       : 'Shift in progress'}
                   </Text>
                 </View>
@@ -1829,6 +2028,93 @@ export default function App() {
               </View>
             )}
 
+            {/* Today's Organization Pulse Overview */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Today's Organization Pulse</Text>
+              <Text style={styles.cardDesc}>Real-time presence metrics across {currentOrg?.name || 'Company'}</Text>
+
+              <View style={styles.pulseStatsGrid}>
+                <View style={styles.pulseStatItem}>
+                  <Text style={styles.pulseStatValue}>{teamProfiles.length}</Text>
+                  <Text style={styles.pulseStatLabel}>👥 Total Team</Text>
+                </View>
+                <View style={styles.pulseStatItem}>
+                  <Text style={[styles.pulseStatValue, { color: '#10b981' }]}>{todayPresentCount}</Text>
+                  <Text style={styles.pulseStatLabel}>✅ Present</Text>
+                </View>
+                <View style={styles.pulseStatItem}>
+                  <Text style={[styles.pulseStatValue, { color: '#f59e0b' }]}>{todayOnLeaveCount}</Text>
+                  <Text style={styles.pulseStatLabel}>🌴 On Leave</Text>
+                </View>
+                <View style={styles.pulseStatItem}>
+                  <Text style={[styles.pulseStatValue, { color: '#38bdf8' }]}>{totalPendingApprovals}</Text>
+                  <Text style={styles.pulseStatLabel}>⏳ Approvals</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* 📢 FEATURED COMPANY NOTICES & BROADCASTS DIRECTLY ON FIRST PAGE */}
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 16 }}>📢</Text>
+                  <Text style={styles.cardTitle}>Company Announcements</Text>
+                </View>
+                {isPrivileged && (
+                  <TouchableOpacity
+                    style={styles.smallAddBtn}
+                    onPress={() => setIsNoticeModal(true)}
+                  >
+                    <Text style={styles.smallAddBtnText}>+ Post</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={styles.cardDesc}>Official circulars and announcements from management</Text>
+
+              {notices.length === 0 ? (
+                <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>No company announcements published yet.</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 8, marginTop: 4 }}>
+                  {notices.slice(0, 3).map((notice) => (
+                    <TouchableOpacity
+                      key={notice.id}
+                      style={styles.noticeCardCompact}
+                      onPress={() => setSelectedNoticeForView(notice)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                          <View style={[
+                            styles.noticePriorityBadge,
+                            notice.priority === 'urgent' ? styles.priorityUrgent :
+                            notice.priority === 'high' ? styles.priorityHigh : styles.priorityNormal
+                          ]}>
+                            <Text style={styles.noticePriorityText}>{(notice.priority || 'NORMAL').toUpperCase()}</Text>
+                          </View>
+                          <Text style={styles.noticeCategoryText}>• {notice.category?.toUpperCase() || 'GENERAL'}</Text>
+                        </View>
+                        <Text style={styles.noticeDateText}>{formatDisplayDate(notice.date)}</Text>
+                      </View>
+
+                      <Text style={styles.noticeTitleCompact} numberOfLines={1}>
+                        {notice.title}
+                      </Text>
+                      <Text style={styles.noticeSnippet} numberOfLines={2}>
+                        {notice.content}
+                      </Text>
+
+                      <View style={styles.noticeFooterRow}>
+                        <Text style={styles.noticeAuthorText}>By {notice.author_name || 'HR Team'} ({notice.author_role || 'Management'})</Text>
+                        <Text style={styles.noticeTapText}>Read Full Notice →</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
             {/* Upcoming Next Holiday Highlight Card */}
             {(() => {
               const upcoming = holidays.find((h) => h.date >= todayStr);
@@ -1836,29 +2122,227 @@ export default function App() {
               return (
                 <View style={[styles.card, { borderColor: '#f59e0b' }]}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={[styles.cardTitle, { color: '#fbbf24' }]}>🌴 Next Upcoming Holiday</Text>
+                    <Text style={[styles.cardTitle, { color: '#fbbf24' }]}>🌴 Next Official Holiday</Text>
                     <TouchableOpacity
                       onPress={() => {
                         setActiveTab('calendar');
                         setCalSubTab('holidays');
                       }}
                     >
-                      <Text style={{ color: '#38bdf8', fontSize: 10, fontWeight: 'bold' }}>View All →</Text>
+                      <Text style={{ color: '#fbbf24', fontSize: 11, fontWeight: 'bold' }}>All Holidays →</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: 'bold', marginTop: 4 }}>
+                  <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: 'bold', marginTop: 6 }}>
                     {upcoming.name}
                   </Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>
-                    📅 {formatDisplayDate(upcoming.date)} • {upcoming.type?.toUpperCase()}
+                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
+                    📅 {formatDisplayDate(upcoming.date)} • {upcoming.description}
                   </Text>
                 </View>
               );
             })()}
+
+            {/* Quick Tools & Shortcuts Grid */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Quick Navigation & Shortcuts</Text>
+              <Text style={styles.cardDesc}>Instant access to core company modules</Text>
+
+              <View style={styles.quickToolsGrid}>
+                <TouchableOpacity
+                  style={styles.quickToolBtn}
+                  onPress={() => setActiveTab('chat')}
+                >
+                  <Text style={styles.quickToolIcon}>💬</Text>
+                  <Text style={styles.quickToolLabel}>Team Chat</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.quickToolBtn}
+                  onPress={() => {
+                    setActiveTab('hub');
+                    setHubSubTab('team');
+                  }}
+                >
+                  <Text style={styles.quickToolIcon}>👥</Text>
+                  <Text style={styles.quickToolLabel}>Directory</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.quickToolBtn}
+                  onPress={() => {
+                    setActiveTab('calendar');
+                    setCalSubTab('attendance');
+                  }}
+                >
+                  <Text style={styles.quickToolIcon}>📅</Text>
+                  <Text style={styles.quickToolLabel}>Calendar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.quickToolBtn}
+                  onPress={() => setIsStandupModal(true)}
+                >
+                  <Text style={styles.quickToolIcon}>📝</Text>
+                  <Text style={styles.quickToolLabel}>Standup</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         )}
 
         {/* ========================================================================= */}
+        {/* 2. SLACK-STYLE TEAM CHAT ADDON TAB */}
+        {/* ========================================================================= */}
+        {activeTab === 'chat' && (
+          <View style={{ gap: 12 }}>
+            {/* Channel & Colleague Selector Bar */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Channels & Direct Messages</Text>
+              <Text style={styles.cardDesc}>Real-time Slack workspace communication for {currentOrg?.name}</Text>
+
+              {/* Channel Pills */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {['general', 'support', 'announcements'].map((chan) => {
+                    const isSelected = !chatRecipient && activeChatChannel === chan;
+                    return (
+                      <TouchableOpacity
+                        key={chan}
+                        style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive]}
+                        onPress={() => {
+                          setChatRecipient(null);
+                          setActiveChatChannel(chan);
+                        }}
+                      >
+                        <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
+                          # {chan}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  {/* Teammate DM Pills */}
+                  {teamProfiles.filter((p) => p.id !== userProfile?.id).slice(0, 10).map((member) => {
+                    const isSelected = chatRecipient?.id === member.id;
+                    return (
+                      <TouchableOpacity
+                        key={member.id}
+                        style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive]}
+                        onPress={() => {
+                          setChatRecipient(member);
+                        }}
+                      >
+                        <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
+                          @{member.first_name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+
+              {/* Active Header Information */}
+              <View style={styles.chatActiveHeaderBox}>
+                <Text style={styles.chatActiveHeaderTitle}>
+                  {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : `# ${activeChatChannel}`}
+                </Text>
+                <Text style={styles.chatActiveHeaderSub}>
+                  {chatRecipient
+                    ? `${chatRecipient.designation || 'Staff'} • ${chatRecipient.department || 'Operations'}`
+                    : activeChatChannel === 'general' ? 'Company-wide general discussion & updates'
+                    : activeChatChannel === 'support' ? 'Internal IT, HR & employee assistance'
+                    : 'Important announcements and official broadcast'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Messages Feed */}
+            <View style={[styles.card, { minHeight: 320, paddingBottom: 10 }]}>
+              {activeConversationMessages.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 32, marginBottom: 8 }}>💬</Text>
+                  <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: 'bold' }}>
+                    Welcome to {chatRecipient ? `@${chatRecipient.first_name}` : `#${activeChatChannel}`}!
+                  </Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, textAlign: 'center', maxWidth: 260 }}>
+                    Send a message to start the conversation with your team in real time.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: 10 }}>
+                  {activeConversationMessages.map((msg, index) => {
+                    const isMe = msg.sender_id === userProfile?.id;
+                    const prevMsg = index > 0 ? activeConversationMessages[index - 1] : null;
+                    const isGrouped = prevMsg && prevMsg.sender_id === msg.sender_id &&
+                      (new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000);
+
+                    return (
+                      <View key={msg.id || index} style={[styles.chatMessageRow, isMe && styles.chatMessageRowMe]}>
+                        {!isGrouped && !isMe && (
+                          <View style={styles.chatAvatar}>
+                            {msg.sender_avatar ? (
+                              <Image source={{ uri: msg.sender_avatar }} style={{ width: '100%', height: '100%', borderRadius: 14 }} />
+                            ) : (
+                              <Text style={styles.chatAvatarText}>
+                                {(msg.sender_name?.[0] || 'U').toUpperCase()}
+                              </Text>
+                            )}
+                          </View>
+                        )}
+
+                        <View style={{ flex: 1, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                          {!isGrouped && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                              <Text style={styles.chatSenderName}>
+                                {isMe ? 'You' : msg.sender_name}
+                              </Text>
+                              {msg.sender_role && (
+                                <View style={styles.chatRolePill}>
+                                  <Text style={styles.chatRolePillText}>{msg.sender_role.toUpperCase()}</Text>
+                                </View>
+                              )}
+                              <Text style={styles.chatTimestamp}>
+                                {formatISTTimeOnly(msg.created_at)}
+                              </Text>
+                            </View>
+                          )}
+
+                          <View style={[styles.chatBubble, isMe ? styles.chatBubbleMe : styles.chatBubbleOther]}>
+                            <Text style={[styles.chatBubbleText, isMe && styles.chatBubbleTextMe]}>
+                              {msg.message}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Compose Box */}
+              <View style={styles.chatComposerContainer}>
+                <TextInput
+                  style={styles.chatComposerInput}
+                  value={chatInputText}
+                  onChangeText={setChatInputText}
+                  placeholder={chatRecipient ? `Message @${chatRecipient.first_name}...` : `Message #${activeChatChannel}...`}
+                  placeholderTextColor="#64748b"
+                  multiline
+                />
+                <TouchableOpacity
+                  style={[styles.chatSendBtn, (!chatInputText.trim() || isSendingMessage) && { opacity: 0.5 }]}
+                  onPress={handleSendMessage}
+                  disabled={!chatInputText.trim() || isSendingMessage}
+                >
+                  <Text style={styles.chatSendBtnText}>
+                    {isSendingMessage ? '...' : 'Send'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* 2. CALENDAR & HOLIDAYS TAB */}
         {/* ========================================================================= */}
         {activeTab === 'calendar' && (
@@ -3457,7 +3941,24 @@ export default function App() {
             <Text style={styles.modalSub}>Request approval from your reporting manager</Text>
 
             <ScrollView style={{ maxHeight: 380, width: '100%' }}>
-              <Text style={styles.inputLabel}>Target Date (YYYY-MM-DD) *</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.inputLabel}>Target Date (YYYY-MM-DD) *</Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity
+                    style={[styles.smallAddBtn, { backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9' }]}
+                    onPress={() => setRegTargetDate(getTodayISTDate())}
+                  >
+                    <Text style={[styles.smallAddBtnText, { color: '#38bdf8' }]}>Today</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.smallAddBtn, { backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9' }]}
+                    onPress={() => setRegTargetDate(getYesterdayISTDate())}
+                  >
+                    <Text style={[styles.smallAddBtnText, { color: '#38bdf8' }]}>Yesterday</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
               <TextInput
                 style={styles.textInput}
                 value={regTargetDate}
@@ -3465,6 +3966,33 @@ export default function App() {
                 placeholder="YYYY-MM-DD"
                 placeholderTextColor="#64748b"
               />
+
+              {/* Shift Presets */}
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Shift Preset Timing</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 }}>
+                {[
+                  { label: 'Standard (09:30 - 18:30)', in: '09:30', out: '18:30' },
+                  { label: 'Extended (09:30 - 19:00)', in: '09:30', out: '19:00' },
+                  { label: 'Morning Half (09:30 - 14:00)', in: '09:30', out: '14:00' },
+                  { label: 'Evening Half (14:00 - 18:30)', in: '14:00', out: '18:30' }
+                ].map((preset) => {
+                  const isActive = regInTime === preset.in && regOutTime === preset.out;
+                  return (
+                    <TouchableOpacity
+                      key={preset.label}
+                      style={[styles.indPill, isActive && styles.indPillActive]}
+                      onPress={() => {
+                        setRegInTime(preset.in);
+                        setRegOutTime(preset.out);
+                      }}
+                    >
+                      <Text style={[styles.indPillText, isActive && styles.indPillTextActive]}>
+                        {preset.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <View style={{ flex: 1 }}>
@@ -3548,6 +4076,22 @@ export default function App() {
             <Text style={styles.modalSub}>Time-off request routed to your manager</Text>
 
             <ScrollView style={{ maxHeight: 380, width: '100%' }}>
+              {/* Balances Strip */}
+              <View style={{ flexDirection: 'row', gap: 6, marginVertical: 6 }}>
+                <View style={[styles.indPill, { flex: 1, alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 9, color: '#64748b' }}>Casual (CL)</Text>
+                  <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#38bdf8' }}>12 Left</Text>
+                </View>
+                <View style={[styles.indPill, { flex: 1, alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 9, color: '#64748b' }}>Sick (SL)</Text>
+                  <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#10b981' }}>10 Left</Text>
+                </View>
+                <View style={[styles.indPill, { flex: 1, alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 9, color: '#64748b' }}>Earned (EL)</Text>
+                  <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#fbbf24' }}>15 Left</Text>
+                </View>
+              </View>
+
               <Text style={styles.inputLabel}>Leave Type</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 }}>
                 {['casual', 'sick', 'privilege', 'unpaid', 'emergency'].map((type) => (
@@ -3591,7 +4135,7 @@ export default function App() {
                 onPress={() => setIsHalfDay(!isHalfDay)}
               >
                 <Text style={{ fontSize: 14 }}>{isHalfDay ? '☑️' : '⬜'}</Text>
-                <Text style={{ color: '#cbd5e1', fontSize: 11, marginLeft: 6 }}>This is a half-day leave</Text>
+                <Text style={{ color: isDarkMode ? '#cbd5e1' : '#475569', fontSize: 11, marginLeft: 6 }}>This is a half-day leave</Text>
               </TouchableOpacity>
 
               <Text style={styles.inputLabel}>Reason / Explanation *</Text>
@@ -3721,9 +4265,9 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL 11: SWITCH ORGANIZATION (SUPERADMIN) */}
+      {/* MODAL 11: SWITCH ORGANIZATION (VEDOTRIX ROOT SUPERADMIN ONLY) */}
       {/* ========================================================================= */}
-      <Modal visible={isOrgModalVisible} animationType="slide" transparent>
+      <Modal visible={isOrgModalVisible && isVedotrixSuperadmin} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Switch Organization Tenant</Text>
@@ -3810,6 +4354,328 @@ function createThemedStyles(isDark: boolean) {
     },
     themeOptionTextActive: {
       color: '#0284c7'
+    },
+    clockCard: {
+      backgroundColor: cardBg,
+      borderRadius: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.06)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: isDark ? 0.3 : 1,
+      shadowRadius: 6,
+      elevation: isDark ? 2 : 1
+    },
+    liveClockText: {
+      fontSize: 24,
+      fontWeight: '900',
+      color: textPrimary,
+      letterSpacing: 0.5
+    },
+    liveClockSub: {
+      fontSize: 11,
+      color: textSecondary,
+      marginTop: 2
+    },
+    shiftStatusPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 8,
+      borderWidth: 1
+    },
+    shiftStatusPillActive: {
+      backgroundColor: 'rgba(16, 185, 129, 0.15)',
+      borderColor: '#10b981'
+    },
+    shiftStatusPillInactive: {
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      borderColor: isDark ? '#334155' : '#cbd5e1'
+    },
+    shiftStatusPillText: {
+      fontSize: 9,
+      fontWeight: 'bold',
+      color: textPrimary
+    },
+    elapsedBox: {
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: cardBorder,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    },
+    elapsedLabel: {
+      fontSize: 11,
+      color: textSecondary
+    },
+    elapsedValue: {
+      fontSize: 13,
+      fontWeight: 'bold',
+      color: '#38bdf8'
+    },
+    pulseStatsGrid: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 10
+    },
+    pulseStatItem: {
+      flex: 1,
+      backgroundColor: bg,
+      padding: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      alignItems: 'center'
+    },
+    pulseStatValue: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: textPrimary
+    },
+    pulseStatLabel: {
+      fontSize: 9,
+      color: textSecondary,
+      marginTop: 3,
+      fontWeight: '600'
+    },
+    noticeCardCompact: {
+      backgroundColor: bg,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    noticePriorityBadge: {
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4
+    },
+    priorityUrgent: {
+      backgroundColor: 'rgba(239, 68, 68, 0.2)',
+      borderWidth: 1,
+      borderColor: '#ef4444'
+    },
+    priorityHigh: {
+      backgroundColor: 'rgba(245, 158, 11, 0.2)',
+      borderWidth: 1,
+      borderColor: '#f59e0b'
+    },
+    priorityNormal: {
+      backgroundColor: 'rgba(56, 189, 248, 0.2)',
+      borderWidth: 1,
+      borderColor: '#38bdf8'
+    },
+    noticePriorityText: {
+      fontSize: 8,
+      fontWeight: '900',
+      color: textPrimary
+    },
+    noticeCategoryText: {
+      fontSize: 9,
+      fontWeight: '700',
+      color: textSecondary
+    },
+    noticeDateText: {
+      fontSize: 9,
+      color: textSecondary
+    },
+    noticeTitleCompact: {
+      fontSize: 13,
+      fontWeight: 'bold',
+      color: textPrimary,
+      marginTop: 2
+    },
+    noticeSnippet: {
+      fontSize: 11,
+      color: textSecondary,
+      marginTop: 2,
+      lineHeight: 16
+    },
+    noticeFooterRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 8,
+      paddingTop: 6,
+      borderTopWidth: 1,
+      borderTopColor: cardBorder
+    },
+    noticeAuthorText: {
+      fontSize: 9,
+      color: textSecondary
+    },
+    noticeTapText: {
+      fontSize: 10,
+      fontWeight: 'bold',
+      color: '#38bdf8'
+    },
+    noticeFullContent: {
+      fontSize: 13,
+      color: textPrimary,
+      lineHeight: 20
+    },
+    quickToolsGrid: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 8
+    },
+    quickToolBtn: {
+      flex: 1,
+      backgroundColor: bg,
+      paddingVertical: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      alignItems: 'center'
+    },
+    quickToolIcon: {
+      fontSize: 20,
+      marginBottom: 4
+    },
+    quickToolLabel: {
+      fontSize: 10,
+      fontWeight: 'bold',
+      color: textPrimary
+    },
+    chatChannelPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      backgroundColor: bg,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    chatChannelPillActive: {
+      backgroundColor: '#0284c7',
+      borderColor: '#38bdf8'
+    },
+    chatChannelPillText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: textSecondary
+    },
+    chatChannelPillTextActive: {
+      color: '#ffffff'
+    },
+    chatActiveHeaderBox: {
+      marginTop: 8,
+      paddingTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: cardBorder
+    },
+    chatActiveHeaderTitle: {
+      fontSize: 13,
+      fontWeight: 'bold',
+      color: textPrimary
+    },
+    chatActiveHeaderSub: {
+      fontSize: 10,
+      color: textSecondary,
+      marginTop: 1
+    },
+    chatMessageRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginVertical: 2
+    },
+    chatMessageRowMe: {
+      justifyContent: 'flex-end'
+    },
+    chatAvatar: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: '#0284c7',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden'
+    },
+    chatAvatarText: {
+      color: '#ffffff',
+      fontSize: 11,
+      fontWeight: 'bold'
+    },
+    chatSenderName: {
+      fontSize: 11,
+      fontWeight: 'bold',
+      color: textPrimary
+    },
+    chatRolePill: {
+      backgroundColor: bg,
+      paddingHorizontal: 4,
+      paddingVertical: 1,
+      borderRadius: 4,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    chatRolePillText: {
+      fontSize: 8,
+      fontWeight: 'bold',
+      color: textSecondary
+    },
+    chatTimestamp: {
+      fontSize: 9,
+      color: textSecondary
+    },
+    chatBubble: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 14,
+      maxWidth: '85%'
+    },
+    chatBubbleMe: {
+      backgroundColor: '#0284c7',
+      borderTopRightRadius: 2
+    },
+    chatBubbleOther: {
+      backgroundColor: bg,
+      borderTopLeftRadius: 2,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    chatBubbleText: {
+      fontSize: 12,
+      color: textPrimary,
+      lineHeight: 18
+    },
+    chatBubbleTextMe: {
+      color: '#ffffff'
+    },
+    chatComposerContainer: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+      marginTop: 14,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: cardBorder
+    },
+    chatComposerInput: {
+      flex: 1,
+      backgroundColor: bg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      color: textPrimary,
+      fontSize: 12,
+      maxHeight: 80
+    },
+    chatSendBtn: {
+      backgroundColor: '#0284c7',
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    chatSendBtnText: {
+      color: '#ffffff',
+      fontSize: 11,
+      fontWeight: 'bold'
     },
   container: {
     flex: 1,
@@ -4480,7 +5346,7 @@ function createThemedStyles(isDark: boolean) {
   priorityCritical: {
     backgroundColor: 'rgba(239, 68, 68, 0.2)'
   },
-  priorityHigh: {
+  priorityTagHigh: {
     backgroundColor: 'rgba(245, 158, 11, 0.2)'
   },
   priorityText: {
