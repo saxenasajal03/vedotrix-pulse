@@ -299,15 +299,44 @@ export default function App() {
   // Device Notifications Status
   const [notifPermission, setNotifPermission] = useState<boolean>(false);
 
+  // Multi-Employee Calendar Inspection & Clickable Day Detail State
+  const [selectedCalendarEmpId, setSelectedCalendarEmpId] = useState<string | null>(null);
+  const [selectedCalendarDayData, setSelectedCalendarDayData] = useState<any | null>(null);
+
+  // Dedicated User Profile Modal State (inspect any colleague or self)
+  const [inspectedUserProfile, setInspectedUserProfile] = useState<any | null>(null);
+
+  // In-App Notification Center State
+  const [isNotifModal, setIsNotifModal] = useState<boolean>(false);
+  const [readNotifIds, setReadNotifIds] = useState<string[]>([]);
+
+  // Real Database Channels for Slack
+  const [dbChannels, setDbChannels] = useState<any[]>([]);
+  const [isNewChannelModal, setIsNewChannelModal] = useState<boolean>(false);
+  const [newChanName, setNewChanName] = useState('');
+  const [newChanDesc, setNewChanDesc] = useState('');
+  const [newChanIsPrivate, setNewChanIsPrivate] = useState(false);
+  const [isSavingChan, setIsSavingChan] = useState(false);
+
   // Dynamic Theme-Dependent Styles
   const styles = useMemo(() => createThemedStyles(isDarkMode), [isDarkMode]);
 
-  // Load saved theme preference on mount
+  // Load saved theme & notification read states on mount
   useEffect(() => {
     AsyncStorage.getItem('@vdx_theme_mode')
       .then((savedTheme) => {
         if (savedTheme === 'light') {
           setIsDarkMode(false);
+        }
+      })
+      .catch(() => {});
+
+    AsyncStorage.getItem('@vdx_read_notifs')
+      .then((saved) => {
+        if (saved) {
+          try {
+            setReadNotifIds(JSON.parse(saved));
+          } catch {}
         }
       })
       .catch(() => {});
@@ -400,7 +429,7 @@ export default function App() {
     }
   }, [isCheckedIn, todayAttendanceRecord, liveClockTime]);
 
-  // Realtime Supabase Subscription for Team Chat
+  // Realtime Supabase Subscription for Team Chat & Channels
   useEffect(() => {
     if (!supabaseClient || !currentOrg?.id) return;
     const channel = supabaseClient
@@ -419,6 +448,27 @@ export default function App() {
               if (prev.some((m) => m.id === payload.new.id)) return prev;
               return [...prev, payload.new];
             });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_channels',
+          filter: `org_id=eq.${currentOrg.id}`
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            setDbChannels((prev) => {
+              if (prev.some((c) => c.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          } else if (payload.eventType === 'DELETE' && payload.old) {
+            setDbChannels((prev) => prev.filter((c) => c.id !== payload.old.id));
+          } else if (payload.eventType === 'UPDATE' && payload.new) {
+            setDbChannels((prev) => prev.map((c) => (c.id === payload.new.id ? payload.new : c)));
           }
         }
       )
@@ -656,8 +706,14 @@ export default function App() {
         if (offers) setOfferLetters(offers);
       }
 
-      // 12. Chat Messages
+      // 11. Chat Channels & Messages from Supabase DB
       if (targetOrgId) {
+        const { data: chans } = await client
+          .from('chat_channels')
+          .select('*')
+          .eq('org_id', targetOrgId);
+        if (chans) setDbChannels(chans);
+
         const { data: msgs } = await client
           .from('chat_messages')
           .select('*')
@@ -667,13 +723,18 @@ export default function App() {
         if (msgs) setChatMessages(msgs);
       }
 
-      // 11. Check Today's Punch Record
+      // 12. Check Today's Punch Record
       const todayStr = getTodayISTDate();
       const todayRecord = fetchedAttendance.find(
         (a) => a.employee_id === myId && a.date === todayStr
       );
       if (todayRecord) {
-        setTodayAttendanceRecord(todayRecord);
+        // Ensure that if user checked in today, status is treated as 'present'
+        const normalizedToday = {
+          ...todayRecord,
+          status: (todayRecord.status === 'present' || todayRecord.check_in_time) ? 'present' : todayRecord.status
+        };
+        setTodayAttendanceRecord(normalizedToday);
         if (todayRecord.check_in_time && !todayRecord.check_out_time) {
           setIsCheckedIn(true);
           const t = new Date(todayRecord.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -976,7 +1037,7 @@ export default function App() {
         check_in_lat: location?.coords.latitude || null,
         check_in_long: location?.coords.longitude || null,
         distance_meters: distance,
-        status: isInsideFence ? 'present' : 'absent',
+        status: 'present',
         is_remote: !isInsideFence,
         regularization_status: 'none',
         approval_status: isInsideFence ? 'approved' : 'pending_manager_approval',
@@ -1162,6 +1223,51 @@ export default function App() {
       }
     } catch (e: any) {
       Alert.alert('Error', e?.message);
+    }
+  };
+
+  // Direct Regularize by HR / Superadmin (Instantly marks employee present)
+  const handleDirectRegularize = async (empId: string, dateStr: string) => {
+    if (!supabaseClient || !userProfile) return;
+    try {
+      const existing = attendanceRecords.find((a) => a.employee_id === empId && a.date === dateStr);
+      const approverUuid = (userProfile.id && userProfile.id.length === 36) ? userProfile.id : null;
+      if (existing) {
+        const { error } = await supabaseClient
+          .from('attendance')
+          .update({
+            status: 'present',
+            regularization_status: 'approved',
+            approval_status: 'approved',
+            approved_by: approverUuid,
+            regularized_by: approverUuid,
+            total_hours: 8
+          })
+          .eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabaseClient
+          .from('attendance')
+          .insert({
+            id: generateUUID(),
+            org_id: currentOrg?.id || userProfile.org_id,
+            employee_id: empId,
+            date: dateStr,
+            status: 'present',
+            regularization_status: 'approved',
+            approval_status: 'approved',
+            regularization_reason: `Direct HR/Admin Regularization by ${userProfile.first_name || 'Admin'}`,
+            approved_by: approverUuid,
+            regularized_by: approverUuid,
+            total_hours: 8
+          });
+        if (error) throw error;
+      }
+      Alert.alert('Regularized Successfully ✅', `Attendance for ${dateStr} marked as PRESENT.`);
+      setSelectedCalendarDayData(null);
+      refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message);
     }
   };
 
@@ -1692,6 +1798,32 @@ export default function App() {
   }, [accessRequests, userProfile, canApprove, isSuperadmin, isOwner, currentOrg]);
 
   const totalPendingApprovals = pendingRegularizations.length + pendingLeaves.length + pendingAccess.length;
+
+  // Real Organization Channels aligned with Web Application
+  const availableChannels = useMemo(() => {
+    const standard = [
+      { id: 'support', name: 'support', description: 'Internal Support & IT/HR Helpdesk', is_private: false }
+    ];
+    const filteredDb = dbChannels.filter((c) => {
+      if (!c.is_private) return true;
+      if (isPrivileged) return true;
+      if (c.member_ids && Array.isArray(c.member_ids) && c.member_ids.includes(userProfile?.id)) return true;
+      return false;
+    });
+    const combined = [...standard];
+    for (const ch of filteredDb) {
+      if (!combined.some((c) => c.name === ch.name || c.id === ch.id)) {
+        combined.push(ch);
+      }
+    }
+    return combined;
+  }, [dbChannels, isPrivileged, userProfile?.id]);
+
+  // Active channel description object
+  const activeChanObj = useMemo(() => {
+    return availableChannels.find((c) => c.name === activeChatChannel || c.id === activeChatChannel) || availableChannels[0];
+  }, [availableChannels, activeChatChannel]);
+
   // Filter messages for active chat channel / conversation
   const activeConversationMessages = useMemo(() => {
     if (chatRecipient) {
@@ -1702,9 +1834,132 @@ export default function App() {
       );
     }
     return chatMessages.filter(
-      (m) => !m.recipient_id && (m.channel === activeChatChannel || (!m.channel && activeChatChannel === 'general'))
+      (m) => !m.recipient_id && (m.channel === activeChatChannel || (!m.channel && activeChatChannel === 'support') || (!m.channel && activeChatChannel === 'general'))
     );
   }, [chatMessages, activeChatChannel, chatRecipient, userProfile?.id]);
+
+  const todayStr = getTodayISTDate();
+  const todayHoliday = holidays.find((h) => h.date === todayStr);
+
+  // In-App Notification Center Items
+  const inAppNotifications = useMemo(() => {
+    const list: any[] = [];
+
+    // 1. Shift Attendance Reminder
+    if (attendanceAlertActive && !isCheckedIn && !todayHoliday) {
+      list.push({
+        id: 'shift_alert_' + todayStr,
+        type: 'attendance',
+        category: 'Attendance Alert',
+        icon: '⏰',
+        title: 'Shift Active: Attendance Unmarked',
+        message: 'Your shift has started! Punch in or submit attendance regularization.',
+        timestamp: 'Active Now',
+        action: () => {
+          setIsNotifModal(false);
+          setActiveTab('punch');
+        }
+      });
+    }
+
+    // 2. Pending Regularizations for Managers/HR
+    if (pendingRegularizations.length > 0) {
+      list.push({
+        id: 'pending_reg_' + pendingRegularizations.length,
+        type: 'approval',
+        category: 'Action Required',
+        icon: '📋',
+        title: `${pendingRegularizations.length} Regularization Request(s) Pending`,
+        message: 'Team members have submitted attendance regularization requests awaiting your approval.',
+        timestamp: 'Requires Action',
+        action: () => {
+          setIsNotifModal(false);
+          setActiveTab('approvals');
+          setApprovalsTab('regularization');
+        }
+      });
+    }
+
+    // 3. Pending Leaves for Managers/HR
+    if (pendingLeaves.length > 0) {
+      list.push({
+        id: 'pending_leaves_' + pendingLeaves.length,
+        type: 'approval',
+        category: 'Action Required',
+        icon: '🌴',
+        title: `${pendingLeaves.length} Leave Application(s) Pending`,
+        message: 'Team members have submitted leave requests awaiting your decision.',
+        timestamp: 'Requires Action',
+        action: () => {
+          setIsNotifModal(false);
+          setActiveTab('approvals');
+          setApprovalsTab('leaves');
+        }
+      });
+    }
+
+    // 4. Company Notices / Announcements
+    notices.slice(0, 5).forEach((n) => {
+      list.push({
+        id: 'notice_' + n.id,
+        type: 'notice',
+        category: 'Company Notice',
+        icon: '📢',
+        title: n.title,
+        message: n.content,
+        timestamp: formatDisplayDate(n.date),
+        action: () => {
+          setIsNotifModal(false);
+          setActiveTab('punch');
+        }
+      });
+    });
+
+    // 5. Personal Regularization Updates
+    attendanceRecords
+      .filter((a) => a.employee_id === userProfile?.id && (a.regularization_status === 'approved' || a.regularization_status === 'rejected'))
+      .slice(0, 3)
+      .forEach((a) => {
+        list.push({
+          id: 'reg_status_' + a.id + '_' + a.regularization_status,
+          type: 'status',
+          category: 'Regularization Status',
+          icon: a.regularization_status === 'approved' ? '✅' : '❌',
+          title: `Regularization ${a.regularization_status === 'approved' ? 'Approved' : 'Rejected'} (${a.date})`,
+          message: a.regularization_reason || 'Processed by reporting manager / HR.',
+          timestamp: a.date,
+          action: () => {
+            setIsNotifModal(false);
+            setActiveTab('calendar');
+            setCalSubTab('attendance');
+          }
+        });
+      });
+
+    return list;
+  }, [
+    attendanceAlertActive,
+    isCheckedIn,
+    todayHoliday,
+    todayStr,
+    pendingRegularizations,
+    pendingLeaves,
+    notices,
+    attendanceRecords,
+    userProfile?.id
+  ]);
+
+  const unreadNotifCount = useMemo(() => {
+    return inAppNotifications.filter((n) => !readNotifIds.includes(n.id)).length;
+  }, [inAppNotifications, readNotifIds]);
+
+  const handleMarkAllNotifsRead = async () => {
+    const allIds = inAppNotifications.map((n) => n.id);
+    setReadNotifIds(allIds);
+    try {
+      await AsyncStorage.setItem('@vdx_read_notifs', JSON.stringify(allIds));
+    } catch {}
+  };
 
   // Today Team Presence Counts
   const todayPresentCount = useMemo(() => {
@@ -1721,8 +1976,6 @@ export default function App() {
 
 
   const isInside = distance !== null && distance <= activeOfficeCoords.radiusMeters;
-  const todayStr = getTodayISTDate();
-  const todayHoliday = holidays.find((h) => h.date === todayStr);
 
   // 1. LOGIN SCREEN
   if (!isLoggedIn) {
@@ -1805,6 +2058,19 @@ export default function App() {
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            style={styles.notifHeaderBtn}
+            onPress={() => setIsNotifModal(true)}
+            accessibilityLabel="In-app Notifications"
+          >
+            <Text style={{ fontSize: 15 }}>🔔</Text>
+            {unreadNotifCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.themeToggleBtn}
             onPress={handleToggleTheme}
@@ -2197,32 +2463,47 @@ export default function App() {
           <View style={{ gap: 12 }}>
             {/* Channel & Colleague Selector Bar */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Channels & Direct Messages</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.cardTitle}>Channels & Direct Messages</Text>
+                {isPrivileged && (
+                  <TouchableOpacity
+                    style={styles.smallAddBtn}
+                    onPress={() => {
+                      setNewChanName('');
+                      setNewChanDesc('');
+                      setIsNewChannelModal(true);
+                    }}
+                  >
+                    <Text style={styles.smallAddBtnText}>+ Channel</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               <Text style={styles.cardDesc}>Real-time Slack workspace communication for {currentOrg?.name}</Text>
 
-              {/* Channel Pills */}
+              {/* Channel Pills (Loaded directly from Supabase DB) */}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
                 <View style={{ flexDirection: 'row', gap: 6 }}>
-                  {['general', 'support', 'announcements'].map((chan) => {
-                    const isSelected = !chatRecipient && activeChatChannel === chan;
+                  {availableChannels.map((chan) => {
+                    const chanKey = chan.name || chan.id;
+                    const isSelected = !chatRecipient && activeChatChannel === chanKey;
                     return (
                       <TouchableOpacity
-                        key={chan}
+                        key={chan.id || chan.name}
                         style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive]}
                         onPress={() => {
                           setChatRecipient(null);
-                          setActiveChatChannel(chan);
+                          setActiveChatChannel(chanKey);
                         }}
                       >
                         <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
-                          # {chan}
+                          # {chan.name}
                         </Text>
                       </TouchableOpacity>
                     );
                   })}
 
                   {/* Teammate DM Pills */}
-                  {teamProfiles.filter((p) => p.id !== userProfile?.id).slice(0, 10).map((member) => {
+                  {teamProfiles.filter((p) => p.id !== userProfile?.id).map((member) => {
                     const isSelected = chatRecipient?.id === member.id;
                     return (
                       <TouchableOpacity
@@ -2231,6 +2512,7 @@ export default function App() {
                         onPress={() => {
                           setChatRecipient(member);
                         }}
+                        onLongPress={() => setInspectedUserProfile(member)}
                       >
                         <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
                           @{member.first_name}
@@ -2243,15 +2525,20 @@ export default function App() {
 
               {/* Active Header Information */}
               <View style={styles.chatActiveHeaderBox}>
-                <Text style={styles.chatActiveHeaderTitle}>
-                  {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : `# ${activeChatChannel}`}
-                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.chatActiveHeaderTitle}>
+                    {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : `# ${activeChatChannel}`}
+                  </Text>
+                  {chatRecipient && (
+                    <TouchableOpacity onPress={() => setInspectedUserProfile(chatRecipient)}>
+                      <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>Profile ↗</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
                 <Text style={styles.chatActiveHeaderSub}>
                   {chatRecipient
                     ? `${chatRecipient.designation || 'Staff'} • ${chatRecipient.department || 'Operations'}`
-                    : activeChatChannel === 'general' ? 'Company-wide general discussion & updates'
-                    : activeChatChannel === 'support' ? 'Internal IT, HR & employee assistance'
-                    : 'Important announcements and official broadcast'}
+                    : activeChanObj?.description || 'Workspace discussion channel'}
                 </Text>
               </View>
             </View>
@@ -2275,11 +2562,15 @@ export default function App() {
                     const prevMsg = index > 0 ? activeConversationMessages[index - 1] : null;
                     const isGrouped = prevMsg && prevMsg.sender_id === msg.sender_id &&
                       (new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000);
+                    const senderProfile = teamProfiles.find((p) => p.id === msg.sender_id) || (isMe ? userProfile : null);
 
                     return (
                       <View key={msg.id || index} style={[styles.chatMessageRow, isMe && styles.chatMessageRowMe]}>
                         {!isGrouped && !isMe && (
-                          <View style={styles.chatAvatar}>
+                          <TouchableOpacity
+                            style={styles.chatAvatar}
+                            onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
+                          >
                             {msg.sender_avatar ? (
                               <Image source={{ uri: msg.sender_avatar }} style={{ width: '100%', height: '100%', borderRadius: 14 }} />
                             ) : (
@@ -2287,15 +2578,17 @@ export default function App() {
                                 {(msg.sender_name?.[0] || 'U').toUpperCase()}
                               </Text>
                             )}
-                          </View>
+                          </TouchableOpacity>
                         )}
 
                         <View style={{ flex: 1, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
                           {!isGrouped && (
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                              <Text style={styles.chatSenderName}>
-                                {isMe ? 'You' : msg.sender_name}
-                              </Text>
+                              <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
+                                <Text style={styles.chatSenderName}>
+                                  {isMe ? 'You' : msg.sender_name}
+                                </Text>
+                              </TouchableOpacity>
                               {msg.sender_role && (
                                 <View style={styles.chatRolePill}>
                                   <Text style={styles.chatRolePillText}>{msg.sender_role.toUpperCase()}</Text>
@@ -2369,220 +2662,317 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* VIEW A: MY ATTENDANCE CALENDAR */}
-              {calSubTab === 'attendance' && (
-                <View style={{ marginTop: 12 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={styles.cardTitle}>Monthly Attendance</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <TouchableOpacity
-                        style={styles.calNavBtn}
-                        onPress={() => {
-                          if (selectedCalMonth === 1) {
-                            setSelectedCalMonth(12);
-                            setSelectedCalYear((y) => y - 1);
-                          } else {
-                            setSelectedCalMonth((m) => m - 1);
-                          }
-                        }}
-                      >
-                        <Text style={styles.calNavBtnText}>◀</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.calMonthText}>
-                        {new Date(selectedCalYear, selectedCalMonth - 1, 1).toLocaleDateString('en-IN', {
-                          month: 'short',
-                          year: 'numeric'
-                        })}
-                      </Text>
-                      <TouchableOpacity
-                        style={styles.calNavBtn}
-                        onPress={() => {
-                          if (selectedCalMonth === 12) {
-                            setSelectedCalMonth(1);
-                            setSelectedCalYear((y) => y + 1);
-                          } else {
-                            setSelectedCalMonth((m) => m + 1);
-                          }
-                        }}
-                      >
-                        <Text style={styles.calNavBtnText}>▶</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
+              {/* VIEW A: ATTENDANCE CALENDAR (SELF OR INSPECTED TEAM MEMBER) */}
+              {calSubTab === 'attendance' && (() => {
+                const inspectedCalendarEmp = teamProfiles.find((p) => p.id === (selectedCalendarEmpId || userProfile?.id)) || userProfile;
+                const isViewingSelf = !selectedCalendarEmpId || selectedCalendarEmpId === userProfile?.id;
+                const targetEmpId = inspectedCalendarEmp?.id;
+                const joiningDateStr = inspectedCalendarEmp?.joining_date || '2026-01-01';
 
-                  <Text style={styles.cardDesc}>
-                    Synced from joining date: {formatDisplayDate(userProfile?.joining_date)}
-                  </Text>
+                return (
+                  <View style={{ marginTop: 12 }}>
+                    {/* Multi-Employee Selector for Superadmin / HR / Managers */}
+                    {canApprove && (
+                      <View style={{ marginBottom: 10 }}>
+                        <Text style={[styles.inputLabel, { marginBottom: 4 }]}>Select Employee to Inspect Attendance:</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 4 }}>
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            <TouchableOpacity
+                              style={[
+                                styles.calEmpPill,
+                                isViewingSelf && styles.calEmpPillActive
+                              ]}
+                              onPress={() => setSelectedCalendarEmpId(userProfile?.id)}
+                            >
+                              <View style={styles.calEmpPillAvatar}>
+                                <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                                  {(userProfile?.first_name?.[0] || 'M') + (userProfile?.last_name?.[0] || '')}
+                                </Text>
+                              </View>
+                              <Text
+                                style={[
+                                  styles.calEmpPillText,
+                                  isViewingSelf && styles.calEmpPillTextActive
+                                ]}
+                              >
+                                My Attendance
+                              </Text>
+                            </TouchableOpacity>
 
-                  {/* Summary Counters */}
-                  {(() => {
-                    const myId = userProfile?.id;
-                    const joiningDateStr = userProfile?.joining_date || '2026-01-01';
-                    const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
-                    const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
-
-                    let present = 0;
-                    let regularized = 0;
-                    let absent = 0;
-                    let holidayCount = 0;
-
-                    for (let d = 1; d <= daysInMonth; d++) {
-                      const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
-                      if (dStr > todayStr) continue;
-                      if (dStr < joiningDateStr) continue;
-
-                      const isHol = holidays.some((h) => h.date === dStr);
-                      if (isHol) {
-                        holidayCount++;
-                        continue;
-                      }
-
-                      const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
-                      if (dayOfWeek === 0) continue; // Sunday
-
-                      const punch = attendanceRecords.find(
-                        (a) => a.employee_id === myId && a.date === dStr
-                      );
-
-                      if (punch?.status === 'present' || punch?.check_in_time) {
-                        present++;
-                      } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
-                        regularized++;
-                      } else {
-                        absent++;
-                      }
-                    }
-
-                    const totalWorking = present + regularized + absent;
-                    const percentage = totalWorking > 0 ? (((present + regularized) / totalWorking) * 100).toFixed(1) : '100.0';
-
-                    return (
-                      <View style={styles.calSummaryRow}>
-                        <View style={[styles.calSummaryBox, { borderColor: '#10b981' }]}>
-                          <Text style={[styles.calSummaryVal, { color: '#10b981' }]}>{present}</Text>
-                          <Text style={styles.calSummaryLbl}>Present</Text>
-                        </View>
-                        <View style={[styles.calSummaryBox, { borderColor: '#06b6d4' }]}>
-                          <Text style={[styles.calSummaryVal, { color: '#06b6d4' }]}>{regularized}</Text>
-                          <Text style={styles.calSummaryLbl}>Regularized</Text>
-                        </View>
-                        <View style={[styles.calSummaryBox, { borderColor: '#f43f5e' }]}>
-                          <Text style={[styles.calSummaryVal, { color: '#f43f5e' }]}>{absent}</Text>
-                          <Text style={styles.calSummaryLbl}>Absent</Text>
-                        </View>
-                        <View style={[styles.calSummaryBox, { borderColor: '#38bdf8' }]}>
-                          <Text style={[styles.calSummaryVal, { color: '#38bdf8' }]}>{percentage}%</Text>
-                          <Text style={styles.calSummaryLbl}>Presence</Text>
-                        </View>
+                            {teamProfiles
+                              .filter((p) => p.id !== userProfile?.id)
+                              .map((emp) => {
+                                const isSelected = selectedCalendarEmpId === emp.id;
+                                return (
+                                  <TouchableOpacity
+                                    key={emp.id}
+                                    style={[styles.calEmpPill, isSelected && styles.calEmpPillActive]}
+                                    onPress={() => setSelectedCalendarEmpId(emp.id)}
+                                  >
+                                    <View style={[styles.calEmpPillAvatar, { backgroundColor: isSelected ? '#0284c7' : '#475569' }]}>
+                                      {emp.avatar_url ? (
+                                        <Image source={{ uri: emp.avatar_url }} style={{ width: '100%', height: '100%', borderRadius: 10 }} />
+                                      ) : (
+                                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                                          {(emp.first_name?.[0] || 'U') + (emp.last_name?.[0] || '')}
+                                        </Text>
+                                      )}
+                                    </View>
+                                    <Text style={[styles.calEmpPillText, isSelected && styles.calEmpPillTextActive]}>
+                                      {emp.first_name} {emp.last_name}
+                                    </Text>
+                                    <View style={{ backgroundColor: isSelected ? '#0369a1' : '#334155', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6 }}>
+                                      <Text style={{ fontSize: 9, color: '#e2e8f0', fontWeight: 'bold' }}>{emp.role || 'EMP'}</Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                          </View>
+                        </ScrollView>
                       </View>
-                    );
-                  })()}
+                    )}
 
-                  {/* Day Rows List */}
-                  <View style={{ marginTop: 12, gap: 8 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.cardTitle}>
+                        {isViewingSelf ? 'My Monthly Attendance' : `${inspectedCalendarEmp?.first_name}'s Attendance`}
+                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <TouchableOpacity
+                          style={styles.calNavBtn}
+                          onPress={() => {
+                            if (selectedCalMonth === 1) {
+                              setSelectedCalMonth(12);
+                              setSelectedCalYear((y) => y - 1);
+                            } else {
+                              setSelectedCalMonth((m) => m - 1);
+                            }
+                          }}
+                        >
+                          <Text style={styles.calNavBtnText}>◀</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.calMonthText}>
+                          {new Date(selectedCalYear, selectedCalMonth - 1, 1).toLocaleDateString('en-IN', {
+                            month: 'short',
+                            year: 'numeric'
+                          })}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.calNavBtn}
+                          onPress={() => {
+                            if (selectedCalMonth === 12) {
+                              setSelectedCalMonth(1);
+                              setSelectedCalYear((y) => y + 1);
+                            } else {
+                              setSelectedCalMonth((m) => m + 1);
+                            }
+                          }}
+                        >
+                          <Text style={styles.calNavBtnText}>▶</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                      <Text style={styles.cardDesc}>
+                        Joining Date: {formatDisplayDate(inspectedCalendarEmp?.joining_date)}
+                      </Text>
+                      {!isViewingSelf && inspectedCalendarEmp && (
+                        <TouchableOpacity onPress={() => setInspectedUserProfile(inspectedCalendarEmp)}>
+                          <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>View Full Profile ↗</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {/* Summary Counters */}
                     {(() => {
-                      const myId = userProfile?.id;
-                      const joiningDateStr = userProfile?.joining_date || '2026-01-01';
                       const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
                       const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
-                      const dayItems = [];
+
+                      let present = 0;
+                      let regularized = 0;
+                      let absent = 0;
+                      let holidayCount = 0;
 
                       for (let d = 1; d <= daysInMonth; d++) {
                         const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
-                        const dateObj = new Date(selectedCalYear, selectedCalMonth - 1, d);
-                        const dayOfWeek = dateObj.getDay();
-                        const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
-                        const isSunday = dayOfWeek === 0;
-                        const isFuture = dStr > todayStr;
-                        const isToday = dStr === todayStr;
-                        const isBeforeJoining = dStr < joiningDateStr;
-                        const matchingHoliday = holidays.find((h) => h.date === dStr);
+                        if (dStr > todayStr) continue;
+                        if (dStr < joiningDateStr) continue;
 
-                        const punch = attendanceRecords.find(
-                          (a) => a.employee_id === myId && a.date === dStr
-                        );
-
-                        let status = 'future';
-                        let statusLabel = 'Upcoming';
-                        let statusColor = '#64748b';
-
-                        if (isBeforeJoining) {
-                          status = 'before_joining';
-                          statusLabel = 'Before Joining';
-                          statusColor = '#475569';
-                        } else if (matchingHoliday) {
-                          status = 'holiday';
-                          statusLabel = `🌴 Holiday: ${matchingHoliday.name}`;
-                          statusColor = '#fbbf24';
-                        } else if (isSunday) {
-                          status = 'week_off';
-                          statusLabel = 'Week Off';
-                          statusColor = '#475569';
-                        } else if (punch?.status === 'present' || punch?.check_in_time) {
-                          status = 'present';
-                          const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
-                          statusLabel = `✓ Present (${checkInFormatted})`;
-                          statusColor = '#10b981';
-                        } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
-                          status = 'regularized';
-                          statusLabel = '★ Regularized Approved';
-                          statusColor = '#06b6d4';
-                        } else if (punch?.regularization_status === 'pending') {
-                          status = 'pending';
-                          statusLabel = '⏳ Regularization Pending';
-                          statusColor = '#f59e0b';
-                        } else if (!isFuture) {
-                          status = 'absent';
-                          statusLabel = '✗ Unmarked / Absent';
-                          statusColor = '#f43f5e';
+                        const isHol = holidays.some((h) => h.date === dStr);
+                        if (isHol) {
+                          holidayCount++;
+                          continue;
                         }
 
-                        dayItems.push(
-                          <View
-                            key={dStr}
-                            style={[
-                              styles.calDayRow,
-                              isToday && styles.calDayRowToday,
-                              matchingHoliday && { borderColor: '#f59e0b' },
-                              isBeforeJoining && { opacity: 0.5 }
-                            ]}
-                          >
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                              <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : matchingHoliday ? '#78350f' : '#1e293b' }]}>
-                                <Text style={styles.calDayNum}>{d}</Text>
-                                <Text style={styles.calDayName}>{dayName}</Text>
-                              </View>
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.calDateStr}>{dStr} {isToday ? '(Today)' : ''}</Text>
-                                <Text style={[styles.calStatusText, { color: statusColor }]}>{statusLabel}</Text>
-                              </View>
-                            </View>
+                        const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
+                        if (dayOfWeek === 0) continue; // Sunday
 
-                            {status === 'absent' && (
-                              <TouchableOpacity
-                                style={styles.calRegBtn}
-                                onPress={() => {
-                                  setRegTargetDate(dStr);
-                                  setIsRegModal(true);
-                                }}
-                              >
-                                <Text style={styles.calRegBtnText}>Regularize</Text>
-                              </TouchableOpacity>
-                            )}
-
-                            {status === 'regularized' && (
-                              <View style={styles.calApprovedBadge}>
-                                <Text style={styles.calApprovedBadgeText}>Approved</Text>
-                              </View>
-                            )}
-                          </View>
+                        const punch = attendanceRecords.find(
+                          (a) => a.employee_id === targetEmpId && a.date === dStr
                         );
+
+                        if (punch?.status === 'present' || punch?.check_in_time) {
+                          present++;
+                        } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                          regularized++;
+                        } else {
+                          absent++;
+                        }
                       }
-                      return dayItems;
+
+                      const totalWorking = present + regularized + absent;
+                      const percentage = totalWorking > 0 ? (((present + regularized) / totalWorking) * 100).toFixed(1) : '100.0';
+
+                      return (
+                        <View style={styles.calSummaryRow}>
+                          <View style={[styles.calSummaryBox, { borderColor: '#10b981' }]}>
+                            <Text style={[styles.calSummaryVal, { color: '#10b981' }]}>{present}</Text>
+                            <Text style={styles.calSummaryLbl}>Present</Text>
+                          </View>
+                          <View style={[styles.calSummaryBox, { borderColor: '#06b6d4' }]}>
+                            <Text style={[styles.calSummaryVal, { color: '#06b6d4' }]}>{regularized}</Text>
+                            <Text style={styles.calSummaryLbl}>Regularized</Text>
+                          </View>
+                          <View style={[styles.calSummaryBox, { borderColor: '#f43f5e' }]}>
+                            <Text style={[styles.calSummaryVal, { color: '#f43f5e' }]}>{absent}</Text>
+                            <Text style={styles.calSummaryLbl}>Absent</Text>
+                          </View>
+                          <View style={[styles.calSummaryBox, { borderColor: '#38bdf8' }]}>
+                            <Text style={[styles.calSummaryVal, { color: '#38bdf8' }]}>{percentage}%</Text>
+                            <Text style={styles.calSummaryLbl}>Presence</Text>
+                          </View>
+                        </View>
+                      );
                     })()}
+
+                    {/* Day Rows List (Clickable -> Opens Modal) */}
+                    <View style={{ marginTop: 12, gap: 8 }}>
+                      {(() => {
+                        const monthPrefix = `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}`;
+                        const daysInMonth = new Date(selectedCalYear, selectedCalMonth, 0).getDate();
+                        const dayItems = [];
+
+                        for (let d = 1; d <= daysInMonth; d++) {
+                          const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+                          const dateObj = new Date(selectedCalYear, selectedCalMonth - 1, d);
+                          const dayOfWeek = dateObj.getDay();
+                          const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+                          const isSunday = dayOfWeek === 0;
+                          const isFuture = dStr > todayStr;
+                          const isToday = dStr === todayStr;
+                          const isBeforeJoining = dStr < joiningDateStr;
+                          const matchingHoliday = holidays.find((h) => h.date === dStr);
+
+                          const punch = attendanceRecords.find(
+                            (a) => a.employee_id === targetEmpId && a.date === dStr
+                          );
+
+                          let status = 'future';
+                          let statusLabel = 'Upcoming';
+                          let statusColor = '#64748b';
+
+                          if (isBeforeJoining) {
+                            status = 'before_joining';
+                            statusLabel = 'Before Joining';
+                            statusColor = '#475569';
+                          } else if (matchingHoliday) {
+                            status = 'holiday';
+                            statusLabel = `🌴 Holiday: ${matchingHoliday.name}`;
+                            statusColor = '#fbbf24';
+                          } else if (isSunday) {
+                            status = 'week_off';
+                            statusLabel = 'Week Off';
+                            statusColor = '#475569';
+                          } else if (punch?.status === 'present' || punch?.check_in_time) {
+                            status = 'present';
+                            const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
+                            statusLabel = `✓ Present (${checkInFormatted})`;
+                            statusColor = '#10b981';
+                          } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                            status = 'regularized';
+                            statusLabel = '★ Regularized Approved';
+                            statusColor = '#06b6d4';
+                          } else if (punch?.regularization_status === 'pending') {
+                            status = 'pending';
+                            statusLabel = '⏳ Regularization Pending';
+                            statusColor = '#f59e0b';
+                          } else if (!isFuture) {
+                            status = 'absent';
+                            statusLabel = '✗ Unmarked / Absent';
+                            statusColor = '#f43f5e';
+                          }
+
+                          const dayPayload = {
+                            day: d,
+                            dStr,
+                            dayName,
+                            status,
+                            statusLabel,
+                            statusColor,
+                            punch,
+                            matchingHoliday,
+                            isToday,
+                            isFuture,
+                            isSunday,
+                            isBeforeJoining,
+                            inspectedCalendarEmp
+                          };
+
+                          dayItems.push(
+                            <TouchableOpacity
+                              key={dStr}
+                              activeOpacity={0.7}
+                              onPress={() => setSelectedCalendarDayData(dayPayload)}
+                              style={[
+                                styles.calDayRow,
+                                isToday && styles.calDayRowToday,
+                                matchingHoliday && { borderColor: '#f59e0b' },
+                                isBeforeJoining && { opacity: 0.5 }
+                              ]}
+                            >
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : matchingHoliday ? '#78350f' : '#1e293b' }]}>
+                                  <Text style={styles.calDayNum}>{d}</Text>
+                                  <Text style={styles.calDayName}>{dayName}</Text>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.calDateStr}>{dStr} {isToday ? '(Today)' : ''}</Text>
+                                  <Text style={[styles.calStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                                </View>
+                              </View>
+
+                              {status === 'absent' && (
+                                <TouchableOpacity
+                                  style={styles.calRegBtn}
+                                  onPress={() => {
+                                    if (isViewingSelf) {
+                                      setRegTargetDate(dStr);
+                                      setIsRegModal(true);
+                                    } else if (canApprove) {
+                                      handleDirectRegularize(targetEmpId, dStr);
+                                    }
+                                  }}
+                                >
+                                  <Text style={styles.calRegBtnText}>
+                                    {isViewingSelf ? 'Regularize' : '⚡ Mark Present'}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {status === 'regularized' && (
+                                <View style={styles.calApprovedBadge}>
+                                  <Text style={styles.calApprovedBadgeText}>Approved</Text>
+                                </View>
+                              )}
+                            </TouchableOpacity>
+                          );
+                        }
+                        return dayItems;
+                      })()}
+                    </View>
                   </View>
-                </View>
-              )}
+                );
+              })()}
 
               {/* VIEW B: COMPANY HOLIDAY SCHEDULE */}
               {calSubTab === 'holidays' && (
@@ -3295,12 +3685,20 @@ export default function App() {
                       .map((member) => {
                         const mgr = teamProfiles.find((p) => p.id === member.manager_id);
                         return (
-                          <View key={member.id} style={styles.teamCard}>
+                          <TouchableOpacity
+                            key={member.id}
+                            style={styles.teamCard}
+                            activeOpacity={0.7}
+                            onPress={() => setInspectedUserProfile(member)}
+                          >
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                               <View style={{ flex: 1 }}>
-                                <Text style={styles.teamName}>
-                                  {member.first_name} {member.last_name}
-                                </Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={styles.teamName}>
+                                    {member.first_name} {member.last_name}
+                                  </Text>
+                                  <Text style={{ fontSize: 10, color: '#38bdf8' }}>↗</Text>
+                                </View>
                                 <Text style={styles.teamDesig}>
                                   {member.designation || 'Staff'} • {member.department || 'Operations'}
                                 </Text>
@@ -3324,7 +3722,8 @@ export default function App() {
                                 {isPrivileged && (
                                   <TouchableOpacity
                                     style={styles.editJoiningBtn}
-                                    onPress={() => {
+                                    onPress={(e) => {
+                                      e.stopPropagation?.();
                                       setTargetEmpForJoining(member);
                                       setUpdatedJoiningDateVal(member.joining_date || getTodayISTDate());
                                       setIsEditJoiningModal(true);
@@ -3335,7 +3734,7 @@ export default function App() {
                                 )}
                               </View>
                             </View>
-                          </View>
+                          </TouchableOpacity>
                         );
                       })}
                   </View>
@@ -4295,6 +4694,379 @@ export default function App() {
 
             <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsOrgModalVisible(false)}>
               <Text style={styles.modalCloseBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 12: DAY ATTENDANCE DETAIL & QUICK REGULARIZE MODAL */}
+      {/* ========================================================================= */}
+      <Modal visible={selectedCalendarDayData !== null} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            {selectedCalendarDayData && (() => {
+              const d = selectedCalendarDayData;
+              const isSelf = !d.inspectedCalendarEmp || d.inspectedCalendarEmp.id === userProfile?.id;
+              const empName = d.inspectedCalendarEmp ? `${d.inspectedCalendarEmp.first_name} ${d.inspectedCalendarEmp.last_name}` : 'Self';
+              const p = d.punch;
+              const checkInStr = p?.check_in_time ? formatISTTimeOnly(p.check_in_time) : '--';
+              const checkOutStr = p?.check_out_time ? formatISTTimeOnly(p.check_out_time) : (p?.check_in_time ? 'Shift In Progress' : '--');
+              const totalHrs = p?.total_hours || (p?.check_in_time ? 'Active' : 0);
+              const isPending = p?.regularization_status === 'pending';
+              const isAbsent = d.status === 'absent';
+
+              return (
+                <>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.modalTitle}>{d.dStr}</Text>
+                      <Text style={styles.modalSub}>{d.dayName} • {empName}</Text>
+                    </View>
+                    <View style={[styles.statusBadge, { backgroundColor: d.statusColor + '20', borderColor: d.statusColor, paddingVertical: 4, paddingHorizontal: 8 }]}>
+                      <Text style={{ color: d.statusColor, fontSize: 11, fontWeight: 'bold' }}>{d.statusLabel}</Text>
+                    </View>
+                  </View>
+
+                  <ScrollView style={{ width: '100%', marginVertical: 8, maxHeight: 280 }} showsVerticalScrollIndicator={false}>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Shift Window:</Text>
+                      <Text style={styles.detailVal}>
+                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'} IST
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Check-In Time:</Text>
+                      <Text style={styles.detailVal}>{checkInStr}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Check-Out Time:</Text>
+                      <Text style={styles.detailVal}>{checkOutStr}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Logged Hours:</Text>
+                      <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>{totalHrs} hrs</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Location Verification:</Text>
+                      <Text style={styles.detailVal}>
+                        {p?.is_remote ? 'Remote / Field' : p?.check_in_time ? 'Office HQ' : '--'}
+                        {p?.distance_meters ? ` (${p.distance_meters}m)` : ''}
+                      </Text>
+                    </View>
+                    {p?.regularization_reason && (
+                      <View style={{ marginTop: 8, padding: 8, backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', borderRadius: 8 }}>
+                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REGULARIZATION NOTE:</Text>
+                        <Text style={{ fontSize: 12, color: isDarkMode ? '#fff' : '#0f172a', marginTop: 2 }}>{p.regularization_reason}</Text>
+                      </View>
+                    )}
+                  </ScrollView>
+
+                  <View style={{ gap: 8, marginTop: 8, width: '100%' }}>
+                    {/* Action 1: Pending Approvals for Manager/HR */}
+                    {isPending && canApprove && p && (
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={[styles.loginBtn, { flex: 1, backgroundColor: '#10b981' }]}
+                          onPress={() => {
+                            handleResolveRegularization(p.id, 'approved');
+                            setSelectedCalendarDayData(null);
+                          }}
+                        >
+                          <Text style={styles.loginBtnText}>✅ Approve</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.loginBtn, { flex: 1, backgroundColor: '#ef4444' }]}
+                          onPress={() => {
+                            handleResolveRegularization(p.id, 'rejected');
+                            setSelectedCalendarDayData(null);
+                          }}
+                        >
+                          <Text style={styles.loginBtnText}>❌ Reject</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {/* Action 2: If Absent and viewing Self */}
+                    {isAbsent && isSelf && !d.isBeforeJoining && (
+                      <TouchableOpacity
+                        style={[styles.loginBtn, { backgroundColor: '#f59e0b' }]}
+                        onPress={() => {
+                          const date = d.dStr;
+                          setSelectedCalendarDayData(null);
+                          setRegTargetDate(date);
+                          setIsRegModal(true);
+                        }}
+                      >
+                        <Text style={[styles.loginBtnText, { color: '#090d16' }]}>✍️ Request Regularization</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Action 3: If Absent and viewing Employee as HR/Superadmin */}
+                    {isAbsent && !isSelf && canApprove && !d.isBeforeJoining && (
+                      <TouchableOpacity
+                        style={[styles.loginBtn, { backgroundColor: '#0284c7' }]}
+                        onPress={() => handleDirectRegularize(d.inspectedCalendarEmp.id, d.dStr)}
+                      >
+                        <Text style={styles.loginBtnText}>⚡ Mark Present (Direct Regularize)</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setSelectedCalendarDayData(null)}>
+                      <Text style={styles.modalCloseBtnText}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 13: USER PROFILE DETAILS MODAL */}
+      {/* ========================================================================= */}
+      <Modal visible={inspectedUserProfile !== null} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            {inspectedUserProfile && (() => {
+              const mgr = teamProfiles.find((p) => p.id === inspectedUserProfile.manager_id);
+              const isSelf = inspectedUserProfile.id === userProfile?.id;
+              return (
+                <>
+                  <View style={styles.userProfileHeader}>
+                    <View style={styles.userProfileAvatarLg}>
+                      {inspectedUserProfile.avatar_url ? (
+                        <Image source={{ uri: inspectedUserProfile.avatar_url }} style={{ width: '100%', height: '100%', borderRadius: 34 }} />
+                      ) : (
+                        <Text style={{ fontSize: 24, color: '#ffffff', fontWeight: 'bold' }}>
+                          {(inspectedUserProfile.first_name?.[0] || 'U') + (inspectedUserProfile.last_name?.[0] || '')}
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={styles.userProfileName}>
+                      {inspectedUserProfile.first_name} {inspectedUserProfile.last_name}
+                    </Text>
+                    <Text style={styles.userProfileDesig}>
+                      {inspectedUserProfile.designation || 'Staff'} • {inspectedUserProfile.department || 'Operations'}
+                    </Text>
+                    <View style={styles.userProfileRoleBadge}>
+                      <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#38bdf8' }}>
+                        {inspectedUserProfile.role?.toUpperCase()}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <ScrollView style={{ maxHeight: 260, width: '100%', marginVertical: 8 }} showsVerticalScrollIndicator={false}>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Work Email:</Text>
+                      <Text style={styles.detailVal}>{inspectedUserProfile.email}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Contact Phone:</Text>
+                      <Text style={styles.detailVal}>{inspectedUserProfile.phone || 'Not Provided'}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Date of Joining:</Text>
+                      <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>
+                        {formatDisplayDate(inspectedUserProfile.joining_date)}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Reporting Manager:</Text>
+                      <Text style={styles.detailVal}>
+                        {mgr ? `${mgr.first_name} ${mgr.last_name} (${mgr.designation || 'Lead'})` : 'Executive Leadership'}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Active Tenant:</Text>
+                      <Text style={styles.detailVal}>{currentOrg?.name}</Text>
+                    </View>
+                  </ScrollView>
+
+                  <View style={{ gap: 8, marginTop: 10, width: '100%' }}>
+                    {!isSelf && (
+                      <TouchableOpacity
+                        style={[styles.loginBtn, { backgroundColor: '#0284c7' }]}
+                        onPress={() => {
+                          const target = inspectedUserProfile;
+                          setInspectedUserProfile(null);
+                          setChatRecipient(target);
+                          setActiveTab('chat');
+                        }}
+                      >
+                        <Text style={styles.loginBtnText}>💬 Send Direct Message</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {isSelf && (
+                      <TouchableOpacity
+                        style={[styles.loginBtn, { backgroundColor: '#0284c7' }]}
+                        onPress={() => {
+                          setInspectedUserProfile(null);
+                          setEditPhone(userProfile?.phone || '');
+                          setEditAvatarUrl(userProfile?.avatar_url || '');
+                          setIsEditProfileModal(true);
+                        }}
+                      >
+                        <Text style={styles.loginBtnText}>✏️ Edit Profile</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setInspectedUserProfile(null)}>
+                      <Text style={styles.modalCloseBtnText}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 14: IN-APP NOTIFICATION CENTER */}
+      {/* ========================================================================= */}
+      <Modal visible={isNotifModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '85%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={{ fontSize: 18 }}>🔔</Text>
+                <Text style={styles.modalTitle}>Notifications</Text>
+              </View>
+              {unreadNotifCount > 0 && (
+                <TouchableOpacity onPress={handleMarkAllNotifsRead}>
+                  <Text style={{ color: '#38bdf8', fontSize: 12, fontWeight: 'bold' }}>Mark all read</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
+              {inAppNotifications.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 32, marginBottom: 8 }}>✨</Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center' }}>
+                    All caught up! No active notifications or alerts.
+                  </Text>
+                </View>
+              ) : (
+                inAppNotifications.map((n) => {
+                  const isRead = readNotifIds.includes(n.id);
+                  return (
+                    <TouchableOpacity
+                      key={n.id}
+                      style={[
+                        styles.notifItem,
+                        !isRead && { borderColor: '#38bdf8', backgroundColor: isDarkMode ? 'rgba(56, 189, 248, 0.08)' : 'rgba(2, 132, 199, 0.05)' }
+                      ]}
+                      onPress={() => {
+                        if (!isRead) {
+                          setReadNotifIds((prev) => [...prev, n.id]);
+                        }
+                        n.action();
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                        <Text style={{ fontSize: 20 }}>{n.icon}</Text>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={[styles.notifItemTitle, !isRead && { color: '#38bdf8' }]} numberOfLines={1}>
+                              {n.title}
+                            </Text>
+                            {!isRead && <View style={styles.notifUnreadDot} />}
+                          </View>
+                          <Text style={styles.notifItemMsg} numberOfLines={2}>{n.message}</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <Text style={styles.notifCategory}>{n.category}</Text>
+                            <Text style={styles.notifTimestamp}>{n.timestamp}</Text>
+                          </View>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            <TouchableOpacity style={[styles.modalCloseBtn, { marginTop: 10 }]} onPress={() => setIsNotifModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 15: CREATE CHAT CHANNEL */}
+      {/* ========================================================================= */}
+      <Modal visible={isNewChannelModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Create New Channel</Text>
+            <Text style={styles.modalSub}>Add a workspace discussion channel for {currentOrg?.name}</Text>
+
+            <Text style={styles.inputLabel}>Channel Name * (e.g. engineering)</Text>
+            <TextInput
+              style={styles.textInput}
+              value={newChanName}
+              onChangeText={(t) => setNewChanName(t.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+              placeholder="e.g. general-talk"
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.inputLabel}>Channel Description</Text>
+            <TextInput
+              style={styles.textInput}
+              value={newChanDesc}
+              onChangeText={setNewChanDesc}
+              placeholder="What is this channel about?"
+              placeholderTextColor="#64748b"
+            />
+
+            <TouchableOpacity
+              style={[styles.loginBtn, (!newChanName.trim() || isSavingChan) && { opacity: 0.5 }]}
+              disabled={!newChanName.trim() || isSavingChan}
+              onPress={async () => {
+                if (!supabaseClient || !currentOrg || !userProfile || !newChanName.trim()) return;
+                setIsSavingChan(true);
+                try {
+                  const cleanName = newChanName.trim().toLowerCase();
+                  const newChanId = generateUUID();
+                  const { error } = await supabaseClient.from('chat_channels').insert({
+                    id: newChanId,
+                    org_id: currentOrg.id,
+                    name: cleanName,
+                    description: newChanDesc.trim() || 'Custom discussion channel',
+                    is_private: newChanIsPrivate,
+                    member_ids: [userProfile.id],
+                    created_by: userProfile.id,
+                    created_by_name: `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim(),
+                    created_at: new Date().toISOString()
+                  });
+                  if (!error) {
+                    Alert.alert('Channel Created 🎉', `#${cleanName} is now live.`);
+                    setNewChanName('');
+                    setNewChanDesc('');
+                    setIsNewChannelModal(false);
+                    setActiveChatChannel(cleanName);
+                    setChatRecipient(null);
+                    refreshAllData(supabaseClient, currentOrg.id, userProfile.id);
+                  } else {
+                    Alert.alert('Error', error.message);
+                  }
+                } catch (e: any) {
+                  Alert.alert('Error', e?.message);
+                } finally {
+                  setIsSavingChan(false);
+                }
+              }}
+            >
+              <Text style={styles.loginBtnText}>{isSavingChan ? 'Creating...' : 'Create Channel'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsNewChannelModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -5785,6 +6557,141 @@ function createThemedStyles(isDark: boolean) {
   checkboxRow: {
     flexDirection: 'row',
     alignItems: 'center'
+  },
+  notifHeaderBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+    borderWidth: 1,
+    borderColor: isDark ? '#334155' : '#cbd5e1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative'
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#ef4444',
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 3
+  },
+  notifBadgeText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: 'bold'
+  },
+  notifItem: {
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: subtleBg,
+    borderWidth: 1,
+    borderColor: cardBorder,
+    marginBottom: 8
+  },
+  notifItemTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: textPrimary,
+    flex: 1
+  },
+  notifItemMsg: {
+    fontSize: 11,
+    color: textSecondary,
+    marginTop: 2,
+    lineHeight: 16
+  },
+  notifUnreadDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#38bdf8',
+    marginLeft: 6
+  },
+  notifCategory: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    color: textMuted
+  },
+  notifTimestamp: {
+    fontSize: 10,
+    color: textMuted
+  },
+  calEmpPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 18,
+    backgroundColor: cardBg,
+    borderWidth: 1,
+    borderColor: cardBorder,
+    marginRight: 6
+  },
+  calEmpPillActive: {
+    backgroundColor: isDark ? 'rgba(56, 189, 248, 0.15)' : 'rgba(2, 132, 199, 0.12)',
+    borderColor: '#38bdf8'
+  },
+  calEmpPillAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#0284c7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden'
+  },
+  calEmpPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: textSecondary
+  },
+  calEmpPillTextActive: {
+    color: isDark ? '#38bdf8' : '#0284c7',
+    fontWeight: 'bold'
+  },
+  userProfileHeader: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    width: '100%'
+  },
+  userProfileAvatarLg: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#0284c7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+    borderWidth: 3,
+    borderColor: '#38bdf8',
+    overflow: 'hidden'
+  },
+  userProfileName: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: textPrimary
+  },
+  userProfileDesig: {
+    fontSize: 12,
+    color: textSecondary,
+    marginTop: 2
+  },
+  userProfileRoleBadge: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+    backgroundColor: isDark ? 'rgba(56, 189, 248, 0.15)' : 'rgba(2, 132, 199, 0.12)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.25)'
   }
 });
 }
