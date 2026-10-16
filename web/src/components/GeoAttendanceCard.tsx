@@ -39,6 +39,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
     holidays,
     getTodayAttendance,
     punchAttendance,
+    punchOutAttendance,
     cancelLeaveRequest,
     addToast
   } = useApp();
@@ -57,6 +58,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [hasRealGps, setHasRealGps] = useState(false);
   const [isWithdrawingLeave, setIsWithdrawingLeave] = useState(false);
+  const [isPunchingOut, setIsPunchingOut] = useState(false);
 
   const todayStr = getTodayISTDateString();
   const todayRecord = getTodayAttendance();
@@ -411,13 +413,19 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
               <span>
                 Punched In: <strong className="text-emerald-400">{formatISTTime(todayRecord.checkInTime!)} IST</strong>
               </span>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                <ShieldCheck className="w-3 h-3 mr-1 text-emerald-400" />
-                Present • Checkout Not Required
-              </span>
+              {todayRecord.checkOutTime ? (
+                <span>
+                  Punched Out: <strong className="text-amber-400">{formatISTTime(todayRecord.checkOutTime)} IST</strong>
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                  <ShieldCheck className="w-3 h-3 mr-1 text-emerald-400" />
+                  Shift In Progress
+                </span>
+              )}
               {todayRecord.totalHours > 0 && (
                 <span>
-                  Standard Shift: <strong className="text-cyan-400 font-mono">{todayRecord.totalHours} hrs</strong>
+                  Logged: <strong className="text-cyan-400 font-mono">{todayRecord.totalHours} hrs</strong>
                 </span>
               )}
             </div>
@@ -454,11 +462,39 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
                   : 'Punch In (Mark Present - IST)'}
               </span>
             </button>
+          ) : !todayRecord.checkOutTime ? (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                disabled={isPunchingOut}
+                onClick={async () => {
+                  setIsPunchingOut(true);
+                  try {
+                    await punchOutAttendance(userLat, userLong);
+                  } finally {
+                    setIsPunchingOut(false);
+                  }
+                }}
+                className="px-5 py-3 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2 text-white bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 shadow-lg shadow-rose-600/30 active:scale-95 disabled:opacity-50"
+              >
+                <Clock className="w-4 h-4" />
+                <span>{isPunchingOut ? 'Punching Out...' : 'Punch Out (End Shift)'}</span>
+              </button>
+              {todayRecord.regularizationStatus === 'none' && (
+                <button
+                  onClick={() => onRequestRegularization(todayRecord.id)}
+                  className="inline-flex items-center justify-center space-x-1 text-xs text-cyan-400 hover:underline px-2 py-1"
+                >
+                  <FileEdit className="w-3.5 h-3.5" />
+                  <span>Regularize</span>
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col sm:items-end space-y-1.5 w-full sm:w-auto">
-              <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-bold">
+              <div className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-500/15 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-bold shadow-xs">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Marked Present for Today</span>
+                <span>✓ Shift Completed Today</span>
               </div>
               {todayRecord.regularizationStatus === 'none' && (
                 <button

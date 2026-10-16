@@ -18,6 +18,8 @@ import {
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
+import * as ImagePicker from 'expo-image-picker';
+import { decode } from 'base64-arraybuffer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -102,14 +104,37 @@ function getISTTimeString(dateObj = new Date()): string {
 function formatDisplayDate(dateStr?: string): string {
   if (!dateStr) return 'Not Set';
   try {
-    const parts = dateStr.split('-');
-    if (parts.length === 3) {
-      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const raw = String(dateStr).trim();
+    // 1. Direct standard date parse
+    const directDate = new Date(raw);
+    if (!isNaN(directDate.getTime())) {
+      const res = directDate.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata'
+      });
+      if (res && res !== 'Invalid Date') return res;
     }
-    return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    // 2. Fallback: extract YYYY-MM-DD segment
+    const dateOnly = raw.split('T')[0].split(' ')[0];
+    const parts = dateOnly.split('-');
+    if (parts.length === 3) {
+      const y = Number(parts[0]);
+      const m = Number(parts[1]) - 1;
+      const d = Number(parts[2]);
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        const parsed = new Date(y, m, d);
+        if (!isNaN(parsed.getTime())) {
+          const res = parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+          if (res && res !== 'Invalid Date') return res;
+        }
+      }
+    }
+    return raw;
   } catch {
-    return dateStr;
+    return String(dateStr);
   }
 }
 
@@ -257,6 +282,7 @@ export default function App() {
   const [editPhone, setEditPhone] = useState('');
   const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   // Add Employee Modal (HR / Superadmin / Owner)
   const [isAddEmpModal, setIsAddEmpModal] = useState(false);
@@ -448,6 +474,18 @@ export default function App() {
               if (prev.some((m) => m.id === payload.new.id)) return prev;
               return [...prev, payload.new];
             });
+
+            // Send push/device notification if message is from a team member
+            if (payload.new.sender_id && userProfile?.id && payload.new.sender_id !== userProfile.id) {
+              const senderTitle = payload.new.channel_id
+                ? `💬 #${payload.new.channel_id} • ${payload.new.sender_name || 'Team Member'}`
+                : `💬 Direct Message • ${payload.new.sender_name || 'Team Member'}`;
+              sendDeviceNotification(
+                senderTitle,
+                payload.new.message || 'Sent an attachment',
+                'chat-alerts'
+              );
+            }
           }
         }
       )
@@ -741,8 +779,8 @@ export default function App() {
           setCheckInTime(t);
         } else if (todayRecord.check_out_time) {
           setIsCheckedIn(false);
-          const t = new Date(todayRecord.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          setCheckInTime(`Punched out (${t})`);
+          const outT = formatISTTimeOnly(todayRecord.check_out_time);
+          setCheckInTime(`Shift Completed • Out at ${outT} IST (${todayRecord.total_hours || 8} hrs)`);
         }
       } else {
         setIsCheckedIn(false);
@@ -787,6 +825,14 @@ export default function App() {
           importance: Notifications.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#10b981',
+          sound: 'default'
+        });
+
+        await Notifications.setNotificationChannelAsync('chat-alerts', {
+          name: 'Team Chat & Direct Messages',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 200, 100, 200],
+          lightColor: '#38bdf8',
           sound: 'default'
         });
       }
@@ -1009,6 +1055,15 @@ export default function App() {
     const shiftStartTotalMins = (startH || 9) * 60 + (startM || 30);
     const shiftEndTotalMins = (endH || 19) * 60 + (endM || 0);
 
+    // If already checked out for today, block further punch
+    if (todayAttendanceRecord?.check_out_time) {
+      Alert.alert(
+        'Shift Completed Today ✓',
+        `You have already punched out for today (${formatISTTimeOnly(todayAttendanceRecord.check_out_time)} IST).\nTotal logged: ${todayAttendanceRecord.total_hours || 8} hrs.\n\nIf you need to make changes, please use Attendance Regularization.`
+      );
+      return;
+    }
+
     // Punch IN
     if (!isCheckedIn) {
       if (currentTotalMins < (shiftStartTotalMins - 30)) {
@@ -1050,6 +1105,7 @@ export default function App() {
           setIsCheckedIn(true);
           setCheckInTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
           setTodayAttendanceRecord(newRecord);
+          setAttendanceRecords((prev) => [newRecord, ...prev.filter((a) => !(a.employee_id === userProfile.id && a.date === todayStr))]);
           setAttendanceAlertActive(false);
 
           sendDeviceNotification(
@@ -1070,45 +1126,71 @@ export default function App() {
         Alert.alert('Error', err?.message);
       }
     } else {
-      // Punch OUT
-      try {
-        const checkOutISO = new Date().toISOString();
-        let totalHours = 8;
-        if (todayAttendanceRecord?.check_in_time) {
-          const diffMs = new Date(checkOutISO).getTime() - new Date(todayAttendanceRecord.check_in_time).getTime();
-          totalHours = Math.max(0.5, Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10);
-        }
+      // Punch OUT with confirmation dialog
+      Alert.alert(
+        'Punch Out (End Shift)',
+        'Are you sure you want to end your shift for today? Total logged hours will be calculated.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Punch Out Now',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const checkOutISO = new Date().toISOString();
+                let totalHours = 8;
+                if (todayAttendanceRecord?.check_in_time) {
+                  const diffMs = new Date(checkOutISO).getTime() - new Date(todayAttendanceRecord.check_in_time).getTime();
+                  totalHours = Math.max(0.5, Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10);
+                }
 
-        const { error } = await supabaseClient
-          .from('attendance')
-          .update({
-            check_out_time: checkOutISO,
-            total_hours: totalHours
-          })
-          .eq('employee_id', userProfile.id)
-          .eq('date', todayStr);
+                const { error } = await supabaseClient
+                  .from('attendance')
+                  .update({
+                    check_out_time: checkOutISO,
+                    total_hours: totalHours
+                  })
+                  .eq('employee_id', userProfile.id)
+                  .eq('date', todayStr);
 
-        if (!error) {
-          setIsCheckedIn(false);
-          setCheckInTime(`Punched out (${nowTimeStr})`);
+                if (!error) {
+                  setIsCheckedIn(false);
+                  const updatedRec = {
+                    ...(todayAttendanceRecord || {}),
+                    check_out_time: checkOutISO,
+                    total_hours: totalHours
+                  };
+                  setTodayAttendanceRecord(updatedRec);
+                  setAttendanceRecords((prev) =>
+                    prev.map((a) =>
+                      a.employee_id === userProfile.id && a.date === todayStr
+                        ? { ...a, check_out_time: checkOutISO, total_hours: totalHours }
+                        : a
+                    )
+                  );
+                  setCheckInTime(`Punched out (${nowTimeStr})`);
 
-          sendDeviceNotification(
-            '🌙 Punch Out Recorded | Vedotrix Pulse',
-            `Checked out at ${nowTimeStr} IST. Total logged: ${totalHours} hrs.`,
-            'attendance-alerts'
-          );
+                  sendDeviceNotification(
+                    '🌙 Punch Out Recorded | Vedotrix Pulse',
+                    `Checked out at ${nowTimeStr} IST. Total logged: ${totalHours} hrs.`,
+                    'attendance-alerts'
+                  );
 
-          Alert.alert(
-            'Punch Out Recorded 🏁',
-            `Daily attendance completed. Logged: ${totalHours} hours.`
-          );
-          refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
-        } else {
-          Alert.alert('Error', error.message);
-        }
-      } catch (err: any) {
-        Alert.alert('Error', err?.message);
-      }
+                  Alert.alert(
+                    'Punch Out Recorded 🏁',
+                    `Daily attendance completed. Logged: ${totalHours} hours. Have a great evening!`
+                  );
+                  refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
+                } else {
+                  Alert.alert('Error', error.message);
+                }
+              } catch (err: any) {
+                Alert.alert('Error', err?.message);
+              }
+            }
+          }
+        ]
+      );
     }
   };
 
@@ -1718,6 +1800,116 @@ export default function App() {
     setVerifyResult(found || 'NOT_FOUND');
   };
 
+  // Preset Corporate Avatars (one-tap instant select)
+  const PRESET_AVATARS = [
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=faces',
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop&crop=faces',
+    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop&crop=faces',
+    'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&fit=crop&crop=faces',
+    'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=200&h=200&fit=crop&crop=faces',
+    'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=200&h=200&fit=crop&crop=faces'
+  ];
+
+  // Upload Profile Photo to Supabase Storage
+  const uploadProfilePhoto = async (asset: ImagePicker.ImagePickerAsset) => {
+    if (!supabaseClient || !userProfile) return;
+    setIsUploadingPhoto(true);
+    try {
+      if (!asset.base64) {
+        Alert.alert('Upload Error', 'Could not process image base64 data.');
+        return;
+      }
+
+      const filePath = `avatar_${userProfile.id}.jpg`;
+      const arrayBuffer = decode(asset.base64);
+
+      // Upload to Supabase Storage bucket 'avatars'
+      const { error: uploadError } = await supabaseClient.storage
+        .from('avatars')
+        .upload(filePath, arrayBuffer, {
+          contentType: 'image/jpeg',
+          upsert: true
+        });
+
+      if (uploadError) {
+        Alert.alert('Upload Issue', uploadError.message);
+        return;
+      }
+
+      const { data: publicData } = supabaseClient.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const cdnUrl = `${publicData.publicUrl}?t=${Date.now()}`;
+
+      // Update profiles table
+      const { error: dbError } = await supabaseClient
+        .from('profiles')
+        .update({ avatar_url: cdnUrl })
+        .eq('id', userProfile.id);
+
+      if (dbError) {
+        Alert.alert('Database Sync Error', dbError.message);
+        return;
+      }
+
+      const updated = { ...userProfile, avatar_url: cdnUrl };
+      setUserProfile(updated);
+      setEditAvatarUrl(cdnUrl);
+      setTeamProfiles((prev) => prev.map((p) => p.id === userProfile.id ? { ...p, avatar_url: cdnUrl } : p));
+      await AsyncStorage.setItem('@vdx_user_profile', JSON.stringify(updated));
+
+      Alert.alert('Profile Photo Updated ✅', 'Your new profile picture is now live across Vedotrix Pulse!');
+    } catch (err: any) {
+      Alert.alert('Upload Error', err?.message || 'Failed to upload photo.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
+  const pickImageFromGallery = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Please grant photo gallery permission in your device settings.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+        base64: true
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await uploadProfilePhoto(result.assets[0]);
+      }
+    } catch (e: any) {
+      Alert.alert('Gallery Error', e?.message || 'Could not access gallery.');
+    }
+  };
+
+  const takePhotoWithCamera = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Please grant camera permission in your device settings.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+        base64: true
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await uploadProfilePhoto(result.assets[0]);
+      }
+    } catch (e: any) {
+      Alert.alert('Camera Error', e?.message || 'Could not access camera.');
+    }
+  };
+
   // Update Profile
   const handleSaveProfile = async () => {
     if (!supabaseClient || !userProfile) return;
@@ -1736,8 +1928,9 @@ export default function App() {
       if (!error) {
         const updated = { ...userProfile, ...updates };
         setUserProfile(updated);
+        setTeamProfiles((prev) => prev.map((p) => p.id === userProfile.id ? { ...p, ...updates } : p));
         await AsyncStorage.setItem('@vdx_user_profile', JSON.stringify(updated));
-        Alert.alert('Profile Updated ✅', 'Your contact details have been updated.');
+        Alert.alert('Profile Updated ✅', 'Your contact details and avatar have been saved.');
         setIsEditProfileModal(false);
       } else {
         Alert.alert('Error', error.message);
@@ -2219,11 +2412,22 @@ export default function App() {
               </View>
 
               <TouchableOpacity
-                style={[styles.punchButton, isCheckedIn ? styles.punchButtonOut : styles.punchButtonIn]}
+                style={[
+                  styles.punchButton,
+                  todayAttendanceRecord?.check_out_time
+                    ? { backgroundColor: '#059669' }
+                    : isCheckedIn
+                    ? styles.punchButtonOut
+                    : styles.punchButtonIn
+                ]}
                 onPress={handlePunchToggle}
               >
                 <Text style={styles.punchButtonText}>
-                  {isCheckedIn ? 'PUNCH OUT (END SHIFT)' : 'PUNCH IN (CHECK-IN)'}
+                  {todayAttendanceRecord?.check_out_time
+                    ? '✓ SHIFT COMPLETED TODAY'
+                    : isCheckedIn
+                    ? 'PUNCH OUT (END SHIFT)'
+                    : 'PUNCH IN (CHECK-IN)'}
                 </Text>
                 {checkInTime && (
                   <Text style={styles.punchTimeText}>{checkInTime}</Text>
@@ -2319,6 +2523,81 @@ export default function App() {
               </View>
             </View>
 
+            {/* 📹 TODAY'S SCHEDULED MEETINGS (DASHBOARD FIRST PAGE) */}
+            {(() => {
+              const todayMeetings = meetings.filter((m) => m.date === todayStr);
+              return (
+                <View style={styles.card}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 16 }}>📹</Text>
+                      <Text style={styles.cardTitle}>Today's Meetings ({todayMeetings.length})</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      {canApprove && (
+                        <TouchableOpacity
+                          style={styles.smallAddBtn}
+                          onPress={() => setIsMeetingModal(true)}
+                        >
+                          <Text style={styles.smallAddBtnText}>+ Schedule</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        onPress={() => {
+                          setActiveTab('notices');
+                          setNoticesSubTab('meetings');
+                        }}
+                      >
+                        <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>All Meetings →</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <Text style={styles.cardDesc}>Video calls, syncs & daily standups scheduled for today</Text>
+
+                  {todayMeetings.length === 0 ? (
+                    <View style={{ paddingVertical: 14, alignItems: 'center', backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc', borderRadius: 12, marginTop: 6, borderWidth: 1, borderColor: isDarkMode ? '#1e293b' : '#e2e8f0' }}>
+                      <Text style={{ fontSize: 20, marginBottom: 4 }}>🗓️</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>No meetings scheduled for today</Text>
+                      <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Your calendar is clear to focus on work</Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 8, marginTop: 6 }}>
+                      {todayMeetings.map((m) => {
+                        const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
+                        return (
+                          <View key={m.id} style={[styles.meetingCard, { marginVertical: 0 }]}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <View style={{ flex: 1, paddingRight: 8 }}>
+                                <Text style={styles.meetingTitle}>{m.title}</Text>
+                                <Text style={styles.meetingMeta}>
+                                  ⏰ {m.start_time || m.startTime} - {m.end_time || m.endTime || '1 hr'} IST
+                                </Text>
+                                <Text style={styles.meetingHost}>
+                                  Host: <Text style={{ color: '#38bdf8' }}>{m.organizer_name || 'Organizer'}</Text> • Dept: {m.department || 'All'}
+                                </Text>
+                              </View>
+                              <View style={[styles.meetingStatusBadge, m.status === 'completed' ? styles.statusCompleted : styles.statusScheduled]}>
+                                <Text style={styles.meetingStatusText}>{m.status?.toUpperCase() || 'TODAY'}</Text>
+                              </View>
+                            </View>
+
+                            <View style={[styles.meetingActionsRow, { marginTop: 8 }]}>
+                              <TouchableOpacity
+                                style={styles.joinMeetBtn}
+                                onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Link Error', 'Could not open URL: ' + meetUrl))}
+                              >
+                                <Text style={styles.joinMeetBtnText}>🎥 Join Video Call</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
             {/* 📢 FEATURED COMPANY NOTICES & BROADCASTS DIRECTLY ON FIRST PAGE */}
             <View style={styles.card}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2361,7 +2640,7 @@ export default function App() {
                           </View>
                           <Text style={styles.noticeCategoryText}>• {notice.category?.toUpperCase() || 'GENERAL'}</Text>
                         </View>
-                        <Text style={styles.noticeDateText}>{formatDisplayDate(notice.date)}</Text>
+                        <Text style={styles.noticeDateText}>{formatDisplayDate(notice.date || notice.created_at)}</Text>
                       </View>
 
                       <Text style={styles.noticeTitleCompact} numberOfLines={1}>
@@ -2505,18 +2784,33 @@ export default function App() {
                   {/* Teammate DM Pills */}
                   {teamProfiles.filter((p) => p.id !== userProfile?.id).map((member) => {
                     const isSelected = chatRecipient?.id === member.id;
+                    const hasValidAvatar = member.avatar_url && (member.avatar_url.startsWith('http') || member.avatar_url.startsWith('data:image'));
                     return (
                       <TouchableOpacity
                         key={member.id}
-                        style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive]}
+                        style={[
+                          styles.chatChannelPill,
+                          isSelected && styles.chatChannelPillActive,
+                          { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8 }
+                        ]}
                         onPress={() => {
                           setChatRecipient(member);
                         }}
                         onLongPress={() => setInspectedUserProfile(member)}
                       >
+                        <View style={{ width: 18, height: 18, borderRadius: 9, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
+                          {hasValidAvatar ? (
+                            <Image source={{ uri: member.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                          ) : (
+                            <Text style={{ color: '#fff', fontSize: 9, fontWeight: 'bold' }}>
+                              {(member.first_name?.[0] || 'U').toUpperCase()}
+                            </Text>
+                          )}
+                        </View>
                         <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
                           @{member.first_name}
                         </Text>
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981' }} />
                       </TouchableOpacity>
                     );
                   })}
@@ -2526,20 +2820,35 @@ export default function App() {
               {/* Active Header Information */}
               <View style={styles.chatActiveHeaderBox}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={styles.chatActiveHeaderTitle}>
-                    {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : `# ${activeChatChannel}`}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    {chatRecipient && (
+                      <View style={{ width: 36, height: 36, borderRadius: 18, overflow: 'hidden', backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center' }}>
+                        {chatRecipient.avatar_url && (chatRecipient.avatar_url.startsWith('http') || chatRecipient.avatar_url.startsWith('data:image')) ? (
+                          <Image source={{ uri: chatRecipient.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                        ) : (
+                          <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold' }}>
+                            {((chatRecipient.first_name?.[0] || 'U') + (chatRecipient.last_name?.[0] || '')).toUpperCase()}
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.chatActiveHeaderTitle}>
+                        {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : `# ${activeChatChannel}`}
+                      </Text>
+                      <Text style={styles.chatActiveHeaderSub}>
+                        {chatRecipient
+                          ? `${chatRecipient.designation || 'Staff'} • ${chatRecipient.department || 'Operations'}`
+                          : activeChanObj?.description || 'Workspace discussion channel'}
+                      </Text>
+                    </View>
+                  </View>
                   {chatRecipient && (
                     <TouchableOpacity onPress={() => setInspectedUserProfile(chatRecipient)}>
                       <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>Profile ↗</Text>
                     </TouchableOpacity>
                   )}
                 </View>
-                <Text style={styles.chatActiveHeaderSub}>
-                  {chatRecipient
-                    ? `${chatRecipient.designation || 'Staff'} • ${chatRecipient.department || 'Operations'}`
-                    : activeChanObj?.description || 'Workspace discussion channel'}
-                </Text>
               </View>
             </View>
 
@@ -2564,21 +2873,34 @@ export default function App() {
                       (new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000);
                     const senderProfile = teamProfiles.find((p) => p.id === msg.sender_id) || (isMe ? userProfile : null);
 
+                    const effectiveAvatar = (senderProfile?.avatar_url && (senderProfile.avatar_url.startsWith('http') || senderProfile.avatar_url.startsWith('data:image')))
+                      ? senderProfile.avatar_url
+                      : (msg.sender_avatar && (msg.sender_avatar.startsWith('http') || msg.sender_avatar.startsWith('data:image')))
+                        ? msg.sender_avatar
+                        : null;
+                    const initials = ((senderProfile?.first_name?.[0] || msg.sender_name?.[0] || 'U') + (senderProfile?.last_name?.[0] || '')).toUpperCase();
+
                     return (
                       <View key={msg.id || index} style={[styles.chatMessageRow, isMe && styles.chatMessageRowMe]}>
-                        {!isGrouped && !isMe && (
-                          <TouchableOpacity
-                            style={styles.chatAvatar}
-                            onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
-                          >
-                            {msg.sender_avatar ? (
-                              <Image source={{ uri: msg.sender_avatar }} style={{ width: '100%', height: '100%', borderRadius: 14 }} />
+                        {!isMe && (
+                          <View style={{ width: 32, marginRight: 8, alignItems: 'center' }}>
+                            {!isGrouped ? (
+                              <TouchableOpacity
+                                style={{ width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' }}
+                                onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
+                              >
+                                {effectiveAvatar ? (
+                                  <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
+                                ) : (
+                                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                                    {initials}
+                                  </Text>
+                                )}
+                              </TouchableOpacity>
                             ) : (
-                              <Text style={styles.chatAvatarText}>
-                                {(msg.sender_name?.[0] || 'U').toUpperCase()}
-                              </Text>
+                              <View style={{ width: 30 }} />
                             )}
-                          </TouchableOpacity>
+                          </View>
                         )}
 
                         <View style={{ flex: 1, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
@@ -2606,6 +2928,27 @@ export default function App() {
                             </Text>
                           </View>
                         </View>
+
+                        {isMe && (
+                          <View style={{ width: 32, marginLeft: 8, alignItems: 'center' }}>
+                            {!isGrouped ? (
+                              <TouchableOpacity
+                                style={{ width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center' }}
+                                onPress={() => userProfile && setInspectedUserProfile(userProfile)}
+                              >
+                                {effectiveAvatar ? (
+                                  <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
+                                ) : (
+                                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                                    {initials}
+                                  </Text>
+                                )}
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={{ width: 30 }} />
+                            )}
+                          </View>
+                        )}
                       </View>
                     );
                   })}
@@ -4289,43 +4632,106 @@ export default function App() {
       {/* ========================================================================= */}
       <Modal visible={isEditProfileModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Edit Profile Information</Text>
-            <Text style={styles.modalSub}>Update your phone and avatar</Text>
+          <View style={[styles.modalCard, { maxHeight: '90%' }]}>
+            <Text style={styles.modalTitle}>Edit Profile & Photo</Text>
+            <Text style={styles.modalSub}>Update your picture, contact & corporate avatar</Text>
 
-            <Text style={styles.inputLabel}>Mobile Phone Number</Text>
-            <TextInput
-              style={styles.textInput}
-              value={editPhone}
-              onChangeText={setEditPhone}
-              placeholder="+91 9876543210"
-              placeholderTextColor="#64748b"
-              keyboardType="phone-pad"
-            />
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', marginTop: 8 }}>
+              {/* Avatar Preview */}
+              <View style={{ alignItems: 'center', marginVertical: 8 }}>
+                <View style={{ width: 84, height: 84, borderRadius: 42, overflow: 'hidden', borderWidth: 3, borderColor: '#3b82f6', backgroundColor: '#1e293b', alignItems: 'center', justifyContent: 'center' }}>
+                  {editAvatarUrl || userProfile?.avatar_url ? (
+                    <Image source={{ uri: editAvatarUrl || userProfile?.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                  ) : (
+                    <Text style={{ color: '#fff', fontSize: 28, fontWeight: 'bold' }}>
+                      {((userProfile?.first_name?.[0] || 'U') + (userProfile?.last_name?.[0] || '')).toUpperCase()}
+                    </Text>
+                  )}
+                </View>
 
-            <Text style={styles.inputLabel}>Profile Avatar Picture URL</Text>
-            <TextInput
-              style={styles.textInput}
-              value={editAvatarUrl}
-              onChangeText={setEditAvatarUrl}
-              placeholder="https://example.com/avatar.jpg"
-              placeholderTextColor="#64748b"
-              autoCapitalize="none"
-            />
+                {/* Camera / Gallery Upload Buttons */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <TouchableOpacity
+                    style={[styles.smallAddBtn, { backgroundColor: '#2563eb', paddingHorizontal: 12, paddingVertical: 8 }]}
+                    onPress={takePhotoWithCamera}
+                    disabled={isUploadingPhoto}
+                  >
+                    <Text style={[styles.smallAddBtnText, { fontSize: 12 }]}>
+                      {isUploadingPhoto ? 'Uploading...' : '📸 Take Photo'}
+                    </Text>
+                  </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.loginBtn, { marginTop: 14 }]}
-              onPress={handleSaveProfile}
-              disabled={isSavingProfile}
-            >
-              <Text style={styles.loginBtnText}>
-                {isSavingProfile ? 'Saving...' : 'Save Profile Changes'}
-              </Text>
-            </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.smallAddBtn, { backgroundColor: '#4f46e5', paddingHorizontal: 12, paddingVertical: 8 }]}
+                    onPress={pickImageFromGallery}
+                    disabled={isUploadingPhoto}
+                  >
+                    <Text style={[styles.smallAddBtnText, { fontSize: 12 }]}>
+                      {isUploadingPhoto ? 'Uploading...' : '🖼️ Gallery'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
 
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsEditProfileModal(false)}>
-              <Text style={styles.modalCloseBtnText}>Cancel</Text>
-            </TouchableOpacity>
+              {/* Preset 3D Corporate Avatars */}
+              <View style={{ marginVertical: 10 }}>
+                <Text style={[styles.inputLabel, { marginBottom: 6 }]}>Or Choose Corporate Avatar:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', gap: 8, paddingVertical: 4 }}>
+                    {PRESET_AVATARS.map((url, idx) => (
+                      <TouchableOpacity
+                        key={idx}
+                        onPress={() => setEditAvatarUrl(url)}
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 22,
+                          overflow: 'hidden',
+                          borderWidth: editAvatarUrl === url ? 3 : 1,
+                          borderColor: editAvatarUrl === url ? '#38bdf8' : '#475569'
+                        }}
+                      >
+                        <Image source={{ uri: url }} style={{ width: '100%', height: '100%' }} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+
+              <Text style={styles.inputLabel}>Mobile Phone Number</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editPhone}
+                onChangeText={setEditPhone}
+                placeholder="+91 9876543210"
+                placeholderTextColor="#64748b"
+                keyboardType="phone-pad"
+              />
+
+              <Text style={styles.inputLabel}>Custom Avatar Image URL (Optional)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editAvatarUrl}
+                onChangeText={setEditAvatarUrl}
+                placeholder="https://example.com/avatar.jpg"
+                placeholderTextColor="#64748b"
+                autoCapitalize="none"
+              />
+
+              <TouchableOpacity
+                style={[styles.loginBtn, { marginTop: 14 }]}
+                onPress={handleSaveProfile}
+                disabled={isSavingProfile || isUploadingPhoto}
+              >
+                <Text style={styles.loginBtnText}>
+                  {isSavingProfile ? 'Saving...' : 'Save Profile Changes'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsEditProfileModal(false)}>
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>

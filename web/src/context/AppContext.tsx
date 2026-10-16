@@ -114,6 +114,7 @@ interface AppContextType {
   
   // Actions: Attendance
   punchAttendance: (lat: number, long: number, isRemote?: boolean, distanceMeters?: number, officeAddress?: string) => { success: boolean; message: string; record?: AttendanceRecord };
+  punchOutAttendance: (lat?: number, long?: number) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   requestRegularization: (attendanceId: string, reason: string, targetDate?: string) => void;
   resolveRegularization: (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => void;
   getTodayAttendance: () => AttendanceRecord | undefined;
@@ -3151,11 +3152,83 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       addNotification('Attendance Recorded (Late Login)', `Recorded at ${resolvedAddress} (${formatISTTime(nowIso)} IST) - Late Login.`, 'attendance', 'attendance');
     } else {
-      addToast('Attendance Recorded 📍', `Verified at ${resolvedAddress} (${formatISTTime(nowIso)} IST). On time. Checkout not needed.`, 'success');
+      addToast('Attendance Recorded 📍', `Verified at ${resolvedAddress} (${formatISTTime(nowIso)} IST). On time. Have a productive shift!`, 'success');
       addNotification('Attendance Recorded 📍', `Punched in successfully at ${resolvedAddress} (${formatISTTime(nowIso)} IST)`, 'attendance', 'attendance');
     }
 
     return { success: true, message: 'Attendance recorded successfully', record: newRecord };
+  };
+
+  const punchOutAttendance = async (
+    lat?: number,
+    long?: number
+  ): Promise<{ success: boolean; message: string; record?: AttendanceRecord }> => {
+    if (!currentProfile) return { success: false, message: 'Not authenticated' };
+
+    const existing = getTodayAttendance();
+    if (!existing) {
+      addToast('No Active Punch ⚠️', 'You have not punched in today yet.', 'warning');
+      return { success: false, message: 'No active punch found for today' };
+    }
+
+    if (existing.checkOutTime) {
+      addToast(
+        'Already Punched Out ✓',
+        `You have already completed your shift today at ${formatISTTime(existing.checkOutTime)} IST.`,
+        'info'
+      );
+      return { success: true, message: 'Already punched out', record: existing };
+    }
+
+    const nowIso = new Date().toISOString();
+    let totalHours = 8;
+    if (existing.checkInTime) {
+      const diffMs = new Date(nowIso).getTime() - new Date(existing.checkInTime).getTime();
+      totalHours = Math.max(0.5, Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10);
+    }
+
+    const updatedRecord: AttendanceRecord = {
+      ...existing,
+      checkOutTime: nowIso,
+      checkOutLat: lat,
+      checkOutLong: long,
+      totalHours
+    };
+
+    setAttendanceRecords((prev) =>
+      prev.map((a) => (a.id === existing.id ? updatedRecord : a))
+    );
+
+    // Sync to Supabase
+    try {
+      const client = getSupabaseClient();
+      await client
+        .from('attendance')
+        .update({
+          check_out_time: nowIso,
+          check_out_lat: lat || null,
+          check_out_long: long || null,
+          total_hours: totalHours
+        })
+        .eq('id', existing.id);
+    } catch (err) {
+      console.error('Failed to sync punch out to Supabase:', err);
+    }
+
+    addToast(
+      'Punch Out Recorded 🏁',
+      `Shift completed at ${formatISTTime(nowIso)} IST. Total logged: ${totalHours} hrs. Great work today!`,
+      'success'
+    );
+
+    addNotification(
+      'Punch Out Recorded 🏁',
+      `${currentProfile.firstName} punched out at ${formatISTTime(nowIso)} IST (${totalHours} hrs logged).`,
+      'attendance',
+      'attendance'
+    );
+
+    return { success: true, message: 'Punch out recorded successfully', record: updatedRecord };
   };
 
   const requestRegularization = (attendanceId: string, reason: string, targetDate?: string) => {
@@ -4591,6 +4664,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         verifyOfferLetterByHr,
         getOfferBySerial,
         punchAttendance,
+        punchOutAttendance,
         requestRegularization,
         resolveRegularization,
         getTodayAttendance,
