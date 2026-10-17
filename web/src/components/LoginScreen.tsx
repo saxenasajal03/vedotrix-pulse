@@ -57,6 +57,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [showGoogleModal, setShowGoogleModal] = useState(false);
   const [googleEmail, setGoogleEmail] = useState('');
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [googleModalError, setGoogleModalError] = useState<string | null>(null);
 
   // Auto-detect organization silently from typed email (does NOT expose other tenants)
   const detectedOrg = useMemo(() => {
@@ -134,32 +135,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setIsLoading(false);
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = () => {
     setErrorMessage(null);
-
-    // 1. Try Supabase Native OAuth redirect first
-    try {
-      const { getSupabaseClient } = await import('../lib/supabaseClient');
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'select_account'
-          }
-        }
-      });
-      if (!error && data?.url) {
-        window.location.href = data.url;
-        return;
-      }
-    } catch (oauthErr) {
-      console.warn('Native Google OAuth redirect note, opening Google workspace prompt:', oauthErr);
-    }
-
-    // 2. Open Google registered work account verification modal
+    setGoogleModalError(null);
     setGoogleEmail(email.trim());
     setShowGoogleModal(true);
   };
@@ -169,6 +147,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     if (!googleEmail.trim()) return;
     setIsGoogleLoading(true);
     setErrorMessage(null);
+    setGoogleModalError(null);
 
     try {
       const result = await loginWithRegisteredEmail(googleEmail.trim(), 'Google');
@@ -176,11 +155,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         setShowGoogleModal(false);
         if (onLoginSuccess) onLoginSuccess();
       } else {
-        setErrorMessage(result.message);
+        setGoogleModalError(result.message);
         addToast('Google Sign-In Denied', result.message, 'error');
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Google authentication failed.');
+      const msg = err?.message || 'Google authentication failed.';
+      setGoogleModalError(msg);
+      setErrorMessage(msg);
     } finally {
       setIsGoogleLoading(false);
     }
@@ -748,18 +729,28 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               </p>
             </div>
 
+            {googleModalError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start space-x-2 animate-in fade-in duration-150">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
+                <span>{googleModalError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleGoogleEmailSubmit} className="space-y-4">
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">
-                  Google Work Email
+                  Registered Google Work Email
                 </label>
                 <input
                   type="email"
                   required
                   autoFocus
                   value={googleEmail}
-                  onChange={(e) => setGoogleEmail(e.target.value)}
-                  placeholder="name@company.com or your registered email"
+                  onChange={(e) => {
+                    setGoogleEmail(e.target.value);
+                    if (googleModalError) setGoogleModalError(null);
+                  }}
+                  placeholder="name@company.com or your work email"
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                 />
               </div>
