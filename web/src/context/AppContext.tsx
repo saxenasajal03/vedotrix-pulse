@@ -519,6 +519,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Listen for Supabase OAuth redirect sessions (e.g. Google Sign-In)
   useEffect(() => {
+    // Check for OAuth error in URL params or hash
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const errorMsg =
+        urlParams.get('error_description') ||
+        hashParams.get('error_description') ||
+        urlParams.get('error') ||
+        hashParams.get('error');
+
+      if (errorMsg) {
+        console.warn('OAuth redirect notice:', errorMsg);
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    } catch {}
+
     let authSub: any = null;
     try {
       const client = getSupabaseClient();

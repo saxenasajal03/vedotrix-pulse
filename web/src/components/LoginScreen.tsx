@@ -145,7 +145,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: window.location.origin + window.location.pathname,
           queryParams: {
             access_type: 'offline',
             prompt: 'select_account'
@@ -775,6 +775,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   <code className="mt-1 block p-1.5 bg-white border border-slate-200 rounded-lg text-[10px] text-blue-600 font-mono select-all break-all">
                     https://cqevzpvyqvckvenutuzz.supabase.co/auth/v1/callback
                   </code>
+                </li>
+                <li>
+                  In <span className="font-semibold text-slate-800">Supabase Dashboard → Authentication → URL Configuration</span>:
+                  <div className="mt-1 pl-2 border-l-2 border-blue-400 space-y-1 text-[11px]">
+                    <div>
+                      <span className="font-semibold text-slate-700">Site URL:</span>{' '}
+                      <code className="p-0.5 bg-white border border-slate-200 rounded text-blue-600 font-mono text-[10px]">
+                        {window.location.origin + window.location.pathname}
+                      </code>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-700">Redirect URLs:</span>{' '}
+                      <span className="text-slate-600">Add <code className="p-0.5 bg-white border border-slate-200 rounded text-blue-600 font-mono text-[10px]">{window.location.origin}/**</code></span>
+                    </div>
+                  </div>
                 </li>
               </ol>
             </div>
