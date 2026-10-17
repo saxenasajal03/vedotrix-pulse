@@ -51,6 +51,7 @@ export const EmployeesDirectory: React.FC = () => {
     deleteHoliday,
     createProfile,
     updateProfile,
+    updateUserPassword,
     updateEmployeeManager,
     createTask,
     isVedotrixSuperadmin,
@@ -97,6 +98,8 @@ export const EmployeesDirectory: React.FC = () => {
   const [editAccountNumber, setEditAccountNumber] = useState('');
   const [editIfscCode, setEditIfscCode] = useState('');
   const [editPfNumber, setEditPfNumber] = useState('');
+  const [editNewPassword, setEditNewPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const handleOpenEdit = (emp: Profile) => {
@@ -113,6 +116,7 @@ export const EmployeesDirectory: React.FC = () => {
     setEditAccountNumber(emp.accountNumber || '');
     setEditIfscCode(emp.ifscCode || '');
     setEditPfNumber(emp.pfNumber || '');
+    setEditNewPassword('');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -133,6 +137,9 @@ export const EmployeesDirectory: React.FC = () => {
       ifscCode: editIfscCode.trim().toUpperCase() || undefined,
       pfNumber: editPfNumber.trim().toUpperCase() || undefined
     });
+    if (editNewPassword.trim().length >= 6) {
+      await updateUserPassword(editingEmployee.id, editNewPassword.trim());
+    }
     setIsSavingEdit(false);
     setEditingEmployee(null);
   };
@@ -1397,6 +1404,44 @@ export const EmployeesDirectory: React.FC = () => {
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Reset Password by Superadmin / HR */}
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center space-x-1.5">
+                  <Key className="w-4 h-4 text-amber-600" />
+                  <span className="text-xs font-bold text-slate-900">
+                    Reset Employee Password (Superadmin / HR)
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Update employee's security credentials in Supabase. Minimum 6 characters.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    value={editNewPassword}
+                    onChange={(e) => setEditNewPassword(e.target.value)}
+                    placeholder="Enter new password (min. 6 chars)"
+                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={isResettingPassword || !editNewPassword.trim() || editNewPassword.trim().length < 6}
+                    onClick={async () => {
+                      if (!editingEmployee || editNewPassword.trim().length < 6) return;
+                      setIsResettingPassword(true);
+                      const res = await updateUserPassword(editingEmployee.id, editNewPassword.trim());
+                      setIsResettingPassword(false);
+                      if (res.success) {
+                        setEditNewPassword('');
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition shrink-0 shadow-xs"
+                  >
+                    {isResettingPassword ? 'Updating...' : 'Set Password'}
+                  </button>
                 </div>
               </div>
 

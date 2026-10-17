@@ -733,22 +733,22 @@ export const TeamChat: React.FC<TeamChatProps> = ({
       <div
         className={`${
           mobileScreen === 'sidebar' ? 'flex' : 'hidden md:flex'
-        } w-full md:w-72 lg:w-80 border-r border-[var(--border-color)] flex-col bg-[var(--bg-card-subtle)] shrink-0 h-full overflow-hidden`}
+        } w-full md:w-72 lg:w-80 border-r border-[#522653] flex-col bg-[#3F0E40] text-slate-100 shrink-0 h-full overflow-hidden`}
       >
         {/* Workspace Brand & Header */}
-        <div className="p-3.5 border-b border-[var(--border-color)] bg-[var(--bg-card)]/70">
+        <div className="p-3.5 border-b border-[#522653] bg-[#350d36]">
           <div className="flex items-center justify-between mb-2.5">
             <div className="flex items-center space-x-2 min-w-0">
               <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold shadow-xs shrink-0">
                 <MessageSquare className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <h2 className="text-xs font-bold text-[var(--text-primary)] tracking-tight truncate">
+                <h2 className="text-xs font-bold text-white tracking-tight truncate">
                   {currentOrg.name}
                 </h2>
                 <div className="flex items-center space-x-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] text-emerald-400 font-semibold">Realtime Connected</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-[10px] text-emerald-300 font-semibold">Realtime Connected</span>
                 </div>
               </div>
             </div>
@@ -766,20 +766,20 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 }
                 className={`relative p-1.5 rounded-lg border transition ${
                   notifPermission === 'granted'
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                     : notifPermission === 'denied'
-                    ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                    : 'bg-[var(--bg-card)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-blue-500'
+                    ? 'bg-red-500/20 border-red-500/40 text-red-300'
+                    : 'bg-[#522653] border-[#633064] text-[#BCABB6] hover:text-white'
                 }`}
               >
                 {notifPermission === 'granted' ? (
-                  <BellRing className="w-4 h-4 text-emerald-400" />
+                  <BellRing className="w-4 h-4 text-emerald-300" />
                 ) : notifPermission === 'denied' ? (
-                  <BellOff className="w-4 h-4 text-red-400" />
+                  <BellOff className="w-4 h-4 text-red-300" />
                 ) : (
                   <>
                     <Bell className="w-4 h-4" />
-                    <span className="absolute top-0 right-0 w-2 h-2 rounded-full bg-blue-500 animate-ping opacity-60" />
+                    <span className="absolute top-0 right-0 w-2 h-2 rounded-full bg-sky-400 animate-ping opacity-60" />
                   </>
                 )}
               </button>
@@ -790,7 +790,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   type="button"
                   onClick={onCloseWidget}
                   title="Close Team Chat and Return to Dashboard"
-                  className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 font-semibold text-xs transition shadow-xs"
+                  className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-semibold text-xs transition shadow-xs"
                 >
                   <X className="w-3.5 h-3.5" />
                   <span>Close</span>
@@ -801,14 +801,14 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
           {/* Quick Search Contacts */}
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-2.5 top-2.5" />
+            <Search className="w-3.5 h-3.5 text-[#AB9BA9] absolute left-2.5 top-2.5" />
             <input
               id="chat-contact-search"
               type="text"
               value={searchContact}
               onChange={(e) => setSearchContact(e.target.value)}
               placeholder="Search colleagues or channels to DM..."
-              className="w-full pl-8 pr-3 py-1.5 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+              className="w-full pl-8 pr-3 py-1.5 bg-[#522653] border border-[#633064] rounded-lg text-xs text-white placeholder-[#AB9BA9] focus:outline-none focus:ring-1 focus:ring-white/40 focus:bg-[#5C2B5D] transition"
             />
           </div>
         </div>
@@ -817,7 +817,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
         <div className="flex-1 overflow-y-auto p-2 space-y-3.5 text-xs">
           {/* Organization Channels */}
           <div>
-            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center justify-between group/sec">
+            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#BCABB6] flex items-center justify-between group/sec">
               <span className="flex items-center gap-1.5">
                 <ChevronDown className="w-3 h-3 opacity-60" />
                 Channels
@@ -827,7 +827,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   setIsPrivateChannel(false);
                   setIsCreateModalOpen(true);
                 }}
-                className="text-blue-500 hover:text-blue-400 flex items-center space-x-0.5 text-[10px] font-bold hover:underline opacity-0 group-hover/sec:opacity-100 transition-opacity"
+                className="text-[#BCABB6] hover:text-white flex items-center space-x-0.5 text-[10px] font-bold hover:underline opacity-0 group-hover/sec:opacity-100 transition-opacity"
               >
                 <Plus className="w-3 h-3" />
                 <span>New</span>
@@ -849,17 +849,17 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       isActive
                         ? isSupport
                           ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-[#1164A3] text-white shadow-xs'
                         : isSupport
-                        ? 'text-indigo-400 hover:bg-white/5 font-bold'
-                        : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+                        ? 'text-indigo-300 hover:bg-[#350d36] font-bold'
+                        : 'text-[#BCABB6] hover:bg-[#350d36] hover:text-white'
                     }`}
                   >
                     <div className="flex items-center space-x-2 truncate">
                       {isSupport ? (
-                        <Headphones className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-indigo-400'}`} />
+                        <Headphones className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-indigo-300'}`} />
                       ) : (
-                        <Hash className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-[var(--text-muted)]'}`} />
+                        <Hash className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-[#AB9BA9]'}`} />
                       )}
                       <span className="truncate">{ch.name}</span>
                       {isSupport && (
@@ -873,7 +873,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       )}
                     </div>
                     {unread > 0 && !isActive && (
-                      <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                      <span className="w-2 h-2 rounded-full bg-sky-400 shrink-0" />
                     )}
                   </button>
                 );
@@ -883,7 +883,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
 
           {/* Groups & Private Channels */}
           <div>
-            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center justify-between group/sec2">
+            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#BCABB6] flex items-center justify-between group/sec2">
               <span className="flex items-center gap-1.5">
                 <ChevronDown className="w-3 h-3 opacity-60" />
                 Private Groups
@@ -893,7 +893,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                   setIsPrivateChannel(true);
                   setIsCreateModalOpen(true);
                 }}
-                className="text-amber-500 hover:text-amber-400 flex items-center space-x-0.5 text-[10px] font-bold hover:underline opacity-0 group-hover/sec2:opacity-100 transition-opacity"
+                className="text-[#BCABB6] hover:text-white flex items-center space-x-0.5 text-[10px] font-bold hover:underline opacity-0 group-hover/sec2:opacity-100 transition-opacity"
               >
                 <Plus className="w-3 h-3" />
                 <span>Group</span>
@@ -901,7 +901,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
             </div>
             <div className="space-y-0.5 mt-1">
               {privateGroupChannels.length === 0 ? (
-                <div className="px-3 py-2 text-[11px] text-[var(--text-muted)] italic">
+                <div className="px-3 py-2 text-[11px] text-[#AB9BA9] italic">
                   No private groups created yet.
                 </div>
               ) : (
@@ -913,20 +913,20 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       key={ch.id}
                       className={`group flex items-center justify-between px-3 py-1.5 rounded-md text-xs font-semibold transition ${
                         isActive
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+                          ? 'bg-[#1164A3] text-white shadow-xs'
+                          : 'text-[#BCABB6] hover:bg-[#350d36] hover:text-white'
                       }`}
                     >
                       <button
                         onClick={() => handleSelectChannel(ch.id)}
                         className="flex items-center space-x-2 truncate flex-1 text-left"
                       >
-                        <Lock className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-amber-500'}`} />
+                        <Lock className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-amber-400'}`} />
                         <span className="truncate">{ch.name}</span>
                         {ch.memberIds && (
                           <span
                             className={`text-[9px] px-1 rounded shrink-0 ${
-                              isActive ? 'bg-white/20 text-white' : 'bg-[var(--bg-card)] text-[var(--text-muted)]'
+                              isActive ? 'bg-white/20 text-white' : 'bg-[#522653] text-[#BCABB6]'
                             }`}
                           >
                             {ch.memberIds.length}
@@ -940,15 +940,15 @@ export const TeamChat: React.FC<TeamChatProps> = ({
             </div>
           </div>
 
-          {/* Direct Messages with Colleagues (Slack Style) */}
+          {/* Direct Messages with Colleagues */}
           <div>
-            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center justify-between group/sec3">
+            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#BCABB6] flex items-center justify-between group/sec3">
               <span className="flex items-center gap-1.5">
                 <ChevronDown className="w-3 h-3 opacity-60" />
                 Direct Messages
               </span>
               <div className="flex items-center space-x-1.5">
-                <span className="text-[9px] font-semibold text-[var(--text-muted)]">{displayedColleagues.length}</span>
+                <span className="text-[9px] font-semibold text-[#AB9BA9]">{displayedColleagues.length}</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -959,7 +959,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                     }
                   }}
                   title="New Direct Message"
-                  className="text-blue-500 hover:text-blue-400 p-0.5 rounded hover:bg-[var(--bg-card)] transition flex items-center space-x-0.5 text-[10px] font-bold hover:underline opacity-0 group-hover/sec3:opacity-100 transition-opacity"
+                  className="text-[#BCABB6] hover:text-white p-0.5 rounded hover:bg-[#522653] transition flex items-center space-x-0.5 text-[10px] font-bold hover:underline opacity-0 group-hover/sec3:opacity-100 transition-opacity"
                 >
                   <Plus className="w-3 h-3" />
                   <span>New</span>
@@ -968,8 +968,8 @@ export const TeamChat: React.FC<TeamChatProps> = ({
             </div>
             <div className="space-y-0.5 mt-1">
               {displayedColleagues.length === 0 ? (
-                <div className="px-3 py-3 text-center bg-[var(--bg-card)]/50 rounded-xl border border-dashed border-[var(--border-color)]">
-                  <p className="text-[11px] text-[var(--text-muted)] font-medium">
+                <div className="px-3 py-3 text-center bg-[#350d36]/60 rounded-xl border border-dashed border-[#522653]">
+                  <p className="text-[11px] text-[#AB9BA9] font-medium">
                     {searchContact.trim()
                       ? 'No matching colleagues found.'
                       : 'No direct conversations yet.'}
@@ -984,7 +984,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                           searchInput.scrollIntoView({ behavior: 'smooth' });
                         }
                       }}
-                      className="mt-1 text-[10px] text-blue-500 hover:underline font-bold"
+                      className="mt-1 text-[10px] text-sky-400 hover:underline font-bold"
                     >
                       + Search colleague to DM
                     </button>
@@ -1005,8 +1005,8 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                       onClick={() => handleSelectDm(colleague)}
                       className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs font-semibold transition text-left ${
                         isActive
-                          ? 'bg-blue-600 text-white shadow-xs'
-                          : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+                          ? 'bg-[#1164A3] text-white shadow-xs'
+                          : 'text-[#BCABB6] hover:bg-[#350d36] hover:text-white'
                       }`}
                     >
                       <div className="flex items-center space-x-2 truncate">
@@ -1025,13 +1025,13 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                               className={`w-6 h-6 rounded-full text-[10px] font-bold flex items-center justify-center select-none ${
                                 isActive
                                   ? 'bg-white/20 text-white'
-                                  : 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-color)]'
+                                  : 'bg-[#522653] text-[#BCABB6] border border-[#633064]'
                               }`}
                             >
                               {colleague.firstName[0]}
                             </div>
                           )}
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 absolute bottom-0 right-0 border-2 border-[var(--bg-card)]" />
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 absolute bottom-0 right-0 border-2 border-[#3F0E40]" />
                         </div>
                         <div className="truncate">
                           <span className="block truncate font-medium text-xs">
@@ -1039,7 +1039,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                           </span>
                           <span
                             className={`block text-[9px] truncate ${
-                              isActive ? 'text-blue-100' : 'text-[var(--text-muted)]'
+                              isActive ? 'text-sky-200' : 'text-[#AB9BA9]'
                             }`}
                           >
                             {colleague.designation || colleague.department || 'Team Member'}
@@ -1047,7 +1047,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                         </div>
                       </div>
                       {unread > 0 && !isActive && (
-                        <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[9px] font-bold shrink-0">
+                        <span className="px-1.5 py-0.2 rounded-full bg-sky-500 text-white text-[9px] font-bold shrink-0">
                           {unread}
                         </span>
                       )}
@@ -1062,7 +1062,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
         {/* Current User Footnote (Clickable to view/edit profile & photo) */}
         <div
           onClick={() => handleOpenProfile(currentProfile)}
-          className="p-3 border-t border-[var(--border-color)] bg-[var(--bg-card)] flex items-center justify-between shrink-0 cursor-pointer hover:bg-[var(--bg-card-subtle)] transition group/foot"
+          className="p-3 border-t border-[#522653] bg-[#350d36] flex items-center justify-between shrink-0 cursor-pointer hover:bg-[#2c0a2d] transition group/foot"
           title="Click to view and edit your profile / photo"
         >
           <div className="flex items-center space-x-2 truncate">
@@ -1073,23 +1073,23 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = 'none';
                 }}
-                className="w-7 h-7 rounded-full object-cover object-center aspect-square shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition"
+                className="w-7 h-7 rounded-full object-cover object-center aspect-square shrink-0 border border-white/20 group-hover/foot:ring-2 group-hover/foot:ring-sky-400 transition"
               />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-500 font-bold text-xs flex items-center justify-center shrink-0 border border-blue-500/30 group-hover/foot:ring-2 group-hover/foot:ring-blue-400 transition select-none">
+              <div className="w-7 h-7 rounded-full bg-white/10 text-white font-bold text-xs flex items-center justify-center shrink-0 border border-white/20 group-hover/foot:ring-2 group-hover/foot:ring-sky-400 transition select-none">
                 {currentProfile.firstName[0]}
               </div>
             )}
             <div className="truncate">
-              <span className="text-xs font-bold text-[var(--text-primary)] block truncate group-hover/foot:text-blue-500 transition">
+              <span className="text-xs font-bold text-white block truncate group-hover/foot:text-sky-300 transition">
                 {currentProfile.firstName} {currentProfile.lastName}
               </span>
-              <span className="text-[10px] text-[var(--text-muted)] font-medium block uppercase tracking-wide truncate">
+              <span className="text-[10px] text-[#BCABB6] font-medium block uppercase tracking-wide truncate">
                 {currentProfile.designation || currentProfile.department || 'Staff'}
               </span>
             </div>
           </div>
-          <span className="text-[10px] font-semibold text-blue-500 opacity-0 group-hover/foot:opacity-100 transition shrink-0">
+          <span className="text-[10px] font-semibold text-sky-300 opacity-0 group-hover/foot:opacity-100 transition shrink-0">
             Edit
           </span>
         </div>

@@ -21,6 +21,7 @@ import * as Updates from 'expo-updates';
 import { decode } from 'base64-arraybuffer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import bcrypt from 'bcryptjs';
 
 // Safely load expo-image-picker to prevent native module crashes on older APK builds
 let SafeImagePicker: any = null;
@@ -404,7 +405,15 @@ export default function App() {
   const [editEmpDesig, setEditEmpDesig] = useState('');
   const [editEmpDept, setEditEmpDept] = useState('');
   const [editEmpJoining, setEditEmpJoining] = useState('');
+  const [editEmpPasswordReset, setEditEmpPasswordReset] = useState('');
   const [isSavingEmpRecord, setIsSavingEmpRecord] = useState(false);
+
+  // User Self Password Management Modal
+  const [isChangePasswordModal, setIsChangePasswordModal] = useState(false);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [showPasswordText, setShowPasswordText] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
   // Organization Settings Management Modal (HR / Superadmin)
   const [isOrgSettingsModal, setIsOrgSettingsModal] = useState(false);
@@ -2318,6 +2327,40 @@ export default function App() {
 
   const promptChangeProfilePhoto = () => {
     setIsPhotoPickerModalOpen(true);
+  };
+
+  const updateUserPassword = async (targetProfileId: string, newPass: string): Promise<boolean> => {
+    if (!newPass || newPass.trim().length < 6) {
+      Alert.alert('Too Short', 'Password must be at least 6 characters long.');
+      return false;
+    }
+    if (!supabaseClient) {
+      Alert.alert('Error', 'Database connection not initialized.');
+      return false;
+    }
+
+    try {
+      let hash = bcrypt.hashSync(newPass.trim(), 10);
+      if (hash.startsWith('$2b$')) {
+        hash = '$2a$' + hash.slice(4);
+      }
+
+      const { error } = await supabaseClient
+        .from('profiles')
+        .update({ password_hash: hash })
+        .eq('id', targetProfileId);
+
+      if (error) {
+        Alert.alert('Password Update Error', error.message);
+        return false;
+      }
+
+      Alert.alert('Password Updated 🔐', 'Password updated and securely synced with database.');
+      return true;
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to update password.');
+      return false;
+    }
   };
 
   const pickAndSendChatPhoto = async (fromCamera: boolean) => {
@@ -5077,7 +5120,7 @@ export default function App() {
                       style={[styles.editProfileBtn, { flex: 1, backgroundColor: '#2563eb', borderColor: '#3b82f6' }]}
                       onPress={promptChangeProfilePhoto}
                     >
-                      <Text style={[styles.editProfileBtnText, { color: '#ffffff' }]}>📷 Change Photo</Text>
+                      <Text style={[styles.editProfileBtnText, { color: '#ffffff' }]}>📷 Photo</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -5088,7 +5131,19 @@ export default function App() {
                         setIsEditProfileModal(true);
                       }}
                     >
-                      <Text style={styles.editProfileBtnText}>✏️ Edit Profile</Text>
+                      <Text style={styles.editProfileBtnText}>✏️ Edit</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.editProfileBtn, { flex: 1.2, backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', borderColor: '#f59e0b' }]}
+                      onPress={() => {
+                        setNewPasswordInput('');
+                        setConfirmPasswordInput('');
+                        setShowPasswordText(false);
+                        setIsChangePasswordModal(true);
+                      }}
+                    >
+                      <Text style={[styles.editProfileBtnText, { color: '#f59e0b' }]}>🔐 Password</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -6566,6 +6621,7 @@ export default function App() {
                           setEditEmpDesig(inspectedUserProfile.designation || '');
                           setEditEmpDept(inspectedUserProfile.department || '');
                           setEditEmpJoining(inspectedUserProfile.joining_date || '');
+                          setEditEmpPasswordReset('');
                           setIsEditEmployeeModal(true);
                         }}
                       >
@@ -6956,11 +7012,25 @@ export default function App() {
                 placeholderTextColor="#64748b"
               />
 
+              <Text style={styles.inputLabel}>Reset Password (Superadmin / HR)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editEmpPasswordReset}
+                onChangeText={setEditEmpPasswordReset}
+                placeholder="Leave blank to keep existing password"
+                placeholderTextColor="#64748b"
+                secureTextEntry
+              />
+
               <TouchableOpacity
                 style={[styles.loginBtn, { marginTop: 14 }]}
                 disabled={isSavingEmpRecord}
                 onPress={async () => {
                   if (!supabaseClient || !inspectedUserProfile) return;
+                  if (editEmpPasswordReset.trim() && editEmpPasswordReset.trim().length < 6) {
+                    Alert.alert('Too Short', 'New password must be at least 6 characters long.');
+                    return;
+                  }
                   setIsSavingEmpRecord(true);
                   try {
                     const updates: any = {
@@ -6970,6 +7040,11 @@ export default function App() {
                     };
                     if (editEmpJoining.trim()) {
                       updates.joining_date = editEmpJoining.trim();
+                    }
+                    if (editEmpPasswordReset.trim()) {
+                      let hash = bcrypt.hashSync(editEmpPasswordReset.trim(), 10);
+                      if (hash.startsWith('$2b$')) hash = '$2a$' + hash.slice(4);
+                      updates.password_hash = hash;
                     }
 
                     const { error } = await supabaseClient
@@ -7860,6 +7935,88 @@ export default function App() {
             >
               <Text style={styles.modalCloseBtnText}>Close</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 25: CHANGE ACCOUNT PASSWORD                                         */}
+      {/* ========================================================================= */}
+      <Modal visible={isChangePasswordModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🔐 Change Password</Text>
+            <Text style={styles.modalSub}>Update your login credentials securely with Supabase</Text>
+
+            <View style={{ width: '100%', marginTop: 12, gap: 10 }}>
+              <View>
+                <Text style={styles.inputLabel}>New Password (min. 6 characters)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newPasswordInput}
+                  onChangeText={setNewPasswordInput}
+                  placeholder="Enter new password"
+                  placeholderTextColor="#64748b"
+                  secureTextEntry={!showPasswordText}
+                />
+              </View>
+
+              <View>
+                <Text style={styles.inputLabel}>Confirm New Password</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={confirmPasswordInput}
+                  onChangeText={setConfirmPasswordInput}
+                  placeholder="Re-enter new password"
+                  placeholderTextColor="#64748b"
+                  secureTextEntry={!showPasswordText}
+                />
+              </View>
+
+              <TouchableOpacity
+                onPress={() => setShowPasswordText(!showPasswordText)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 }}
+              >
+                <Text style={{ fontSize: 13, color: '#38bdf8' }}>
+                  {showPasswordText ? '🙈 Hide password' : '👁️ Show password'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.loginBtn, { marginTop: 8 }]}
+                disabled={isUpdatingPassword}
+                onPress={async () => {
+                  if (!userProfile) return;
+                  if (newPasswordInput.trim().length < 6) {
+                    Alert.alert('Too Short', 'Password must be at least 6 characters long.');
+                    return;
+                  }
+                  if (newPasswordInput !== confirmPasswordInput) {
+                    Alert.alert('Mismatch', 'New passwords do not match.');
+                    return;
+                  }
+                  setIsUpdatingPassword(true);
+                  const success = await updateUserPassword(userProfile.id, newPasswordInput.trim());
+                  setIsUpdatingPassword(false);
+                  if (success) {
+                    setIsChangePasswordModal(false);
+                    setNewPasswordInput('');
+                    setConfirmPasswordInput('');
+                  }
+                }}
+              >
+                <Text style={styles.loginBtnText}>
+                  {isUpdatingPassword ? 'Updating...' : 'Save New Password'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setIsChangePasswordModal(false)}
+              >
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

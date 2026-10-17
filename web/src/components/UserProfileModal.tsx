@@ -10,7 +10,12 @@ import {
   Camera,
   Check,
   Copy,
-  Briefcase
+  Briefcase,
+  KeyRound,
+  Eye,
+  EyeOff,
+  Lock,
+  Shield
 } from 'lucide-react';
 import { formatISTDate } from '../lib/serialUtils';
 
@@ -31,16 +36,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onClose,
   onStartDirectMessage
 }) => {
-  const { currentProfile, orgProfiles, updateProfile, addToast, isVedotrixSuperadmin } = useApp();
+  const { currentProfile, orgProfiles, updateProfile, updateUserPassword, addToast, isVedotrixSuperadmin } = useApp();
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [previewAvatarUrl, setPreviewAvatarUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Security & Password Management State
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPasswordText, setShowPasswordText] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
   useEffect(() => {
     setAvatarLoadFailed(false);
     setPreviewAvatarUrl(null);
+    setShowPasswordChange(false);
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowPasswordText(false);
   }, [profile?.id]);
 
   if (!isOpen || !profile) return null;
@@ -432,6 +448,128 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 {formatISTDate(effectiveJoiningDate)}
               </span>
             </div>
+
+            {/* Security & Password Management (Self or Superadmin / Owner) */}
+            {(profile.id === currentProfile.id || isVedotrixSuperadmin || currentProfile.role === 'superadmin' || currentProfile.role === 'owner') && (
+              <div className="p-3.5 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)]">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-500 shrink-0">
+                      <KeyRound className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-[var(--text-muted)] block uppercase font-bold">
+                        Security & Credentials
+                      </span>
+                      <span className="text-xs font-bold text-[var(--text-primary)]">
+                        {profile.id === currentProfile.id ? 'Change Your Password' : 'Reset Employee Password'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPasswordChange(!showPasswordChange);
+                      setNewPassword('');
+                      setConfirmPassword('');
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--bg-card)] hover:bg-[var(--border-color)] text-[var(--text-primary)] border border-[var(--border-color)] transition"
+                  >
+                    {showPasswordChange ? 'Cancel' : profile.id === currentProfile.id ? 'Change' : 'Reset'}
+                  </button>
+                </div>
+
+                {showPasswordChange && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (newPassword.trim().length < 6) {
+                        addToast('Too Short', 'Password must be at least 6 characters long.', 'warning');
+                        return;
+                      }
+                      if (profile.id === currentProfile.id && newPassword !== confirmPassword) {
+                        addToast('Mismatch', 'New passwords do not match.', 'warning');
+                        return;
+                      }
+                      setIsUpdatingPassword(true);
+                      const res = await updateUserPassword(profile.id, newPassword.trim());
+                      setIsUpdatingPassword(false);
+                      if (res.success) {
+                        setShowPasswordChange(false);
+                        setNewPassword('');
+                        setConfirmPassword('');
+                      }
+                    }}
+                    className="mt-3 pt-3 border-t border-[var(--border-color)] space-y-2.5 animate-in fade-in duration-150"
+                  >
+                    <div>
+                      <label className="text-[10px] font-semibold text-[var(--text-muted)] block mb-1">
+                        New Password (min. 6 characters) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPasswordText ? 'text' : 'password'}
+                          required
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="Enter secure new password"
+                          className="w-full pl-3 pr-9 py-1.5 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-blue-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPasswordText(!showPasswordText)}
+                          className="absolute right-2.5 top-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                          tabIndex={-1}
+                        >
+                          {showPasswordText ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {profile.id === currentProfile.id && (
+                      <div>
+                        <label className="text-[10px] font-semibold text-[var(--text-muted)] block mb-1">
+                          Confirm New Password *
+                        </label>
+                        <input
+                          type={showPasswordText ? 'text' : 'password'}
+                          required
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="Re-enter new password"
+                          className="w-full px-3 py-1.5 rounded-lg bg-[var(--bg-card)] border border-[var(--border-color)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-blue-500 font-mono"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowPasswordChange(false)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-muted)] hover:bg-[var(--bg-card)]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isUpdatingPassword || !newPassword.trim()}
+                        className="px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition disabled:opacity-50 shadow-xs flex items-center gap-1.5"
+                      >
+                        {isUpdatingPassword ? (
+                          <span>Updating...</span>
+                        ) : (
+                          <>
+                            <Lock className="w-3.5 h-3.5" />
+                            <span>Save Password</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

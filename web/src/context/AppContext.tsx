@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import bcrypt from 'bcryptjs';
 import {
   Organization,
   Profile,
@@ -86,6 +87,7 @@ interface AppContextType {
   allProfiles: Profile[];
   createProfile: (profileData: Omit<Profile, 'id'>) => Promise<Profile>;
   updateProfile: (profileId: string, updates: Partial<Profile>) => Promise<void>;
+  updateUserPassword: (profileId: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   updateOrganization: (orgId: string, updates: Partial<Organization>) => Promise<void>;
   switchOrganization: (orgId: string) => void;
   switchRole: (role: UserRole) => void;
@@ -395,6 +397,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         timestamp: formatRelativeTime(cAt)
       };
     });
+  });
+  const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('vdx_read_notif_ids');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return new Set(parsed);
+      }
+    } catch {}
+    return new Set<string>();
   });
   const [broadcasts, setBroadcasts] = useState<SystemBroadcast[]>([]);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
@@ -1971,6 +1983,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const markNotificationRead = (id: string) => {
+    setReadNotificationIds((prev) => {
+      const next = new Set(prev).add(id);
+      try {
+        localStorage.setItem('vdx_read_notif_ids', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
     setNotifications((prev) => {
       const updated = prev.map((n) => (n.id === id ? { ...n, isRead: true } : n));
       try {
@@ -2189,8 +2208,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [isAuthenticated, meetings, currentOrgId, currentProfileId, currentProfile]);
 
-  // Filter notifications strictly to current user / role / tenant
-  const userNotifications = notifications.filter((n) => {
+  // Dynamic Live Synthesized Workspace Notifications (shift reminders, pending approvals)
+  const dynamicLiveNotifications = React.useMemo<InAppNotification[]>(() => {
+    if (!currentProfile || !currentOrg) return [];
+    const items: InAppNotification[] = [];
+
+    // 1. Shift attendance reminder for current user
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(now.getTime() + istOffset);
+    const todayStr = `${nowIST.getUTCFullYear()}-${String(nowIST.getUTCMonth() + 1).padStart(2, '0')}-${String(nowIST.getUTCDate()).padStart(2, '0')}`;
+    const dayOfWeek = nowIST.getUTCDay();
+    const weekOffDays = currentOrg.settings?.weekOffDays || [0];
+    const isWeekOff = weekOffDays.includes(dayOfWeek);
+
+    if (!isWeekOff) {
+      const shiftStartTime = currentOrg.settings?.shiftStartTime || '09:30';
+      const [shiftH, shiftM] = shiftStartTime.split(':').map(Number);
+      const shiftMins = (shiftH || 9) * 60 + (shiftM || 30);
+      const currentMins = nowIST.getUTCHours() * 60 + nowIST.getUTCMinutes();
+
+      // If past shift start time and user has not marked attendance today
+      if (currentMins >= shiftMins) {
+        const hasPunchedToday = attendanceRecords.some(
+          (a) => a.employeeId === currentProfile.id && a.date === todayStr && a.punchIn
+        );
+        if (!hasPunchedToday) {
+          items.push({
+            id: `live-shift-reminder-${todayStr}-${currentProfile.id}`,
+            orgId: currentOrg.id,
+            recipientId: currentProfile.id,
+            title: 'Shift Active: Attendance Unmarked ⏰',
+            message: `Your shift started at ${shiftStartTime} IST. Remember to punch in today!`,
+            category: 'attendance',
+            isRead: false,
+            priority: 'high',
+            linkTab: 'attendance',
+            createdAt: new Date().toISOString(),
+            timestamp: 'Shift in Progress'
+          });
+        }
+      }
+    }
+
+    // 2. Pending Regularizations alert for Managers & HR/Superadmin
+    const isApprover =
+      currentProfile.role === 'hr' ||
+      currentProfile.role === 'superadmin' ||
+      currentProfile.role === 'owner' ||
+      currentProfile.role === 'manager' ||
+      isVedotrixSuperadmin;
+
+    if (isApprover) {
+      const pendingRegs = attendanceRecords.filter((a) => {
+        if (a.regularizationStatus !== 'pending') return false;
+        if (isVedotrixSuperadmin || currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || currentProfile.role === 'hr') {
+          return true;
+        }
+        const emp = profiles.find((p) => p.id === a.employeeId);
+        return emp?.managerId === currentProfile.id;
+      });
+
+      if (pendingRegs.length > 0) {
+        items.push({
+          id: `live-pending-reg-${todayStr}-${pendingRegs.length}`,
+          orgId: currentOrg.id,
+          recipientId: currentProfile.id,
+          title: 'Pending Regularization Requests 📋',
+          message: `${pendingRegs.length} attendance regularization ${pendingRegs.length === 1 ? 'request requires' : 'requests require'} your review.`,
+          category: 'attendance',
+          isRead: false,
+          priority: 'medium',
+          linkTab: 'attendance',
+          createdAt: new Date().toISOString(),
+          timestamp: 'Action Needed'
+        });
+      }
+
+      // 3. Pending Leaves alert for Managers & HR/Superadmin
+      const pendingLeaves = leaveRequests.filter((l) => {
+        if (l.status !== 'pending') return false;
+        if (isVedotrixSuperadmin || currentProfile.role === 'superadmin' || currentProfile.role === 'owner' || currentProfile.role === 'hr') {
+          return true;
+        }
+        const emp = profiles.find((p) => p.id === l.employeeId);
+        return emp?.managerId === currentProfile.id;
+      });
+
+      if (pendingLeaves.length > 0) {
+        items.push({
+          id: `live-pending-leave-${todayStr}-${pendingLeaves.length}`,
+          orgId: currentOrg.id,
+          recipientId: currentProfile.id,
+          title: 'Leave Applications Awaiting Review 🌴',
+          message: `${pendingLeaves.length} leave ${pendingLeaves.length === 1 ? 'application is' : 'applications are'} awaiting review.`,
+          category: 'leave',
+          isRead: false,
+          priority: 'medium',
+          linkTab: 'leaves',
+          createdAt: new Date().toISOString(),
+          timestamp: 'Action Needed'
+        });
+      }
+    }
+
+    return items;
+  }, [currentProfile, currentOrg, attendanceRecords, leaveRequests, profiles, isVedotrixSuperadmin]);
+
+  // Filter base notifications strictly to current user / role / tenant
+  const filteredBaseNotifications = notifications.filter((n) => {
     // 1. Organization isolation
     if (n.orgId && n.orgId !== currentOrg?.id && !isVedotrixSuperadmin) {
       return false;
@@ -2222,12 +2348,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   });
 
+  // Combine dynamic live workspace alerts with base notifications and synchronize read state
+  const userNotifications = React.useMemo(() => {
+    const combined = [...dynamicLiveNotifications, ...filteredBaseNotifications];
+    const seen = new Set<string>();
+    const unique: InAppNotification[] = [];
+    for (const item of combined) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        const isRead = item.isRead || readNotificationIds.has(item.id);
+        unique.push({ ...item, isRead });
+      }
+    }
+    return unique;
+  }, [dynamicLiveNotifications, filteredBaseNotifications, readNotificationIds]);
+
   const unreadNotificationCount = userNotifications.filter((n) => !n.isRead).length;
 
   const markAllNotificationsRead = () => {
-    const userIds = new Set(userNotifications.map((n) => n.id));
+    const userIds = userNotifications.map((n) => n.id);
+    setReadNotificationIds((prev) => {
+      const next = new Set(prev);
+      userIds.forEach((id) => next.add(id));
+      try {
+        localStorage.setItem('vdx_read_notif_ids', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
     setNotifications((prev) => {
-      const updated = prev.map((n) => (userIds.has(n.id) ? { ...n, isRead: true } : n));
+      const userIdsSet = new Set(userIds);
+      const updated = prev.map((n) => (userIdsSet.has(n.id) ? { ...n, isRead: true } : n));
       try {
         localStorage.setItem('vdx_notifications', JSON.stringify(updated));
       } catch {}
@@ -2690,6 +2840,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     addToast('Profile Updated', 'Employee details have been successfully saved.', 'success');
+  };
+
+  const updateUserPassword = async (profileId: string, newPassword: string): Promise<{ success: boolean; message: string }> => {
+    if (!newPassword || newPassword.trim().length < 6) {
+      addToast('Password Too Short ⚠️', 'Password must be at least 6 characters long.', 'warning');
+      return { success: false, message: 'Password must be at least 6 characters long.' };
+    }
+    try {
+      let hash = bcrypt.hashSync(newPassword.trim(), 10);
+      if (hash.startsWith('$2b$')) {
+        hash = '$2a$' + hash.slice(4);
+      }
+      const client = getSupabaseClient();
+      const { error } = await client
+        .from('profiles')
+        .update({ password_hash: hash })
+        .eq('id', profileId);
+
+      if (error) {
+        console.error('Password update failed in Supabase:', error);
+        addToast('Password Update Error ❌', error.message || 'Database error updating password.', 'error');
+        return { success: false, message: error.message || 'Database error updating password.' };
+      }
+
+      addToast('Password Updated 🔐', 'Password updated and securely synced with database.', 'success');
+      return { success: true, message: 'Password updated successfully.' };
+    } catch (err: any) {
+      console.error('updateUserPassword error:', err);
+      addToast('Update Failed', err?.message || 'Failed to update password.', 'error');
+      return { success: false, message: err?.message || 'Failed to update password.' };
+    }
   };
 
   const updateOrganization = async (orgId: string, updates: Partial<Organization>): Promise<void> => {
@@ -4626,6 +4807,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         allProfiles: profiles,
         createProfile,
         updateProfile,
+        updateUserPassword,
         updateOrganization,
         switchOrganization,
         switchRole,
