@@ -214,6 +214,17 @@ export default function App() {
   const [customPhotoUrlInput, setCustomPhotoUrlInput] = useState<string>('');
   const [isAddingCustomUrl, setIsAddingCustomUrl] = useState<boolean>(false);
 
+  // Chat Sidebar vs Conversation Mode & Settings Modal
+  const [chatViewMode, setChatViewMode] = useState<'sidebar' | 'conversation'>('sidebar');
+  const [chatSearchQuery, setChatSearchQuery] = useState<string>('');
+  const [isChannelSettingsModalOpen, setIsChannelSettingsModalOpen] = useState<boolean>(false);
+  const [channelSettingsTab, setChannelSettingsTab] = useState<'members' | 'details'>('members');
+  const [candidateMemberToAdd, setCandidateMemberToAdd] = useState<string>('');
+  const [editChannelNameInput, setEditChannelNameInput] = useState<string>('');
+  const [editChannelDescInput, setEditChannelDescInput] = useState<string>('');
+  const [editChannelIsPrivate, setEditChannelIsPrivate] = useState<boolean>(false);
+  const [isSavingChannelSettings, setIsSavingChannelSettings] = useState<boolean>(false);
+
   // Selected Notice for Full Screen Reading Modal
   const [selectedNoticeForView, setSelectedNoticeForView] = useState<any | null>(null);
 
@@ -695,15 +706,37 @@ export default function App() {
     }
   };
 
-  // Initialize Supabase & Session
+  // Immediate Auto-Login from Local Storage (Never requires logging in repeatedly)
   useEffect(() => {
-    initSupabase();
+    bootstrapSession();
   }, []);
+
+  const bootstrapSession = async () => {
+    try {
+      const savedProfile = await AsyncStorage.getItem('@vdx_user_profile');
+      const savedEmail = await AsyncStorage.getItem('@vdx_mobile_email');
+      if (savedProfile && savedEmail) {
+        const parsed = JSON.parse(savedProfile);
+        if (parsed && (parsed.id || parsed.email)) {
+          setUserProfile(parsed);
+          setUserEmail(savedEmail);
+          setIsLoggedIn(true);
+        }
+      }
+    } catch (e) {
+      console.log('Bootstrap session error:', e);
+    } finally {
+      initSupabase();
+    }
+  };
 
   const initSupabase = async () => {
     try {
       const client = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_KEY);
       setSupabaseClient(client);
+
+      // Verify and sync session with Supabase in background
+      await checkSession(client);
 
       const { data: orgData, error } = await client.from('organizations').select('*');
       if (!error && orgData && orgData.length > 0) {
@@ -711,7 +744,6 @@ export default function App() {
         setOrganizations(orgData);
         setCurrentOrg(orgData[0]);
       }
-      await checkSession(client);
     } catch (e) {
       console.log('Supabase init error', e);
     }
@@ -721,43 +753,50 @@ export default function App() {
     try {
       const token = await AsyncStorage.getItem('@vdx_mobile_token');
       const email = await AsyncStorage.getItem('@vdx_mobile_email');
+      const savedProfile = await AsyncStorage.getItem('@vdx_user_profile');
+
+      if (savedProfile) {
+        try {
+          const parsed = JSON.parse(savedProfile);
+          if (parsed && (parsed.id || parsed.email)) {
+            setUserProfile(parsed);
+            if (email) setUserEmail(email);
+            setIsLoggedIn(true);
+            setupNotificationsAsync();
+          }
+        } catch {}
+      }
 
       if (token && email) {
         const cleanEmail = email.trim().toLowerCase();
-        const { data: fullProfile } = await client
-          .from('profiles')
-          .select('*')
-          .eq('email', cleanEmail)
-          .maybeSingle();
+        try {
+          const { data: fullProfile } = await client
+            .from('profiles')
+            .select('*')
+            .eq('email', cleanEmail)
+            .maybeSingle();
 
-        if (fullProfile) {
-          const unifiedUser = {
-            ...fullProfile,
-            id: fullProfile.id,
-            user_id: fullProfile.id,
-            joining_date: fullProfile.joining_date || '2026-01-01',
-            first_name: fullProfile.first_name || '',
-            last_name: fullProfile.last_name || '',
-            role: fullProfile.role || 'employee',
-            designation: fullProfile.designation || 'Team Member',
-            department: fullProfile.department || 'Operations'
-          };
-          setUserEmail(cleanEmail);
-          setUserProfile(unifiedUser);
-          await AsyncStorage.setItem('@vdx_user_profile', JSON.stringify(unifiedUser));
-          setIsLoggedIn(true);
-          setupNotificationsAsync();
-          await refreshAllData(client, unifiedUser.org_id, unifiedUser.id);
-        } else {
-          const savedProfile = await AsyncStorage.getItem('@vdx_user_profile');
-          if (savedProfile) {
-            const parsed = JSON.parse(savedProfile);
+          if (fullProfile) {
+            const unifiedUser = {
+              ...fullProfile,
+              id: fullProfile.id,
+              user_id: fullProfile.id,
+              joining_date: fullProfile.joining_date || '2026-01-01',
+              first_name: fullProfile.first_name || '',
+              last_name: fullProfile.last_name || '',
+              role: fullProfile.role || 'employee',
+              designation: fullProfile.designation || 'Team Member',
+              department: fullProfile.department || 'Operations'
+            };
             setUserEmail(cleanEmail);
-            setUserProfile(parsed);
+            setUserProfile(unifiedUser);
+            await AsyncStorage.setItem('@vdx_user_profile', JSON.stringify(unifiedUser));
             setIsLoggedIn(true);
             setupNotificationsAsync();
-            await refreshAllData(client, parsed.org_id, parsed.id);
+            await refreshAllData(client, unifiedUser.org_id, unifiedUser.id);
           }
+        } catch (fetchErr) {
+          console.log('Profile background sync note (offline/network):', fetchErr);
         }
       }
     } catch (e) {
@@ -993,7 +1032,7 @@ export default function App() {
     }
   };
 
-  const sendDeviceNotification = async (title: string, body: string, channelId = 'attendance-alerts', data: any = {}) => {
+  const sendDeviceNotification = async (title: string, body: string, channelId = 'chat-alerts', data: any = {}) => {
     try {
       await Notifications.scheduleNotificationAsync({
         content: {
@@ -1001,15 +1040,138 @@ export default function App() {
           body,
           sound: 'default',
           priority: Notifications.AndroidNotificationPriority.MAX,
-          vibrate: [0, 250, 250, 250],
-          color: '#2563eb',
-          data
+          vibrate: [0, 250, 150, 250],
+          color: '#0284c7',
+          data,
+          ...(Platform.OS === 'android' ? { channelId } : {})
         },
-        trigger: { channelId } as any
+        trigger: null
       });
     } catch (err) {
       console.log('Failed to trigger notification:', err);
     }
+  };
+
+  // Safe attachment extractor (handles jsonb array, json string, or single object)
+  const getSafeAttachments = (rawAttachments: any): any[] => {
+    if (!rawAttachments) return [];
+    let list: any[] = [];
+    if (Array.isArray(rawAttachments)) {
+      list = rawAttachments;
+    } else if (typeof rawAttachments === 'string') {
+      try {
+        const parsed = JSON.parse(rawAttachments);
+        if (Array.isArray(parsed)) list = parsed;
+        else if (parsed && typeof parsed === 'object') list = [parsed];
+      } catch {
+        list = [];
+      }
+    } else if (typeof rawAttachments === 'object') {
+      list = [rawAttachments];
+    }
+    return list.filter((a) => a && (a.url || a.name));
+  };
+
+  const formatAttachmentSize = (bytes: number): string => {
+    if (!bytes || isNaN(bytes)) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Channel Membership & Management Functions
+  const addMemberToChannel = async (channelId: string, memberId: string) => {
+    if (!supabaseClient || !channelId || !memberId) return;
+    const targetChan = dbChannels.find((c) => c.id === channelId || c.name === channelId);
+    if (!targetChan) return;
+
+    const currentMemberIds = Array.isArray(targetChan.member_ids) ? targetChan.member_ids : [];
+    if (currentMemberIds.includes(memberId)) {
+      Alert.alert('Already Member', 'This colleague is already a member of this channel.');
+      return;
+    }
+
+    const updatedMembers = [...currentMemberIds, memberId];
+    setDbChannels((prev) => prev.map((c) => (c.id === targetChan.id ? { ...c, member_ids: updatedMembers } : c)));
+
+    try {
+      await supabaseClient.from('chat_channels').update({ member_ids: updatedMembers }).eq('id', targetChan.id);
+      Alert.alert('Member Added ✓', 'Colleague has been added to the channel.');
+      setCandidateMemberToAdd('');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not add member.');
+    }
+  };
+
+  const removeMemberFromChannel = async (channelId: string, memberId: string) => {
+    if (!supabaseClient || !channelId || !memberId) return;
+    const targetChan = dbChannels.find((c) => c.id === channelId || c.name === channelId);
+    if (!targetChan) return;
+
+    const currentMemberIds = Array.isArray(targetChan.member_ids) ? targetChan.member_ids : [];
+    const updatedMembers = currentMemberIds.filter((id: string) => id !== memberId);
+    setDbChannels((prev) => prev.map((c) => (c.id === targetChan.id ? { ...c, member_ids: updatedMembers } : c)));
+
+    try {
+      await supabaseClient.from('chat_channels').update({ member_ids: updatedMembers }).eq('id', targetChan.id);
+      Alert.alert('Member Removed', 'Colleague has been removed from this channel.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not remove member.');
+    }
+  };
+
+  const updateChannelDetails = async (channelId: string, name: string, desc: string, isPrivate: boolean) => {
+    if (!supabaseClient || !channelId || !name.trim()) return;
+    setIsSavingChannelSettings(true);
+    try {
+      const targetChan = dbChannels.find((c) => c.id === channelId || c.name === channelId);
+      if (!targetChan) return;
+
+      const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const updates = {
+        name: cleanName,
+        description: desc.trim(),
+        is_private: isPrivate
+      };
+      setDbChannels((prev) => prev.map((c) => (c.id === targetChan.id ? { ...c, ...updates } : c)));
+      await supabaseClient.from('chat_channels').update(updates).eq('id', targetChan.id);
+      Alert.alert('Channel Updated ✓', `#${cleanName} details have been updated.`);
+      setIsChannelSettingsModalOpen(false);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not update channel.');
+    } finally {
+      setIsSavingChannelSettings(false);
+    }
+  };
+
+  const deleteChannel = async (channelId: string) => {
+    if (!supabaseClient || !channelId) return;
+    const targetChan = dbChannels.find((c) => c.id === channelId || c.name === channelId);
+    if (!targetChan) return;
+
+    Alert.alert(
+      'Delete Channel',
+      `Permanently delete #${targetChan.name}? All messages in this channel will be removed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await supabaseClient.from('chat_channels').delete().eq('id', targetChan.id);
+              setDbChannels((prev) => prev.filter((c) => c.id !== targetChan.id));
+              setIsChannelSettingsModalOpen(false);
+              setActiveChatChannel('support');
+              setChatViewMode('sidebar');
+              Alert.alert('Channel Deleted', `#${targetChan.name} has been removed.`);
+            } catch (e: any) {
+              Alert.alert('Error', e?.message);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const checkAttendanceStatusAndNotify = async (records: any[] = attendanceRecords, myProfileId?: string) => {
@@ -2211,19 +2373,19 @@ export default function App() {
   const totalPendingApprovals = pendingRegularizations.length + pendingLeaves.length + pendingAccess.length;
 
   // Real Organization Channels aligned with Web Application
-  const availableChannels = useMemo(() => {
-    const standard = [
-      { id: 'support', name: 'support', description: 'Internal Support & IT/HR Helpdesk', is_private: false }
+  const availableChannels: any[] = useMemo(() => {
+    const standard: any[] = [
+      { id: 'support', name: 'support', description: 'Internal Support & IT/HR Helpdesk', is_private: false, member_ids: [], created_by: null }
     ];
-    const filteredDb = dbChannels.filter((c) => {
+    const filteredDb = dbChannels.filter((c: any) => {
       if (!c.is_private) return true;
       if (isPrivileged) return true;
       if (c.member_ids && Array.isArray(c.member_ids) && c.member_ids.includes(userProfile?.id)) return true;
       return false;
     });
-    const combined = [...standard];
+    const combined: any[] = [...standard];
     for (const ch of filteredDb) {
-      if (!combined.some((c) => c.name === ch.name || c.id === ch.id)) {
+      if (!combined.some((c: any) => c.name === ch.name || c.id === ch.id)) {
         combined.push(ch);
       }
     }
@@ -2231,9 +2393,36 @@ export default function App() {
   }, [dbChannels, isPrivileged, userProfile?.id]);
 
   // Active channel description object
-  const activeChanObj = useMemo(() => {
-    return availableChannels.find((c) => c.name === activeChatChannel || c.id === activeChatChannel) || availableChannels[0];
+  const activeChanObj: any = useMemo(() => {
+    return availableChannels.find((c: any) => c.name === activeChatChannel || c.id === activeChatChannel) || availableChannels[0];
   }, [availableChannels, activeChatChannel]);
+
+  // Active channel members list
+  const activeChannelMembers = useMemo(() => {
+    if (!activeChanObj) return teamProfiles;
+    if (!activeChanObj.is_private) {
+      if (activeChanObj.member_ids && Array.isArray(activeChanObj.member_ids) && activeChanObj.member_ids.length > 0) {
+        return teamProfiles.filter((p) => activeChanObj.member_ids.includes(p.id));
+      }
+      return teamProfiles;
+    }
+    const memberIds = Array.isArray(activeChanObj.member_ids) ? activeChanObj.member_ids : [];
+    return teamProfiles.filter((p) => memberIds.includes(p.id) || p.id === activeChanObj.created_by);
+  }, [activeChanObj, teamProfiles]);
+
+  // Colleagues available to add to active channel
+  const nonMembersToAdd = useMemo(() => {
+    if (!activeChanObj) return [];
+    const memberIds = new Set(activeChannelMembers.map((m) => m.id));
+    return teamProfiles.filter((p) => !memberIds.has(p.id));
+  }, [activeChanObj, activeChannelMembers, teamProfiles]);
+
+  // Is current user admin/creator of active channel
+  const isChannelAdmin = useMemo(() => {
+    if (isPrivileged) return true;
+    if (activeChanObj?.created_by && activeChanObj.created_by === userProfile?.id) return true;
+    return false;
+  }, [isPrivileged, activeChanObj, userProfile?.id]);
 
   // Filter messages for active chat channel / conversation (supports channel ID and Name seamlessly)
   const activeConversationMessages = useMemo(() => {
@@ -3032,548 +3221,723 @@ export default function App() {
         {/* ========================================================================= */}
         {activeTab === 'chat' && (
           <View style={{ gap: 10 }}>
-            {/* Enterprise Workspace Header & Channel Drawer (Deep Aubergine Theme) */}
-            <View style={{
-              backgroundColor: '#3F0E40',
-              borderRadius: 14,
-              padding: 14,
-              borderWidth: 1,
-              borderColor: '#522653',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.15,
-              shadowRadius: 4,
-              elevation: 3
-            }}>
-              {/* Workspace Top Row */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#ffffff', letterSpacing: 0.2 }}>
-                    {currentOrg?.name || 'Enterprise Workspace'}
-                  </Text>
-                  <Text style={{ fontSize: 13, color: '#e0cde2', fontWeight: 'bold' }}>⌄</Text>
+            {/* =================================================================== */}
+            {/* MODE 1: WORKSPACE SIDEBAR VIEW (Full Navigation & Directory)        */}
+            {/* =================================================================== */}
+            {chatViewMode === 'sidebar' && (
+              <View style={{ gap: 12 }}>
+                {/* Workspace Hub Card */}
+                <View style={{
+                  backgroundColor: '#3F0E40',
+                  borderRadius: 16,
+                  padding: 16,
+                  borderWidth: 1,
+                  borderColor: '#522653',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 3 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 5,
+                  elevation: 4
+                }}>
+                  {/* Workspace Title & Create Channel Row */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#ffffff', letterSpacing: 0.3 }} numberOfLines={1}>
+                        {currentOrg?.name || 'Vedotrix Workspace'}
+                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                        <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#10b981' }} />
+                        <Text style={{ fontSize: 11, color: '#e0cde2', fontWeight: '600' }}>
+                          Online • {userProfile?.first_name || 'You'} ({userProfile?.designation || userProfile?.role || 'Staff'})
+                        </Text>
+                      </View>
+                    </View>
+
+                    {isPrivileged && (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                          paddingHorizontal: 12,
+                          paddingVertical: 7,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: 'rgba(255, 255, 255, 0.3)'
+                        }}
+                        onPress={() => {
+                          setNewChanName('');
+                          setNewChanDesc('');
+                          setIsNewChannelModal(true);
+                        }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: 'bold' }}>+ New Channel</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Channel & Colleague Search Bar */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                    borderRadius: 10,
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 255, 255, 0.2)'
+                  }}>
+                    <Text style={{ marginRight: 6, fontSize: 13, color: '#f1def4' }}>🔍</Text>
+                    <TextInput
+                      style={{ flex: 1, color: '#ffffff', fontSize: 13, padding: 0 }}
+                      placeholder="Jump to a channel or colleague..."
+                      placeholderTextColor="#d1a4d6"
+                      value={chatSearchQuery}
+                      onChangeText={setChatSearchQuery}
+                    />
+                    {Boolean(chatSearchQuery) && (
+                      <TouchableOpacity onPress={() => setChatSearchQuery('')}>
+                        <Text style={{ color: '#e0cde2', fontSize: 12, fontWeight: 'bold', paddingHorizontal: 4 }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
 
-                {isPrivileged && (
-                  <TouchableOpacity
-                    style={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.15)',
-                      paddingHorizontal: 10,
-                      paddingVertical: 5,
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: 'rgba(255, 255, 255, 0.25)'
-                    }}
-                    onPress={() => {
-                      setNewChanName('');
-                      setNewChanDesc('');
-                      setIsNewChannelModal(true);
-                    }}
-                  >
-                    <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: 'bold' }}>+ Channel</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* 1. Public Channels */}
-              <View style={{ marginTop: 2 }}>
-                <Text style={{ fontSize: 10, fontWeight: '700', color: '#d1a4d6', textTransform: 'uppercase', marginBottom: 5, letterSpacing: 0.5 }}>
-                  # Channels
-                </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={{ flexDirection: 'row', gap: 6 }}>
-                    {availableChannels.filter((c) => !c.is_private).map((chan) => {
-                      const chanId = chan.id || chan.name;
-                      const isSelected = !chatRecipient && (activeChatChannel === chanId || activeChatChannel === chan.name);
-                      return (
-                        <TouchableOpacity
-                          key={chan.id || chan.name}
-                          style={{
-                            backgroundColor: isSelected ? '#1164A3' : 'rgba(255, 255, 255, 0.08)',
-                            paddingHorizontal: 11,
-                            paddingVertical: 6,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.12)'
-                          }}
-                          onPress={() => {
-                            setChatRecipient(null);
-                            setActiveChatChannel(chanId);
-                          }}
-                        >
-                          <Text style={{
-                            fontSize: 12,
-                            fontWeight: isSelected ? '700' : '600',
-                            color: isSelected ? '#ffffff' : '#f1def4'
-                          }}>
-                            # {chan.name}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                {/* 1. PUBLIC CHANNELS SECTION */}
+                <View style={[styles.card, { paddingVertical: 12, paddingHorizontal: 14 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#94a3b8' : '#475569', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                      # Channels ({availableChannels.filter((c) => !c.is_private).length})
+                    </Text>
+                    <Text style={{ fontSize: 10, color: '#0284c7', fontWeight: 'bold' }}>Public Discussions</Text>
                   </View>
-                </ScrollView>
-              </View>
 
-              {/* 2. Private Groups */}
-              {availableChannels.some((c) => c.is_private) && (
-                <View style={{ marginTop: 9 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#fbbf24', textTransform: 'uppercase', marginBottom: 5, letterSpacing: 0.5 }}>
-                    🔒 Private Groups
-                  </Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
-                      {availableChannels.filter((c) => c.is_private).map((chan) => {
+                  <View style={{ gap: 6 }}>
+                    {availableChannels
+                      .filter((c) => !c.is_private && (!chatSearchQuery.trim() || c.name.toLowerCase().includes(chatSearchQuery.toLowerCase())))
+                      .map((chan) => {
                         const chanId = chan.id || chan.name;
-                        const isSelected = !chatRecipient && (activeChatChannel === chanId || activeChatChannel === chan.name);
+                        const isCurrentActive = !chatRecipient && (activeChatChannel === chanId || activeChatChannel === chan.name);
                         return (
                           <TouchableOpacity
                             key={chan.id || chan.name}
                             style={{
-                              backgroundColor: isSelected ? '#b45309' : 'rgba(245, 158, 11, 0.12)',
-                              paddingHorizontal: 11,
-                              paddingVertical: 6,
-                              borderRadius: 8,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderRadius: 10,
+                              backgroundColor: isCurrentActive
+                                ? (isDarkMode ? 'rgba(56, 189, 248, 0.15)' : 'rgba(2, 132, 199, 0.1)')
+                                : (isDarkMode ? 'rgba(30, 41, 59, 0.4)' : '#f8fafc'),
                               borderWidth: 1,
-                              borderColor: isSelected ? '#f59e0b' : 'rgba(245, 158, 11, 0.25)'
+                              borderColor: isCurrentActive ? '#0284c7' : (isDarkMode ? '#334155' : '#e2e8f0')
                             }}
                             onPress={() => {
                               setChatRecipient(null);
                               setActiveChatChannel(chanId);
+                              setChatViewMode('conversation');
                             }}
                           >
-                            <Text style={{
-                              fontSize: 12,
-                              fontWeight: isSelected ? '700' : '600',
-                              color: isSelected ? '#ffffff' : '#fde68a'
-                            }}>
-                              🔒 {chan.name}
-                            </Text>
+                            <View style={{ flex: 1, marginRight: 10 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={{ fontSize: 14, fontWeight: 'bold', color: isCurrentActive ? '#0284c7' : (isDarkMode ? '#f8fafc' : '#0f172a') }}>
+                                  # {chan.name}
+                                </Text>
+                                {isCurrentActive && (
+                                  <View style={{ backgroundColor: '#0284c7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: 'bold' }}>Active</Text>
+                                  </View>
+                                )}
+                              </View>
+                              {Boolean(chan.description) && (
+                                <Text style={{ fontSize: 11, color: isDarkMode ? '#94a3b8' : '#64748b', marginTop: 2 }} numberOfLines={1}>
+                                  {chan.description}
+                                </Text>
+                              )}
+                            </View>
+                            <Text style={{ fontSize: 16, color: '#94a3b8' }}>›</Text>
                           </TouchableOpacity>
                         );
                       })}
-                    </View>
-                  </ScrollView>
-                </View>
-              )}
-
-              {/* 3. Direct Messages */}
-              <View style={{ marginTop: 9 }}>
-                <Text style={{ fontSize: 10, fontWeight: '700', color: '#d1a4d6', textTransform: 'uppercase', marginBottom: 5, letterSpacing: 0.5 }}>
-                  💬 Direct Messages
-                </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={{ flexDirection: 'row', gap: 6 }}>
-                    {teamProfiles.filter((p) => p.id !== userProfile?.id).map((member) => {
-                      const isSelected = chatRecipient?.id === member.id;
-                      const hasValidAvatar = member.avatar_url && (member.avatar_url.startsWith('http') || member.avatar_url.startsWith('data:image'));
-                      return (
-                        <TouchableOpacity
-                          key={member.id}
-                          style={{
-                            backgroundColor: isSelected ? '#1164A3' : 'rgba(255, 255, 255, 0.08)',
-                            paddingHorizontal: 9,
-                            paddingVertical: 5,
-                            borderRadius: 8,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 6,
-                            borderWidth: 1,
-                            borderColor: isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.12)'
-                          }}
-                          onPress={() => setChatRecipient(member)}
-                          onLongPress={() => setInspectedUserProfile(member)}
-                        >
-                          <View style={{ width: 18, height: 18, borderRadius: 9, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
-                            {hasValidAvatar ? (
-                              <Image source={{ uri: member.avatar_url }} style={{ width: '100%', height: '100%' }} />
-                            ) : (
-                              <Text style={{ color: '#fff', fontSize: 9, fontWeight: 'bold' }}>
-                                {(member.first_name?.[0] || 'U').toUpperCase()}
-                              </Text>
-                            )}
-                          </View>
-                          <Text style={{ fontSize: 11, fontWeight: isSelected ? '700' : '500', color: isSelected ? '#ffffff' : '#f1def4' }}>
-                            @{member.first_name}
-                          </Text>
-                          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981' }} />
-                        </TouchableOpacity>
-                      );
-                    })}
                   </View>
-                </ScrollView>
-              </View>
-
-              {/* Active Header Detail Banner */}
-              <View style={{
-                marginTop: 12,
-                paddingTop: 10,
-                borderTopWidth: 1,
-                borderTopColor: 'rgba(255, 255, 255, 0.15)',
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#ffffff' }}>
-                    {chatRecipient
-                      ? `@${chatRecipient.first_name} ${chatRecipient.last_name}`
-                      : (activeChanObj?.is_private ? `🔒 ${activeChanObj.name}` : `# ${activeChanObj?.name || activeChatChannel}`)}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: '#e0cde2' }} numberOfLines={1}>
-                    • {chatRecipient ? (chatRecipient.designation || 'Staff') : (activeChanObj?.description || 'Team discussion')}
-                  </Text>
                 </View>
-                {chatRecipient && (
-                  <TouchableOpacity onPress={() => setInspectedUserProfile(chatRecipient)}>
-                    <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>View Profile ↗</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
 
-            {/* Messages Feed Area */}
-            <View style={[styles.card, { minHeight: 340, paddingBottom: 10 }]}>
-              {activeConversationMessages.length === 0 ? (
-                <View style={{ paddingVertical: 45, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 34, marginBottom: 8 }}>💬</Text>
-                  <Text style={{ color: isDarkMode ? '#ffffff' : '#0f172a', fontSize: 15, fontWeight: 'bold' }}>
-                    Welcome to {chatRecipient ? `@${chatRecipient.first_name}` : (activeChanObj?.is_private ? `🔒${activeChanObj.name}` : `#${activeChanObj?.name || activeChatChannel}`)}!
-                  </Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, textAlign: 'center', maxWidth: 280, lineHeight: 16 }}>
-                    This is the start of your workspace conversation. Share messages, @mention colleagues, attach photos or documents to collaborate!
-                  </Text>
-                </View>
-              ) : (
-                <View style={{ gap: 12 }}>
-                  {activeConversationMessages.map((msg, index) => {
-                    const isMe = msg.sender_id === userProfile?.id;
-                    const prevMsg = index > 0 ? activeConversationMessages[index - 1] : null;
+                {/* 2. PRIVATE GROUPS SECTION */}
+                {availableChannels.some((c) => c.is_private) && (
+                  <View style={[styles.card, { paddingVertical: 12, paddingHorizontal: 14 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                        🔒 Private Groups ({availableChannels.filter((c) => c.is_private).length})
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: 'bold' }}>Members Only</Text>
+                    </View>
 
-                    // Date Separator logic
-                    const msgDateStr = new Date(msg.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
-                    const prevMsgDateStr = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : null;
-                    const showDateSep = !prevMsgDateStr || msgDateStr !== prevMsgDateStr;
-                    const todayDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
-                    const yDate = new Date(); yDate.setDate(yDate.getDate() - 1);
-                    const yDateStr = yDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
-                    const datePillLabel = msgDateStr === todayDateStr ? 'Today' : msgDateStr === yDateStr ? 'Yesterday' : msgDateStr;
-
-                    const isGrouped = !showDateSep && prevMsg && prevMsg.sender_id === msg.sender_id &&
-                      (new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000);
-                    const senderProfile = teamProfiles.find((p) => p.id === msg.sender_id) || (isMe ? userProfile : null);
-
-                    const effectiveAvatar = (senderProfile?.avatar_url && (senderProfile.avatar_url.startsWith('http') || senderProfile.avatar_url.startsWith('data:image')))
-                      ? senderProfile.avatar_url
-                      : (msg.sender_avatar && (msg.sender_avatar.startsWith('http') || msg.sender_avatar.startsWith('data:image')))
-                        ? msg.sender_avatar
-                        : null;
-                    const initials = ((senderProfile?.first_name?.[0] || msg.sender_name?.[0] || 'U') + (senderProfile?.last_name?.[0] || '')).toUpperCase();
-
-                    const isReactionPickerOpen = activeReactionMsgId === msg.id;
-
-                    return (
-                      <React.Fragment key={msg.id || index}>
-                        {showDateSep && (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}>
-                            <View style={{ flex: 1, height: 1, backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0' }} />
-                            <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', paddingHorizontal: 12, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: isDarkMode ? '#334155' : '#cbd5e1' }}>
-                              <Text style={{ fontSize: 10, fontWeight: 'bold', color: isDarkMode ? '#94a3b8' : '#64748b' }}>{datePillLabel}</Text>
-                            </View>
-                            <View style={{ flex: 1, height: 1, backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0' }} />
-                          </View>
-                        )}
-
-                        <View style={{
-                          flexDirection: 'row',
-                          alignItems: 'flex-start',
-                          paddingVertical: isGrouped ? 2 : 4,
-                          paddingHorizontal: 4,
-                          borderRadius: 8,
-                          backgroundColor: isMe ? (isDarkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.5)') : 'transparent'
-                        }}>
-                          {/* Left Avatar */}
-                          <View style={{ width: 36, marginRight: 10, alignItems: 'center' }}>
-                            {!isGrouped ? (
-                              <TouchableOpacity
-                                style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}
-                                onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
-                              >
-                                {effectiveAvatar ? (
-                                  <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
-                                ) : (
-                                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
-                                    {initials}
+                    <View style={{ gap: 6 }}>
+                      {availableChannels
+                        .filter((c) => c.is_private && (!chatSearchQuery.trim() || c.name.toLowerCase().includes(chatSearchQuery.toLowerCase())))
+                        .map((chan) => {
+                          const chanId = chan.id || chan.name;
+                          const isCurrentActive = !chatRecipient && (activeChatChannel === chanId || activeChatChannel === chan.name);
+                          const memberCount = (chan.member_ids && Array.isArray(chan.member_ids)) ? chan.member_ids.length : 1;
+                          return (
+                            <TouchableOpacity
+                              key={chan.id || chan.name}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 10,
+                                backgroundColor: isCurrentActive
+                                  ? 'rgba(245, 158, 11, 0.15)'
+                                  : (isDarkMode ? 'rgba(30, 41, 59, 0.4)' : '#f8fafc'),
+                                borderWidth: 1,
+                                borderColor: isCurrentActive ? '#f59e0b' : (isDarkMode ? '#334155' : '#e2e8f0')
+                              }}
+                              onPress={() => {
+                                setChatRecipient(null);
+                                setActiveChatChannel(chanId);
+                                setChatViewMode('conversation');
+                              }}
+                            >
+                              <View style={{ flex: 1, marginRight: 10 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: isCurrentActive ? '#f59e0b' : (isDarkMode ? '#fde68a' : '#b45309') }}>
+                                    🔒 {chan.name}
                                   </Text>
-                                )}
-                              </TouchableOpacity>
-                            ) : (
-                              <View style={{ width: 34 }} />
-                            )}
-                          </View>
-
-                          {/* Right Content Column */}
-                          <View style={{ flex: 1 }}>
-                            {/* Sender Info Row */}
-                            {!isGrouped && (
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                                <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
-                                  <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
-                                    {isMe ? `${userProfile?.first_name || 'You'} (You)` : msg.sender_name}
-                                  </Text>
-                                </TouchableOpacity>
-                                {senderProfile?.designation && (
-                                  <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
-                                    <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0284c7' }}>{senderProfile.designation}</Text>
+                                  <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                    <Text style={{ color: '#f59e0b', fontSize: 9, fontWeight: 'bold' }}>{memberCount} members</Text>
                                   </View>
+                                </View>
+                                {Boolean(chan.description) && (
+                                  <Text style={{ fontSize: 11, color: isDarkMode ? '#94a3b8' : '#64748b', marginTop: 2 }} numberOfLines={1}>
+                                    {chan.description}
+                                  </Text>
                                 )}
-                                <Text style={{ fontSize: 10, color: '#94a3b8' }}>
-                                  {formatISTTimeOnly(msg.created_at)}
+                              </View>
+                              <Text style={{ fontSize: 16, color: '#f59e0b' }}>›</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+                  </View>
+                )}
+
+                {/* 3. DIRECT MESSAGES SECTION */}
+                <View style={[styles.card, { paddingVertical: 12, paddingHorizontal: 14 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#94a3b8' : '#475569', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                      💬 Direct Messages ({teamProfiles.filter((p) => p.id !== userProfile?.id).length})
+                    </Text>
+                    <Text style={{ fontSize: 10, color: '#10b981', fontWeight: 'bold' }}>Colleagues</Text>
+                  </View>
+
+                  <View style={{ gap: 6 }}>
+                    {teamProfiles
+                      .filter((p) => {
+                        if (p.id === userProfile?.id) return false;
+                        if (!chatSearchQuery.trim()) return true;
+                        const fullName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase();
+                        return (
+                          fullName.includes(chatSearchQuery.toLowerCase()) ||
+                          (p.designation && p.designation.toLowerCase().includes(chatSearchQuery.toLowerCase())) ||
+                          (p.department && p.department.toLowerCase().includes(chatSearchQuery.toLowerCase()))
+                        );
+                      })
+                      .map((member) => {
+                        const isSelected = chatRecipient?.id === member.id;
+                        const hasValidAvatar = member.avatar_url && (member.avatar_url.startsWith('http') || member.avatar_url.startsWith('data:image'));
+                        const initials = ((member.first_name?.[0] || 'U') + (member.last_name?.[0] || '')).toUpperCase();
+                        return (
+                          <TouchableOpacity
+                            key={member.id}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              paddingVertical: 9,
+                              paddingHorizontal: 12,
+                              borderRadius: 10,
+                              backgroundColor: isSelected
+                                ? (isDarkMode ? 'rgba(56, 189, 248, 0.15)' : 'rgba(2, 132, 199, 0.1)')
+                                : (isDarkMode ? 'rgba(30, 41, 59, 0.4)' : '#f8fafc'),
+                              borderWidth: 1,
+                              borderColor: isSelected ? '#0284c7' : (isDarkMode ? '#334155' : '#e2e8f0')
+                            }}
+                            onPress={() => {
+                              setChatRecipient(member);
+                              setChatViewMode('conversation');
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, marginRight: 8 }}>
+                              <View style={{ position: 'relative' }}>
+                                <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
+                                  {hasValidAvatar ? (
+                                    <Image source={{ uri: member.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                                  ) : (
+                                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>{initials}</Text>
+                                  )}
+                                </View>
+                                <View style={{ position: 'absolute', bottom: -1, right: -1, width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#10b981', borderWidth: 1.5, borderColor: isDarkMode ? '#0f172a' : '#ffffff' }} />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                                  {member.first_name} {member.last_name || ''}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: isDarkMode ? '#94a3b8' : '#64748b' }} numberOfLines={1}>
+                                  {member.designation || member.department || 'Team Member'}
                                 </Text>
                               </View>
-                            )}
-
-                            {/* Message Text with @mentions highlighting */}
-                            {msg.message && msg.message !== '📷 Photo attached' && (
-                              <View style={{ marginTop: 1 }}>
-                                {renderMessageContentWithMentions(msg.message, false)}
-                              </View>
-                            )}
-
-                            {/* Attachments rendering (Images, Documents, PDFs) */}
-                            {msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
-                              <View style={{ gap: 6, marginTop: 4 }}>
-                                {msg.attachments.map((att: any, attIdx: number) => {
-                                  const isPdfOrDoc = att.category === 'document' || (att.name && (att.name.endsWith('.pdf') || att.name.endsWith('.doc') || att.name.endsWith('.docx')));
-
-                                  if (isPdfOrDoc) {
-                                    return (
-                                      <TouchableOpacity
-                                        key={att.id || attIdx}
-                                        style={{
-                                          flexDirection: 'row',
-                                          alignItems: 'center',
-                                          gap: 10,
-                                          backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
-                                          padding: 10,
-                                          borderRadius: 10,
-                                          borderWidth: 1,
-                                          borderColor: isDarkMode ? '#334155' : '#cbd5e1',
-                                          maxWidth: 290
-                                        }}
-                                        onPress={() => Linking.openURL(att.url)}
-                                      >
-                                        <Text style={{ fontSize: 24 }}>📄</Text>
-                                        <View style={{ flex: 1 }}>
-                                          <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }} numberOfLines={1}>
-                                            {att.name || 'Document Attachment'}
-                                          </Text>
-                                          <Text style={{ fontSize: 10, color: '#0284c7', marginTop: 2, fontWeight: 'bold' }}>
-                                            Tap to view / download ↗
-                                          </Text>
-                                        </View>
-                                      </TouchableOpacity>
-                                    );
-                                  }
-
-                                  return (
-                                    <TouchableOpacity
-                                      key={att.id || attIdx}
-                                      activeOpacity={0.85}
-                                      onPress={() => setChatImageLightboxUrl(att.url)}
-                                      style={{ borderRadius: 10, overflow: 'hidden', maxWidth: 240 }}
-                                    >
-                                      <Image
-                                        source={{ uri: att.url }}
-                                        style={{ width: 240, height: 160, borderRadius: 10, backgroundColor: '#0f172a' }}
-                                        resizeMode="cover"
-                                      />
-                                      <Text style={{ fontSize: 9, color: '#94a3b8', marginTop: 2 }}>
-                                        🔍 Tap to view photo
-                                      </Text>
-                                    </TouchableOpacity>
-                                  );
-                                })}
-                              </View>
-                            )}
-
-                            {/* Reactions Badges & Add Reaction Button */}
-                            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
-                              {msg.reactions && Array.isArray(msg.reactions) && msg.reactions.map((r: any, rIdx: number) => {
-                                const hasReacted = r.userIds && r.userIds.includes(userProfile?.id);
-                                return (
-                                  <TouchableOpacity
-                                    key={r.emoji || rIdx}
-                                    style={{
-                                      flexDirection: 'row',
-                                      alignItems: 'center',
-                                      gap: 4,
-                                      backgroundColor: hasReacted ? 'rgba(56, 189, 248, 0.2)' : (isDarkMode ? '#1e293b' : '#f1f5f9'),
-                                      borderColor: hasReacted ? '#0284c7' : (isDarkMode ? '#334155' : '#cbd5e1'),
-                                      borderWidth: 1,
-                                      borderRadius: 12,
-                                      paddingHorizontal: 8,
-                                      paddingVertical: 2
-                                    }}
-                                    onPress={() => addChatReaction(msg.id, r.emoji)}
-                                  >
-                                    <Text style={{ fontSize: 12 }}>{r.emoji}</Text>
-                                    <Text style={{ fontSize: 10, fontWeight: 'bold', color: hasReacted ? '#0284c7' : (isDarkMode ? '#94a3b8' : '#64748b') }}>
-                                      {r.count}
-                                    </Text>
-                                  </TouchableOpacity>
-                                );
-                              })}
-
-                              {/* Toggle Quick Reaction Bar */}
-                              <TouchableOpacity
-                                style={{
-                                  backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
-                                  paddingHorizontal: 7,
-                                  paddingVertical: 2,
-                                  borderRadius: 10,
-                                  borderWidth: 1,
-                                  borderColor: isDarkMode ? '#334155' : '#cbd5e1'
-                                }}
-                                onPress={() => setActiveReactionMsgId(isReactionPickerOpen ? null : msg.id)}
-                              >
-                                <Text style={{ fontSize: 11, color: '#94a3b8' }}>☺ +</Text>
-                              </TouchableOpacity>
                             </View>
-
-                            {/* Quick Reaction Emoji Picker Row */}
-                            {isReactionPickerOpen && (
-                              <View style={{
-                                flexDirection: 'row',
-                                gap: 6,
-                                backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
-                                paddingHorizontal: 10,
-                                paddingVertical: 6,
-                                borderRadius: 14,
-                                borderWidth: 1,
-                                borderColor: '#0284c7',
-                                marginTop: 6,
-                                alignSelf: 'flex-start',
-                                shadowColor: '#000',
-                                shadowOffset: { width: 0, height: 2 },
-                                shadowOpacity: 0.2,
-                                shadowRadius: 3,
-                                elevation: 4
-                              }}>
-                                {['👍', '❤️', '🎉', '🔥', '🚀', '👀', '👏', '💯'].map((em) => (
-                                  <TouchableOpacity
-                                    key={em}
-                                    style={{ padding: 4 }}
-                                    onPress={() => addChatReaction(msg.id, em)}
-                                  >
-                                    <Text style={{ fontSize: 18 }}>{em}</Text>
-                                  </TouchableOpacity>
-                                ))}
-                              </View>
-                            )}
-                          </View>
-                        </View>
-                      </React.Fragment>
-                    );
-                  })}
+                            <Text style={{ fontSize: 16, color: '#94a3b8' }}>›</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </View>
                 </View>
-              )}
+              </View>
+            )}
 
-              {/* Mention Suggestions Popover (Appears above composer when typing @) */}
-              {mentionCandidates.length > 0 && (
+            {/* =================================================================== */}
+            {/* MODE 2: ACTIVE CONVERSATION VIEW (Header, Feed, & Composer)         */}
+            {/* =================================================================== */}
+            {chatViewMode === 'conversation' && (
+              <View style={{ gap: 10 }}>
+                {/* Conversation Header Bar (Deep Aubergine Theme) */}
                 <View style={{
-                  backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
+                  backgroundColor: '#3F0E40',
+                  borderRadius: 14,
+                  padding: 12,
                   borderWidth: 1,
-                  borderColor: '#0284c7',
-                  borderRadius: 12,
-                  marginTop: 10,
-                  overflow: 'hidden',
+                  borderColor: '#522653',
                   shadowColor: '#000',
-                  shadowOffset: { width: 0, height: -2 },
+                  shadowOffset: { width: 0, height: 2 },
                   shadowOpacity: 0.15,
                   shadowRadius: 4,
-                  elevation: 5
+                  elevation: 3
                 }}>
-                  <View style={{ backgroundColor: '#0284c7', paddingHorizontal: 10, paddingVertical: 4 }}>
-                    <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#ffffff' }}>Mention Colleague</Text>
-                  </View>
-                  {mentionCandidates.map((cand) => (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    {/* Left: Back to Channels Button */}
                     <TouchableOpacity
-                      key={cand.id}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
-                        justifyContent: 'space-between',
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderBottomWidth: 1,
-                        borderBottomColor: isDarkMode ? '#1e293b' : '#f1f5f9'
+                        gap: 6,
+                        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: 'rgba(255, 255, 255, 0.25)'
                       }}
-                      onPress={() => insertMentionIntoInput(cand)}
+                      onPress={() => setChatViewMode('sidebar')}
                     >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <Text style={{ fontSize: 14 }}>{cand.isSpecial ? '📢' : '👤'}</Text>
-                        <Text style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
-                          {cand.isSpecial ? '@all' : `@${cand.first_name} ${cand.last_name || ''}`}
-                        </Text>
-                      </View>
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }}>{cand.designation}</Text>
+                      <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: 'bold' }}>← Channels</Text>
                     </TouchableOpacity>
-                  ))}
+
+                    {/* Center: Title & Subtitle */}
+                    <View style={{ flex: 1, marginHorizontal: 10, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 15, fontWeight: '800', color: '#ffffff' }} numberOfLines={1}>
+                        {chatRecipient
+                          ? `@${chatRecipient.first_name} ${chatRecipient.last_name || ''}`
+                          : (activeChanObj?.is_private ? `🔒 ${activeChanObj.name}` : `# ${activeChanObj?.name || activeChatChannel}`)}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#e0cde2' }} numberOfLines={1}>
+                        {chatRecipient
+                          ? (chatRecipient.designation || 'Colleague')
+                          : `${activeChannelMembers.length} members • ${activeChanObj?.description || 'Team discussion'}`}
+                      </Text>
+                    </View>
+
+                    {/* Right: Channel Settings / DM Profile Button */}
+                    {!chatRecipient ? (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                          paddingHorizontal: 9,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: 'rgba(255, 255, 255, 0.3)',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        onPress={() => {
+                          setEditChannelNameInput(activeChanObj?.name || '');
+                          setEditChannelDescInput(activeChanObj?.description || '');
+                          setEditChannelIsPrivate(Boolean(activeChanObj?.is_private));
+                          setCandidateMemberToAdd('');
+                          setChannelSettingsTab('members');
+                          setIsChannelSettingsModalOpen(true);
+                        }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: 'bold' }}>⚙️ Members</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                          paddingHorizontal: 9,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: 'rgba(56, 189, 248, 0.4)'
+                        }}
+                        onPress={() => setInspectedUserProfile(chatRecipient)}
+                      >
+                        <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>👤 Profile</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-              )}
 
-              {/* Compose Box (Clean, Enterprise bottom bar) */}
-              <View style={styles.chatComposerContainer}>
-                {/* Left Attachment / Action Plus Button */}
-                <TouchableOpacity
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 17,
-                    backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#334155' : '#cbd5e1'
-                  }}
-                  onPress={() => {
-                    Alert.alert(
-                      'Attach & Share 📎',
-                      'Choose an action for this conversation:',
-                      [
-                        { text: '📸 Take Photo (Camera)', onPress: () => pickAndSendChatPhoto(true) },
-                        { text: '🖼️ Choose Photo (Gallery)', onPress: () => pickAndSendChatPhoto(false) },
-                        { text: '📄 Attach Document / PDF URL', onPress: () => setIsAttachingDocModalOpen(true) },
-                        { text: '✨ Choose Instant Avatar (No Reinstall)', onPress: () => setIsPhotoPickerModalOpen(true) },
-                        { text: 'Cancel', style: 'cancel' }
-                      ]
-                    );
-                  }}
-                >
-                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#0284c7' }}>+</Text>
-                </TouchableOpacity>
+                {/* Messages Feed Area */}
+                <View style={[styles.card, { minHeight: 360, paddingBottom: 10 }]}>
+                  {activeConversationMessages.length === 0 ? (
+                    <View style={{ paddingVertical: 45, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 34, marginBottom: 8 }}>💬</Text>
+                      <Text style={{ color: isDarkMode ? '#ffffff' : '#0f172a', fontSize: 15, fontWeight: 'bold' }}>
+                        Welcome to {chatRecipient ? `@${chatRecipient.first_name}` : (activeChanObj?.is_private ? `🔒${activeChanObj.name}` : `#${activeChanObj?.name || activeChatChannel}`)}!
+                      </Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, textAlign: 'center', maxWidth: 280, lineHeight: 16 }}>
+                        This is the start of your workspace conversation. Share messages, @mention colleagues, attach photos or documents to collaborate!
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 10 }}>
+                      {activeConversationMessages.map((msg, index) => {
+                        const isMe = msg.sender_id === userProfile?.id;
+                        const prevMsg = index > 0 ? activeConversationMessages[index - 1] : null;
 
-                <TextInput
-                  style={styles.chatComposerInput}
-                  value={chatInputText}
-                  onChangeText={setChatInputText}
-                  placeholder={chatRecipient ? `Message @${chatRecipient.first_name}...` : `Message #${activeChanObj?.name || activeChatChannel}...`}
-                  placeholderTextColor="#64748b"
-                  multiline
-                />
+                        // Date Separator logic
+                        const msgDateStr = new Date(msg.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                        const prevMsgDateStr = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : null;
+                        const showDateSep = !prevMsgDateStr || msgDateStr !== prevMsgDateStr;
+                        const todayDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                        const yDate = new Date(); yDate.setDate(yDate.getDate() - 1);
+                        const yDateStr = yDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                        const datePillLabel = msgDateStr === todayDateStr ? 'Today' : msgDateStr === yDateStr ? 'Yesterday' : msgDateStr;
 
-                <TouchableOpacity
-                  style={[styles.chatSendBtn, (!chatInputText.trim() || isSendingMessage) && { opacity: 0.5 }]}
-                  onPress={handleSendMessage}
-                  disabled={!chatInputText.trim() || isSendingMessage}
-                >
-                  <Text style={styles.chatSendBtnText}>
-                    {isSendingMessage ? '...' : 'Send'}
-                  </Text>
-                </TouchableOpacity>
+                        const isGrouped = !showDateSep && prevMsg && prevMsg.sender_id === msg.sender_id &&
+                          (new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000);
+                        const senderProfile = teamProfiles.find((p) => p.id === msg.sender_id) || (isMe ? userProfile : null);
+
+                        const effectiveAvatar = (senderProfile?.avatar_url && (senderProfile.avatar_url.startsWith('http') || senderProfile.avatar_url.startsWith('data:image')))
+                          ? senderProfile.avatar_url
+                          : (msg.sender_avatar && (msg.sender_avatar.startsWith('http') || msg.sender_avatar.startsWith('data:image')))
+                            ? msg.sender_avatar
+                            : null;
+                        const initials = ((senderProfile?.first_name?.[0] || msg.sender_name?.[0] || 'U') + (senderProfile?.last_name?.[0] || '')).toUpperCase();
+
+                        const isReactionPickerOpen = activeReactionMsgId === msg.id;
+                        const safeAttachments = getSafeAttachments(msg.attachments);
+
+                        return (
+                          <React.Fragment key={msg.id || index}>
+                            {showDateSep && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}>
+                                <View style={{ flex: 1, height: 1, backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0' }} />
+                                <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', paddingHorizontal: 12, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: isDarkMode ? '#334155' : '#cbd5e1' }}>
+                                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: isDarkMode ? '#94a3b8' : '#64748b' }}>{datePillLabel}</Text>
+                                </View>
+                                <View style={{ flex: 1, height: 1, backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0' }} />
+                              </View>
+                            )}
+
+                            <View style={{
+                              flexDirection: 'row',
+                              alignItems: 'flex-start',
+                              paddingVertical: isGrouped ? 2 : 4,
+                              paddingHorizontal: 4,
+                              borderRadius: 8,
+                              backgroundColor: isMe ? (isDarkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.5)') : 'transparent'
+                            }}>
+                              {/* Left Avatar */}
+                              <View style={{ width: 36, marginRight: 10, alignItems: 'center' }}>
+                                {!isGrouped ? (
+                                  <TouchableOpacity
+                                    style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}
+                                    onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
+                                  >
+                                    {effectiveAvatar ? (
+                                      <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
+                                    ) : (
+                                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
+                                        {initials}
+                                      </Text>
+                                    )}
+                                  </TouchableOpacity>
+                                ) : (
+                                  <View style={{ width: 34 }} />
+                                )}
+                              </View>
+
+                              {/* Right Content Column */}
+                              <View style={{ flex: 1 }}>
+                                {/* Sender Info Row */}
+                                {!isGrouped && (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                    <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
+                                      <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                                        {isMe ? `${userProfile?.first_name || 'You'} (You)` : msg.sender_name}
+                                      </Text>
+                                    </TouchableOpacity>
+                                    {senderProfile?.designation && (
+                                      <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                        <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0284c7' }}>{senderProfile.designation}</Text>
+                                      </View>
+                                    )}
+                                    <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                                      {formatISTTimeOnly(msg.created_at)}
+                                    </Text>
+                                  </View>
+                                )}
+
+                                {/* Message Text with @mentions highlighting */}
+                                {msg.message && msg.message !== '📷 Photo attached' && (
+                                  <View style={{ marginTop: 1 }}>
+                                    {renderMessageContentWithMentions(msg.message, false)}
+                                  </View>
+                                )}
+
+                                {/* Attachments rendering (Images, Documents, PDFs) */}
+                                {safeAttachments.length > 0 && (
+                                  <View style={{ gap: 6, marginTop: 4 }}>
+                                    {safeAttachments.map((att: any, attIdx: number) => {
+                                      const isPdfOrDoc = att.category === 'document' || (att.name && (att.name.endsWith('.pdf') || att.name.endsWith('.doc') || att.name.endsWith('.docx') || att.name.endsWith('.xlsx') || att.name.endsWith('.zip')));
+
+                                      if (isPdfOrDoc) {
+                                        return (
+                                          <TouchableOpacity
+                                            key={att.id || attIdx}
+                                            style={{
+                                              flexDirection: 'row',
+                                              alignItems: 'center',
+                                              gap: 10,
+                                              backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
+                                              padding: 10,
+                                              borderRadius: 10,
+                                              borderWidth: 1,
+                                              borderColor: isDarkMode ? '#334155' : '#cbd5e1',
+                                              maxWidth: 290
+                                            }}
+                                            onPress={() => Linking.openURL(att.url)}
+                                          >
+                                            <Text style={{ fontSize: 24 }}>📄</Text>
+                                            <View style={{ flex: 1 }}>
+                                              <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }} numberOfLines={1}>
+                                                {att.name || 'Document Attachment'}
+                                              </Text>
+                                              <Text style={{ fontSize: 10, color: '#0284c7', marginTop: 2, fontWeight: 'bold' }}>
+                                                {att.size ? `${formatAttachmentSize(att.size)} • ` : ''}Tap to view / download ↗
+                                              </Text>
+                                            </View>
+                                          </TouchableOpacity>
+                                        );
+                                      }
+
+                                      return (
+                                        <TouchableOpacity
+                                          key={att.id || attIdx}
+                                          activeOpacity={0.85}
+                                          onPress={() => setChatImageLightboxUrl(att.url)}
+                                          style={{ borderRadius: 10, overflow: 'hidden', maxWidth: 240 }}
+                                        >
+                                          <Image
+                                            source={{ uri: att.url }}
+                                            style={{ width: 240, height: 160, borderRadius: 10, backgroundColor: '#0f172a' }}
+                                            resizeMode="cover"
+                                          />
+                                          <Text style={{ fontSize: 9, color: '#94a3b8', marginTop: 2 }}>
+                                            🔍 Tap to view photo
+                                          </Text>
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </View>
+                                )}
+
+                                {/* Reactions Badges & Add Reaction Button */}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
+                                  {msg.reactions && Array.isArray(msg.reactions) && msg.reactions.map((r: any, rIdx: number) => {
+                                    const hasReacted = r.userIds && r.userIds.includes(userProfile?.id);
+                                    return (
+                                      <TouchableOpacity
+                                        key={r.emoji || rIdx}
+                                        style={{
+                                          flexDirection: 'row',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          backgroundColor: hasReacted ? 'rgba(56, 189, 248, 0.2)' : (isDarkMode ? '#1e293b' : '#f1f5f9'),
+                                          borderColor: hasReacted ? '#0284c7' : (isDarkMode ? '#334155' : '#cbd5e1'),
+                                          borderWidth: 1,
+                                          borderRadius: 12,
+                                          paddingHorizontal: 8,
+                                          paddingVertical: 2
+                                        }}
+                                        onPress={() => addChatReaction(msg.id, r.emoji)}
+                                      >
+                                        <Text style={{ fontSize: 12 }}>{r.emoji}</Text>
+                                        <Text style={{ fontSize: 10, fontWeight: 'bold', color: hasReacted ? '#0284c7' : (isDarkMode ? '#94a3b8' : '#64748b') }}>
+                                          {r.count}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+
+                                  {/* Toggle Quick Reaction Bar */}
+                                  <TouchableOpacity
+                                    style={{
+                                      backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
+                                      paddingHorizontal: 7,
+                                      paddingVertical: 2,
+                                      borderRadius: 10,
+                                      borderWidth: 1,
+                                      borderColor: isDarkMode ? '#334155' : '#cbd5e1'
+                                    }}
+                                    onPress={() => setActiveReactionMsgId(isReactionPickerOpen ? null : msg.id)}
+                                  >
+                                    <Text style={{ fontSize: 11, color: '#94a3b8' }}>☺ +</Text>
+                                  </TouchableOpacity>
+                                </View>
+
+                                {/* Quick Reaction Emoji Picker Row */}
+                                {isReactionPickerOpen && (
+                                  <View style={{
+                                    flexDirection: 'row',
+                                    gap: 6,
+                                    backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 6,
+                                    borderRadius: 14,
+                                    borderWidth: 1,
+                                    borderColor: '#0284c7',
+                                    marginTop: 6,
+                                    alignSelf: 'flex-start',
+                                    shadowColor: '#000',
+                                    shadowOffset: { width: 0, height: 2 },
+                                    shadowOpacity: 0.2,
+                                    shadowRadius: 3,
+                                    elevation: 4
+                                  }}>
+                                    {['👍', '❤️', '🎉', '🔥', '🚀', '👀', '👏', '💯'].map((em) => (
+                                      <TouchableOpacity
+                                        key={em}
+                                        style={{ padding: 4 }}
+                                        onPress={() => addChatReaction(msg.id, em)}
+                                      >
+                                        <Text style={{ fontSize: 18 }}>{em}</Text>
+                                      </TouchableOpacity>
+                                    ))}
+                                  </View>
+                                )}
+                              </View>
+                            </View>
+                          </React.Fragment>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Mention Suggestions Popover (Appears above composer when typing @) */}
+                  {mentionCandidates.length > 0 && (
+                    <View style={{
+                      backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
+                      borderWidth: 1,
+                      borderColor: '#0284c7',
+                      borderRadius: 12,
+                      marginTop: 10,
+                      overflow: 'hidden',
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: -2 },
+                      shadowOpacity: 0.15,
+                      shadowRadius: 4,
+                      elevation: 5
+                    }}>
+                      <View style={{ backgroundColor: '#0284c7', paddingHorizontal: 10, paddingVertical: 4 }}>
+                        <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#ffffff' }}>Mention Colleague</Text>
+                      </View>
+                      {mentionCandidates.map((cand) => (
+                        <TouchableOpacity
+                          key={cand.id}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderBottomWidth: 1,
+                            borderBottomColor: isDarkMode ? '#1e293b' : '#f1f5f9'
+                          }}
+                          onPress={() => insertMentionIntoInput(cand)}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={{ fontSize: 14 }}>{cand.isSpecial ? '📢' : '👤'}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                              {cand.isSpecial ? '@all' : `@${cand.first_name} ${cand.last_name || ''}`}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 10, color: '#94a3b8' }}>{cand.designation}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Compose Box (Clean, Enterprise bottom bar) */}
+                  <View style={styles.chatComposerContainer}>
+                    {/* Left Attachment / Action Plus Button */}
+                    <TouchableOpacity
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 17,
+                        backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: 1,
+                        borderColor: isDarkMode ? '#334155' : '#cbd5e1'
+                      }}
+                      onPress={() => {
+                        Alert.alert(
+                          'Attach & Share 📎',
+                          'Choose an action for this conversation:',
+                          [
+                            { text: '📸 Take Photo (Camera)', onPress: () => pickAndSendChatPhoto(true) },
+                            { text: '🖼️ Choose Photo (Gallery)', onPress: () => pickAndSendChatPhoto(false) },
+                            { text: '📄 Attach Document / PDF URL', onPress: () => setIsAttachingDocModalOpen(true) },
+                            { text: '✨ Choose Instant Avatar (No Reinstall)', onPress: () => setIsPhotoPickerModalOpen(true) },
+                            { text: 'Cancel', style: 'cancel' }
+                          ]
+                        );
+                      }}
+                    >
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#0284c7' }}>+</Text>
+                    </TouchableOpacity>
+
+                    <TextInput
+                      style={styles.chatComposerInput}
+                      value={chatInputText}
+                      onChangeText={setChatInputText}
+                      placeholder={chatRecipient ? `Message @${chatRecipient.first_name}...` : `Message #${activeChanObj?.name || activeChatChannel}...`}
+                      placeholderTextColor="#64748b"
+                      multiline
+                    />
+
+                    <TouchableOpacity
+                      style={[styles.chatSendBtn, (!chatInputText.trim() || isSendingMessage) && { opacity: 0.5 }]}
+                      onPress={handleSendMessage}
+                      disabled={!chatInputText.trim() || isSendingMessage}
+                    >
+                      <Text style={styles.chatSendBtnText}>
+                        {isSendingMessage ? '...' : 'Send'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </View>
-            </View>
+            )}
           </View>
         )}
 
@@ -6697,6 +7061,293 @@ export default function App() {
               onPress={() => setIsAttachingDocModalOpen(false)}
             >
               <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 22: CHANNEL SETTINGS & MEMBERS MANAGEMENT                           */}
+      {/* ========================================================================= */}
+      <Modal visible={isChannelSettingsModalOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '90%', paddingBottom: 16 }]}>
+            {/* Modal Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <Text style={{ fontSize: 20 }}>{activeChanObj?.is_private ? '🔒' : '⚙️'}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.modalTitle, { textAlign: 'left' }]} numberOfLines={1}>
+                    {activeChanObj?.is_private ? `🔒 ${activeChanObj.name}` : `# ${activeChanObj?.name || 'Channel'}`}
+                  </Text>
+                  <Text style={[styles.modalSub, { textAlign: 'left', marginBottom: 0 }]}>
+                    {activeChanObj?.is_private ? 'Private Group Settings' : 'Channel Settings & Members'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsChannelSettingsModalOpen(false)}
+                style={{ padding: 4 }}
+              >
+                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Subtab Toggle: Members vs Details */}
+            <View style={[styles.filterRow, { marginBottom: 14, width: '100%' }]}>
+              <TouchableOpacity
+                style={[styles.filterTab, channelSettingsTab === 'members' && styles.filterTabActive]}
+                onPress={() => setChannelSettingsTab('members')}
+              >
+                <Text style={[styles.filterTabText, channelSettingsTab === 'members' && styles.filterTabTextActive]}>
+                  👥 Members ({activeChannelMembers.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.filterTab, channelSettingsTab === 'details' && styles.filterTabActive]}
+                onPress={() => setChannelSettingsTab('details')}
+              >
+                <Text style={[styles.filterTabText, channelSettingsTab === 'details' && styles.filterTabTextActive]}>
+                  ⚙️ Details & Access
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* TAB 1: MEMBERS MANAGEMENT */}
+            {channelSettingsTab === 'members' && (
+              <ScrollView style={{ width: '100%', maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                {/* Add Member Section (If Admin/Creator or Privileged) */}
+                {isChannelAdmin && nonMembersToAdd.length > 0 && (
+                  <View style={{
+                    backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                    borderRadius: 12,
+                    padding: 12,
+                    borderWidth: 1,
+                    borderColor: isDarkMode ? '#334155' : '#e2e8f0',
+                    marginBottom: 14
+                  }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a', marginBottom: 6 }}>
+                      + Add Colleague to Channel
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {nonMembersToAdd.map((colleague) => {
+                          const isSelected = candidateMemberToAdd === colleague.id;
+                          return (
+                            <TouchableOpacity
+                              key={colleague.id}
+                              style={{
+                                paddingHorizontal: 10,
+                                paddingVertical: 6,
+                                borderRadius: 8,
+                                backgroundColor: isSelected ? '#0284c7' : (isDarkMode ? '#0f172a' : '#ffffff'),
+                                borderWidth: 1,
+                                borderColor: isSelected ? '#0284c7' : (isDarkMode ? '#334155' : '#cbd5e1')
+                              }}
+                              onPress={() => setCandidateMemberToAdd(colleague.id)}
+                            >
+                              <Text style={{ fontSize: 11, fontWeight: 'bold', color: isSelected ? '#ffffff' : (isDarkMode ? '#f8fafc' : '#0f172a') }}>
+                                {colleague.first_name} {colleague.last_name || ''}
+                              </Text>
+                              <Text style={{ fontSize: 9, color: isSelected ? '#e0f2fe' : '#94a3b8' }}>
+                                {colleague.designation || 'Staff'}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </ScrollView>
+
+                    <TouchableOpacity
+                      style={[styles.loginBtn, { marginTop: 4, paddingVertical: 8, opacity: candidateMemberToAdd ? 1 : 0.5 }]}
+                      disabled={!candidateMemberToAdd}
+                      onPress={() => activeChanObj && addMemberToChannel(activeChanObj.id || activeChanObj.name, candidateMemberToAdd)}
+                    >
+                      <Text style={[styles.loginBtnText, { fontSize: 12 }]}>Add Selected Colleague ✓</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Current Members List */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>
+                  Current Members ({activeChannelMembers.length})
+                </Text>
+
+                <View style={{ gap: 8 }}>
+                  {activeChannelMembers.map((member) => {
+                    const isSelf = member.id === userProfile?.id;
+                    const isOwner = activeChanObj?.created_by === member.id;
+                    const hasValidAvatar = member.avatar_url && (member.avatar_url.startsWith('http') || member.avatar_url.startsWith('data:image'));
+                    const initials = ((member.first_name?.[0] || 'U') + (member.last_name?.[0] || '')).toUpperCase();
+
+                    return (
+                      <View
+                        key={member.id}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: 10,
+                          backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                          borderWidth: 1,
+                          borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, marginRight: 8 }}>
+                          <View style={{ width: 32, height: 32, borderRadius: 16, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
+                            {hasValidAvatar ? (
+                              <Image source={{ uri: member.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                            ) : (
+                              <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>{initials}</Text>
+                            )}
+                          </View>
+
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                                {member.first_name} {member.last_name || ''} {isSelf && '(You)'}
+                              </Text>
+                              {isOwner && (
+                                <View style={{ backgroundColor: '#0284c7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                  <Text style={{ color: '#fff', fontSize: 8, fontWeight: 'bold' }}>Owner</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                              {member.designation || member.department || 'Team Member'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Remove Action (if channel admin and not self) */}
+                        {isChannelAdmin && !isSelf && (
+                          <TouchableOpacity
+                            style={{
+                              paddingHorizontal: 8,
+                              paddingVertical: 4,
+                              borderRadius: 6,
+                              backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                              borderWidth: 1,
+                              borderColor: 'rgba(239, 68, 68, 0.3)'
+                            }}
+                            onPress={() => activeChanObj && removeMemberFromChannel(activeChanObj.id || activeChanObj.name, member.id)}
+                          >
+                            <Text style={{ color: '#ef4444', fontSize: 10, fontWeight: 'bold' }}>Remove</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            )}
+
+            {/* TAB 2: CHANNEL DETAILS & ACCESS */}
+            {channelSettingsTab === 'details' && (
+              <ScrollView style={{ width: '100%', maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                <Text style={styles.inputLabel}>Channel Name *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editChannelNameInput}
+                  onChangeText={setEditChannelNameInput}
+                  placeholder="e.g. general, announcements"
+                  placeholderTextColor="#64748b"
+                  autoCapitalize="none"
+                  editable={isChannelAdmin}
+                />
+
+                <Text style={styles.inputLabel}>Channel Description</Text>
+                <TextInput
+                  style={[styles.textInput, { height: 60, textAlignVertical: 'top' }]}
+                  value={editChannelDescInput}
+                  onChangeText={setEditChannelDescInput}
+                  placeholder="What is this channel for?"
+                  placeholderTextColor="#64748b"
+                  multiline
+                  editable={isChannelAdmin}
+                />
+
+                {isChannelAdmin && (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginVertical: 10,
+                    padding: 10,
+                    borderRadius: 10,
+                    backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
+                    borderWidth: 1,
+                    borderColor: isDarkMode ? '#334155' : '#cbd5e1'
+                  }}>
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <Text style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                        Private Channel Access
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
+                        {editChannelIsPrivate
+                          ? 'Only invited members can view and post messages.'
+                          : 'Anyone in the workspace can view and post.'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        backgroundColor: editChannelIsPrivate ? '#f59e0b' : (isDarkMode ? '#334155' : '#cbd5e1')
+                      }}
+                      onPress={() => setEditChannelIsPrivate(!editChannelIsPrivate)}
+                    >
+                      <Text style={{ color: editChannelIsPrivate ? '#ffffff' : (isDarkMode ? '#94a3b8' : '#475569'), fontSize: 11, fontWeight: 'bold' }}>
+                        {editChannelIsPrivate ? '🔒 Private' : '🌐 Public'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {isChannelAdmin && (
+                  <TouchableOpacity
+                    style={[styles.loginBtn, { marginTop: 10, opacity: isSavingChannelSettings || !editChannelNameInput.trim() ? 0.6 : 1 }]}
+                    disabled={isSavingChannelSettings || !editChannelNameInput.trim()}
+                    onPress={() => activeChanObj && updateChannelDetails(activeChanObj.id || activeChanObj.name, editChannelNameInput, editChannelDescInput, editChannelIsPrivate)}
+                  >
+                    <Text style={styles.loginBtnText}>
+                      {isSavingChannelSettings ? 'Saving...' : 'Save Channel Changes ✓'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Delete Channel (Permanent) */}
+                {isChannelAdmin && activeChanObj && activeChanObj.id && (
+                  <TouchableOpacity
+                    style={{
+                      marginTop: 14,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      borderWidth: 1,
+                      borderColor: '#ef4444',
+                      alignItems: 'center'
+                    }}
+                    onPress={() => deleteChannel(activeChanObj.id)}
+                  >
+                    <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>
+                      🗑️ Delete Channel Permanently
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+            )}
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={[styles.modalCloseBtn, { marginTop: 12, width: '100%' }]}
+              onPress={() => setIsChannelSettingsModalOpen(false)}
+            >
+              <Text style={styles.modalCloseBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
