@@ -84,9 +84,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const managedEmployeesCount = orgProfiles.filter((p) => p.managerId === currentProfile?.id).length;
   const canAccessEmployees = isTopLeadership || managedEmployeesCount > 0;
 
-  const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
+  // Active unread chat mentions or DMs (not all historical chat messages)
+  const lastChatReadTime = localStorage.getItem(`vdx_chat_read_${currentProfile?.id}`) || '1970-01-01';
+  const chatUnreadCount = chatMessages.filter((m) => {
+    if (m.senderId === currentProfile?.id) return false;
+    if (m.createdAt <= lastChatReadTime) return false;
+    if (m.recipientId) return m.recipientId === currentProfile?.id;
+    if (m.message && (m.message.includes(`@${currentProfile?.firstName}`) || m.message.includes('@all') || m.message.includes('@channel'))) return true;
+    return false;
+  }).length;
 
-  // Exact navigation item list matching the reference image & requirements
+  // Today's upcoming/active meetings only
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayMeetingsCount = currentOrgMeetings.filter((m) => m.date === todayStr && m.status !== 'completed').length;
+
+  // Pending tasks specifically assigned to current user
+  const myPendingTasksCount = tasks.filter(
+    (t) => (t.assignedTo === currentProfile?.id || t.assignedToEmail === currentProfile?.email) && t.status !== 'completed'
+  ).length;
+
+  // Pending regularizations requiring approval by current user (leadership or direct manager)
+  const pendingRegularizationsCount = attendanceRecords.filter((a) => {
+    if (a.regularizationStatus !== 'pending') return false;
+    if (isHrOrSuperadmin) return true;
+    const emp = orgProfiles.find((p) => p.id === a.employeeId);
+    return emp?.managerId === currentProfile?.id;
+  }).length;
+
+  // Exact navigation item list matching corporate standards and strict role access
   const navItems = [
     {
       id: 'dashboard',
@@ -108,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'attendance',
       label: 'Attendance',
       icon: Clock,
-      badge: pendingRegularizations > 0 && isHrOrSuperadmin ? `${pendingRegularizations}` : null
+      badge: pendingRegularizationsCount > 0 ? `${pendingRegularizationsCount}` : null
     },
     {
       id: 'leaves',
@@ -120,7 +145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'payroll',
       label: 'Payroll',
       icon: Banknote,
-      badge: isHrOrSuperadmin ? null : 'Slips'
+      badge: null
     },
     {
       id: 'chat',
@@ -132,7 +157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'meetings',
       label: 'Meetings & Events',
       icon: Video,
-      badge: currentOrgMeetings.length > 0 ? `${currentOrgMeetings.length}` : null
+      badge: todayMeetingsCount > 0 ? `${todayMeetingsCount}` : null
     },
     {
       id: 'notices',
@@ -144,7 +169,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'tasks',
       label: 'Performance',
       icon: TrendingUp,
-      badge: `${tasks.length}`
+      badge: myPendingTasksCount > 0 ? `${myPendingTasksCount}` : null
     },
     {
       id: 'offers',
@@ -173,6 +198,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const handleTabClick = (tabId: string) => {
+    if (tabId === 'chat' && currentProfile?.id) {
+      try {
+        localStorage.setItem(`vdx_chat_read_${currentProfile.id}`, new Date().toISOString());
+      } catch {}
+    }
     setActiveTab(tabId);
     if (onCloseMobile) onCloseMobile();
   };

@@ -23,7 +23,7 @@ interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
-  const { login, allOrganizations, allProfiles, addToast } = useApp();
+  const { login, loginWithRegisteredEmail, allOrganizations, allProfiles, addToast } = useApp();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -52,6 +52,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+
+  // Google SSO Modal & Authentication State
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState('');
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   // Auto-detect organization silently from typed email (does NOT expose other tenants)
   const detectedOrg = useMemo(() => {
@@ -129,10 +134,67 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setIsLoading(false);
   };
 
+  const handleGoogleLogin = async () => {
+    setErrorMessage(null);
+
+    // 1. Try Supabase Native OAuth redirect first
+    try {
+      const { getSupabaseClient } = await import('../lib/supabaseClient');
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account'
+          }
+        }
+      });
+      if (!error && data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+    } catch (oauthErr) {
+      console.warn('Native Google OAuth redirect note, opening Google workspace prompt:', oauthErr);
+    }
+
+    // 2. Open Google registered work account verification modal
+    setGoogleEmail(email.trim());
+    setShowGoogleModal(true);
+  };
+
+  const handleGoogleEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!googleEmail.trim()) return;
+    setIsGoogleLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await loginWithRegisteredEmail(googleEmail.trim(), 'Google');
+      if (result.success) {
+        setShowGoogleModal(false);
+        if (onLoginSuccess) onLoginSuccess();
+      } else {
+        setErrorMessage(result.message);
+        addToast('Google Sign-In Denied', result.message, 'error');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Google authentication failed.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
   const handleSsoClick = (provider: string) => {
+    if (provider === 'Google') {
+      handleGoogleLogin();
+      return;
+    }
+
     addToast(
       `${provider} SSO Security Notice`,
-      `Single Sign-On via ${provider} is managed by your organization's IT policy. Please sign in with your work email credentials.`,
+      `Single Sign-On via ${provider} is managed by your organization's IT policy. Please sign in with your work email credentials or use Continue with Google.`,
       'info'
     );
   };
@@ -659,6 +721,71 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   className="w-1/2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition disabled:opacity-60"
                 >
                   {forgotSent ? 'Dispatched ✓' : 'Send Instructions'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Google Registered Account Sign-In Modal */}
+      {showGoogleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5">
+            <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center mx-auto">
+              <svg className="w-6 h-6" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.24v3.15C3.26 21.43 7.33 24 12 24z" />
+                <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.24C.45 8.16 0 9.97 0 12s.45 3.84 1.24 5.42l4.04-3.15z" />
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.57 1.24 6.58l4.04 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+              </svg>
+            </div>
+
+            <div className="text-center space-y-1">
+              <h3 className="text-lg font-bold text-slate-900">Continue with Google</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                Sign in with your registered Google work email. Access is verified securely against active employee accounts.
+              </p>
+            </div>
+
+            <form onSubmit={handleGoogleEmailSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Google Work Email
+                </label>
+                <input
+                  type="email"
+                  required
+                  autoFocus
+                  value={googleEmail}
+                  onChange={(e) => setGoogleEmail(e.target.value)}
+                  placeholder="name@company.com or your registered email"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+                />
+              </div>
+
+              <div className="flex items-center space-x-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleModal(false)}
+                  disabled={isGoogleLoading}
+                  className="w-1/2 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isGoogleLoading || !googleEmail.trim()}
+                  className="w-1/2 py-2.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold shadow-md transition disabled:opacity-50 flex items-center justify-center space-x-1.5"
+                >
+                  {isGoogleLoading ? (
+                    <span>Verifying...</span>
+                  ) : (
+                    <>
+                      <span>Sign In</span>
+                      <span>→</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>

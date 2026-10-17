@@ -34,6 +34,7 @@ import {
   Volume2,
   Image as ImageIcon,
   Download,
+  Eye,
   CornerUpLeft,
   ChevronLeft,
   Check,
@@ -107,6 +108,64 @@ export const TeamChat: React.FC<TeamChatProps> = ({
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [replyingTo, setReplyingTo] = useState<{ id: string; senderName: string; snippet: string } | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ url: string; name: string } | null>(null);
+  const [previewPdf, setPreviewPdf] = useState<{ url: string; name: string } | null>(null);
+
+  // Base64 & PDF safe resolver & blob downloader
+  const resolveSafeAttachmentUrl = (url: string, category?: string, name?: string): string => {
+    if (!url) return '';
+    const clean = url.trim();
+    if (clean.startsWith('http://') || clean.startsWith('https://') || clean.startsWith('blob:') || clean.startsWith('data:')) {
+      return clean;
+    }
+    // Direct raw Base64 stored in database
+    if (clean.startsWith('JVBERi0') || (name && name.toLowerCase().endsWith('.pdf'))) {
+      return `data:application/pdf;base64,${clean}`;
+    }
+    if (clean.startsWith('/9j/')) {
+      return `data:image/jpeg;base64,${clean}`;
+    }
+    if (clean.startsWith('iVBORw0KGgo')) {
+      return `data:image/png;base64,${clean}`;
+    }
+    return `data:application/octet-stream;base64,${clean}`;
+  };
+
+  const handleDownloadAttachment = (att: ChatAttachment) => {
+    try {
+      const resolved = resolveSafeAttachmentUrl(att.url, att.category, att.name);
+      if (resolved.startsWith('data:')) {
+        const parts = resolved.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = att.name || 'document';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+      } else {
+        const a = document.createElement('a');
+        a.href = resolved;
+        a.target = '_blank';
+        a.download = att.name || 'document';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (err) {
+      console.warn('Download fallback error:', err);
+      window.open(att.url, '_blank');
+    }
+  };
 
   // Message inline edit state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -301,10 +360,16 @@ export const TeamChat: React.FC<TeamChatProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeChannelMessages.length, activeChatChannel]);
 
-  // Handle @mention typing detection
+  // Handle @mention typing detection and auto-adjust typing window height
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInputText(val);
+
+    // Dynamic auto-grow typing window (resets on clear, caps at 180px with scroll)
+    const target = e.target;
+    target.style.height = 'auto';
+    const nextH = Math.min(Math.max(target.scrollHeight, 42), 180);
+    target.style.height = `${nextH}px`;
 
     const cursor = e.target.selectionStart || 0;
     setMentionCursorPos(cursor);
@@ -430,6 +495,9 @@ export const TeamChat: React.FC<TeamChatProps> = ({
       : undefined;
 
     setInputText('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
     setPendingAttachments([]);
     setReplyingTo(null);
     setShowMentionPopover(false);
@@ -1664,21 +1732,24 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                           {msg.attachments.map((att) => (
                             <div key={att.id} className="rounded-xl overflow-hidden">
                               {/* 1. Image Preview */}
-                              {att.category === 'image' && (
-                                <div
-                                  onClick={() => setLightboxImage({ url: att.url, name: att.name })}
-                                  className="cursor-pointer group/img relative rounded-xl overflow-hidden border border-black/10 max-w-sm"
-                                >
-                                  <img
-                                    src={att.url}
-                                    alt={att.name}
-                                    className="max-h-60 w-auto object-cover rounded-xl transition group-hover/img:scale-102"
-                                  />
-                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-white text-xs font-bold">
-                                    Click to Enlarge
+                              {att.category === 'image' && (() => {
+                                const safeImgUrl = resolveSafeAttachmentUrl(att.url, 'image', att.name);
+                                return (
+                                  <div
+                                    onClick={() => setLightboxImage({ url: safeImgUrl, name: att.name })}
+                                    className="cursor-pointer group/img relative rounded-xl overflow-hidden border border-black/10 max-w-sm"
+                                  >
+                                    <img
+                                      src={safeImgUrl}
+                                      alt={att.name}
+                                      className="max-h-60 w-auto object-cover rounded-xl transition group-hover/img:scale-102"
+                                    />
+                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-white text-xs font-bold">
+                                      Click to Enlarge
+                                    </div>
                                   </div>
-                                </div>
-                              )}
+                                );
+                              })()}
 
                               {/* 2. Video Player */}
                               {att.category === 'video' && (
@@ -1703,34 +1774,57 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                                 </div>
                               )}
 
-                              {/* 4. Document / Generic File Card */}
-                              {(att.category === 'document' || att.category === 'other') && (
-                                <div
-                                  className={`p-2.5 rounded-xl border flex items-center justify-between space-x-3 transition ${
-                                    isMe
-                                      ? 'bg-blue-700/60 border-blue-400 text-white'
-                                      : 'bg-[var(--bg-card-subtle)] border-[var(--border-color)] text-[var(--text-primary)]'
-                                  }`}
-                                >
-                                  <div className="flex items-center space-x-2 truncate">
-                                    <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
-                                      <FileText className="w-4 h-4" />
+                              {/* 4. Document / PDF / Base64 File Card */}
+                              {(att.category === 'document' || att.category === 'other' || att.name?.toLowerCase().endsWith('.pdf')) && (() => {
+                                const safeDocUrl = resolveSafeAttachmentUrl(att.url, att.category, att.name);
+                                const isPdf = att.name?.toLowerCase().endsWith('.pdf') || safeDocUrl.startsWith('data:application/pdf') || safeDocUrl.includes('.pdf');
+                                return (
+                                  <div
+                                    className={`p-2.5 rounded-xl border flex items-center justify-between space-x-3 transition ${
+                                      isMe
+                                        ? 'bg-blue-700/60 border-blue-400 text-white'
+                                        : 'bg-[var(--bg-card-subtle)] border-[var(--border-color)] text-[var(--text-primary)]'
+                                    }`}
+                                  >
+                                    <div
+                                      onClick={() => isPdf && setPreviewPdf({ url: safeDocUrl, name: att.name })}
+                                      className={`flex items-center space-x-2 truncate ${isPdf ? 'cursor-pointer hover:opacity-85' : ''}`}
+                                      title={isPdf ? 'Click to preview PDF document' : att.name}
+                                    >
+                                      <div className={`w-8 h-8 rounded-lg ${isPdf ? 'bg-red-500/20 text-red-300' : 'bg-white/20'} flex items-center justify-center shrink-0`}>
+                                        <FileText className="w-4 h-4" />
+                                      </div>
+                                      <div className="truncate">
+                                        <span className="font-bold text-xs block truncate">{att.name}</span>
+                                        <div className="flex items-center space-x-1 text-[10px] opacity-75">
+                                          <span>{formatFileSize(att.size)}</span>
+                                          {isPdf && <span className="font-semibold text-sky-300">• PDF Document</span>}
+                                        </div>
+                                      </div>
                                     </div>
-                                    <div className="truncate">
-                                      <span className="font-bold text-xs block truncate">{att.name}</span>
-                                      <span className="text-[10px] opacity-75 block">{formatFileSize(att.size)}</span>
+                                    <div className="flex items-center space-x-1 shrink-0">
+                                      {isPdf && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setPreviewPdf({ url: safeDocUrl, name: att.name })}
+                                          className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-current border border-white/20 transition"
+                                          title="Preview PDF"
+                                        >
+                                          <Eye className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownloadAttachment(att)}
+                                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-current border border-white/20 hover:shadow-xs transition"
+                                        title="Download File"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   </div>
-                                  <a
-                                    href={att.url}
-                                    download={att.name}
-                                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-current border border-white/20 hover:shadow-xs transition shrink-0"
-                                    title="Download File"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                  </a>
-                                </div>
-                              )}
+                                );
+                              })()}
                             </div>
                           ))}
                         </div>
@@ -2086,7 +2180,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                     ? 'Ask support or report an issue...'
                     : `Message #${activeChatChannel}...`
                 }
-                className="w-full px-3.5 py-2.5 bg-transparent text-xs sm:text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none resize-none max-h-28"
+                className="w-full px-3.5 py-2.5 bg-transparent text-xs sm:text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none min-h-[42px] max-h-[180px] overflow-y-auto leading-relaxed resize-y transition-all"
               />
 
               {/* Composer Toolbar */}
@@ -2546,6 +2640,59 @@ export const TeamChat: React.FC<TeamChatProps> = ({
                 <Download className="w-3.5 h-3.5" />
                 <span>Download</span>
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Document Preview Modal */}
+      {previewPdf && (
+        <div
+          onClick={() => setPreviewPdf(null)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-4xl h-[88vh] bg-[var(--bg-card)] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-[var(--border-color)]"
+          >
+            {/* Modal Header */}
+            <div className="p-3.5 bg-[var(--bg-card-subtle)] border-b border-[var(--border-color)] flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-2 truncate">
+                <div className="w-7 h-7 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div className="truncate">
+                  <h4 className="text-xs font-bold text-[var(--text-primary)] truncate">{previewPdf.name}</h4>
+                  <span className="text-[10px] text-[var(--text-muted)]">Live PDF Document Viewer</span>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadAttachment({ id: 'dl', name: previewPdf.name, url: previewPdf.url, size: 0, category: 'document' })}
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-sm transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPdf(null)}
+                  className="p-1.5 rounded-xl hover:bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
+                  title="Close Preview"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 w-full bg-slate-950 p-1 overflow-hidden">
+              <iframe
+                src={previewPdf.url}
+                className="w-full h-full rounded-xl border-0"
+                title={previewPdf.name}
+              />
             </div>
           </div>
         </div>

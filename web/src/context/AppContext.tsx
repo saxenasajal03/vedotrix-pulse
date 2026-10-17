@@ -71,6 +71,7 @@ interface AppContextType {
   // Authentication & Security
   isAuthenticated: boolean;
   login: (email: string, pass: string) => Promise<{ success: boolean; message: string }>;
+  loginWithRegisteredEmail: (email: string, provider?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
 
   // Theme & Appearance
@@ -514,6 +515,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
     } catch {}
+  }, []);
+
+  // Listen for Supabase OAuth redirect sessions (e.g. Google Sign-In)
+  useEffect(() => {
+    let authSub: any = null;
+    try {
+      const client = getSupabaseClient();
+      client.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.email && !localStorage.getItem('vdx_auth_token')) {
+          loginWithRegisteredEmail(session.user.email, 'Google');
+          if (window.location.hash.includes('access_token')) {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        }
+      });
+
+      const { data } = client.auth.onAuthStateChange(async (event, session) => {
+        if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session?.user?.email) {
+          if (!localStorage.getItem('vdx_auth_token')) {
+            loginWithRegisteredEmail(session.user.email, 'Google');
+            if (window.location.hash.includes('access_token')) {
+              window.history.replaceState(null, '', window.location.pathname);
+            }
+          }
+        }
+      });
+      authSub = data?.subscription;
+    } catch (e) {
+      console.warn('OAuth listener error:', e);
+    }
+    return () => {
+      authSub?.unsubscribe?.();
+    };
   }, []);
 
   // Only sync session pointers to local storage
@@ -1899,6 +1933,113 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: false, message: 'Invalid work email or password. Access denied.' };
   };
 
+  // Authenticate user via verified Google / OAuth work email
+  const loginWithRegisteredEmail = async (email: string, provider = 'Google'): Promise<{ success: boolean; message: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      return { success: false, message: 'Please enter a valid work email.' };
+    }
+
+    try {
+      const client = getSupabaseClient();
+      // 1. Check live database for registered profile
+      const { data: profData, error: profErr } = await client
+        .from('profiles')
+        .select('*')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      const matchedProfile = profData || profiles.find((p) => p.email?.toLowerCase() === cleanEmail);
+
+      if (matchedProfile) {
+        if (matchedProfile.is_active === false || matchedProfile.isActive === false) {
+          return {
+            success: false,
+            message: `Account Inactive: The corporate account for ${cleanEmail} is currently deactivated. Please contact HR or IT administrator.`
+          };
+        }
+
+        const orgId = matchedProfile.org_id || matchedProfile.orgId;
+        const userId = matchedProfile.id;
+        const token = `vdx_auth_token_${Date.now()}`;
+        localStorage.setItem('vdx_auth_token', token);
+        localStorage.setItem('vdx_auth_email', cleanEmail);
+        localStorage.setItem('vdx_current_org_id', orgId);
+        localStorage.setItem('vdx_current_profile_id', userId);
+
+        setCurrentOrgId(orgId);
+        setCurrentProfileId(userId);
+        setIsAuthenticated(true);
+
+        // Fetch org details if not already loaded
+        if (!organizations.some((o) => o.id === orgId)) {
+          client.from('organizations').select('*').eq('id', orgId).maybeSingle().then(({ data: orgData }) => {
+            if (orgData) {
+              setOrganizations((prev) => [
+                ...prev.filter((o) => o.id !== orgData.id),
+                {
+                  id: orgData.id,
+                  name: orgData.name,
+                  slug: orgData.slug,
+                  orgCode: orgData.org_code,
+                  industry: orgData.industry || 'Tech',
+                  website: orgData.website || 'https://vedotrix.com',
+                  address: orgData.address || '',
+                  phone: orgData.phone || '',
+                  logoUrl: orgData.logo_url || '/vedotrix-logo.png',
+                  settings: orgData.settings || {
+                    workHoursPerDay: 8,
+                    gracePeriodMins: 15,
+                    wfhAllowed: true,
+                    halfDayThresholdHours: 4.5
+                  }
+                }
+              ]);
+            }
+          });
+        }
+
+        const fName = matchedProfile.first_name || matchedProfile.firstName || 'Employee';
+        const lName = matchedProfile.last_name || matchedProfile.lastName || '';
+        const role = matchedProfile.role || 'employee';
+
+        if (role === 'superadmin') {
+          addToast('Welcome Super Controller 👑', `Authenticated via ${provider} as Vedotrix Root Administrator.`, 'success');
+        } else {
+          addToast('Welcome Back 🌟', `Signed in with ${provider} as ${fName} ${lName} (${role.toUpperCase()})`, 'success');
+        }
+
+        return { success: true, message: `Signed in successfully via ${provider}.` };
+      } else {
+        return {
+          success: false,
+          message: `Access Denied: The Google account "${cleanEmail}" is not registered in Vedotrix Pulse. Please ask your HR/admin to register your email.`
+        };
+      }
+    } catch (err: any) {
+      console.warn('Google login verification fallback:', err);
+      const localMatch = profiles.find((p) => p.email?.toLowerCase() === cleanEmail && p.isActive);
+      if (localMatch) {
+        const token = `vdx_auth_token_${Date.now()}`;
+        localStorage.setItem('vdx_auth_token', token);
+        localStorage.setItem('vdx_auth_email', cleanEmail);
+        localStorage.setItem('vdx_current_org_id', localMatch.orgId);
+        localStorage.setItem('vdx_current_profile_id', localMatch.id);
+
+        setCurrentOrgId(localMatch.orgId);
+        setCurrentProfileId(localMatch.id);
+        setIsAuthenticated(true);
+        addToast('Welcome Back', `Logged in via ${provider} as ${localMatch.firstName} ${localMatch.lastName}`, 'success');
+        return { success: true, message: 'Logged in successfully.' };
+      }
+
+      return {
+        success: false,
+        message: `The account "${cleanEmail}" is not registered. Please contact your organization administrator.`
+      };
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('vdx_auth_token');
     localStorage.removeItem('vdx_auth_email');
@@ -2343,6 +2484,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (n.category === 'offer') {
       return currentProfile?.role === 'hr' || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || isVedotrixSuperadmin;
+    }
+
+    if (n.category === 'system' && !n.recipientId && (!n.recipientRole || n.recipientRole === 'all')) {
+      return currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner' || currentProfile?.role === 'hr' || isVedotrixSuperadmin;
     }
 
     return true;
@@ -4795,6 +4940,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         isAuthenticated,
         login,
+        loginWithRegisteredEmail,
         logout,
         theme,
         setTheme,

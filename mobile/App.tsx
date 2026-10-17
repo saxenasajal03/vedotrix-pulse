@@ -13,7 +13,8 @@ import {
   Modal,
   Linking,
   Platform,
-  RefreshControl
+  RefreshControl,
+  Share
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
@@ -241,6 +242,14 @@ export default function App() {
   const [isSavingMessageEdit, setIsSavingMessageEdit] = useState<boolean>(false);
   const [activeMessageActionId, setActiveMessageActionId] = useState<string | null>(null);
   const [showPinnedMessagesModal, setShowPinnedMessagesModal] = useState<boolean>(false);
+
+  // Read more / Show less message truncation state
+  const [expandedChatMsgIds, setExpandedChatMsgIds] = useState<string[]>([]);
+  const toggleChatMsgExpanded = (msgId: string) => {
+    setExpandedChatMsgIds((prev) =>
+      prev.includes(msgId) ? prev.filter((id) => id !== msgId) : [...prev, msgId]
+    );
+  };
 
   // Selected Notice for Full Screen Reading Modal
   const [selectedNoticeForView, setSelectedNoticeForView] = useState<any | null>(null);
@@ -1203,6 +1212,51 @@ export default function App() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Safe document & Base64 PDF opener for mobile
+  const handleOpenMobileAttachment = async (att: any) => {
+    try {
+      const url = (att.url || '').trim();
+      if (!url) return;
+
+      // 1. If standard web URL, open directly with system browser / viewer
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        await Linking.openURL(url);
+        return;
+      }
+
+      // 2. Base64 encoded document / PDF (directly stored in DB)
+      let base64Content = url;
+      if (url.startsWith('data:')) {
+        const commaIdx = url.indexOf(',');
+        if (commaIdx !== -1) {
+          base64Content = url.slice(commaIdx + 1);
+        }
+      }
+
+      try {
+        const FileSystem = require('expo-file-system');
+        const fileName = (att.name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const targetUri = `${FileSystem.cacheDirectory}${fileName}`;
+        await FileSystem.writeAsStringAsync(targetUri, base64Content, {
+          encoding: FileSystem.EncodingType.Base64
+        });
+        await Share.share({
+          url: targetUri,
+          title: att.name || 'Document'
+        });
+      } catch (fsErr) {
+        console.warn('FileSystem Base64 write note, attempting fallback Share:', fsErr);
+        await Share.share({
+          message: `${att.name || 'Document'}: ${url.slice(0, 150)}...`,
+          title: att.name || 'Document'
+        });
+      }
+    } catch (err: any) {
+      console.warn('Error opening attachment:', err);
+      Alert.alert('Cannot Open Document', 'This document could not be previewed.');
+    }
   };
 
   // Channel Membership & Management Functions
@@ -3961,11 +4015,30 @@ export default function App() {
                                     </View>
                                   </View>
                                 ) : (
-                                  msg.message && msg.message !== '📷 Photo attached' && (
-                                    <View style={{ marginTop: 1 }}>
-                                      {renderMessageContentWithMentions(msg.message, false)}
-                                    </View>
-                                  )
+                                  msg.message && msg.message !== '📷 Photo attached' && (() => {
+                                    const isLong = msg.message.length > 250 || (msg.message.match(/\n/g) || []).length >= 5;
+                                    const isExpanded = expandedChatMsgIds.includes(msg.id);
+                                    const displayText = isLong && !isExpanded
+                                      ? msg.message.slice(0, 250).trimEnd() + '…'
+                                      : msg.message;
+
+                                    return (
+                                      <View style={{ marginTop: 1 }}>
+                                        {renderMessageContentWithMentions(displayText, false)}
+                                        {isLong && (
+                                          <TouchableOpacity
+                                            onPress={() => toggleChatMsgExpanded(msg.id)}
+                                            style={{ marginTop: 4, paddingVertical: 2, alignSelf: 'flex-start' }}
+                                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                          >
+                                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#0284c7' }}>
+                                              {isExpanded ? 'Show less ↑' : 'Read more ↓'}
+                                            </Text>
+                                          </TouchableOpacity>
+                                        )}
+                                      </View>
+                                    );
+                                  })()
                                 )}
 
                                 {/* Attachments rendering (Images, Documents, PDFs) */}
@@ -3989,7 +4062,7 @@ export default function App() {
                                               borderColor: isDarkMode ? '#334155' : '#cbd5e1',
                                               maxWidth: 290
                                             }}
-                                            onPress={() => Linking.openURL(att.url)}
+                                            onPress={() => handleOpenMobileAttachment(att)}
                                           >
                                             <Text style={{ fontSize: 24 }}>📄</Text>
                                             <View style={{ flex: 1 }}>
@@ -3997,7 +4070,7 @@ export default function App() {
                                                 {att.name || 'Document Attachment'}
                                               </Text>
                                               <Text style={{ fontSize: 10, color: '#0284c7', marginTop: 2, fontWeight: 'bold' }}>
-                                                {att.size ? `${formatAttachmentSize(att.size)} • ` : ''}Tap to view / download ↗
+                                                {att.size ? `${formatAttachmentSize(att.size)} • ` : ''}Tap to view / share ↗
                                               </Text>
                                             </View>
                                           </TouchableOpacity>
@@ -4008,11 +4081,11 @@ export default function App() {
                                         <TouchableOpacity
                                           key={att.id || attIdx}
                                           activeOpacity={0.85}
-                                          onPress={() => setChatImageLightboxUrl(att.url)}
+                                          onPress={() => setChatImageLightboxUrl(att.url?.startsWith('data:') || att.url?.startsWith('http') ? att.url : `data:image/jpeg;base64,${att.url}`)}
                                           style={{ borderRadius: 10, overflow: 'hidden', maxWidth: 240 }}
                                         >
                                           <Image
-                                            source={{ uri: att.url }}
+                                            source={{ uri: att.url?.startsWith('data:') || att.url?.startsWith('http') ? att.url : `data:image/jpeg;base64,${att.url}` }}
                                             style={{ width: 240, height: 160, borderRadius: 10, backgroundColor: '#0f172a' }}
                                             resizeMode="cover"
                                           />
@@ -5568,7 +5641,7 @@ export default function App() {
         >
           <View style={{ position: 'relative' }}>
             <Text style={styles.navIcon}>⚡</Text>
-            {totalPendingApprovals > 0 && (
+            {totalPendingApprovals > 0 && canApprove && (
               <View style={styles.navBadge}>
                 <Text style={styles.navBadgeText}>{totalPendingApprovals}</Text>
               </View>

@@ -40,7 +40,14 @@ const MainLayout: React.FC = () => {
     typeof window !== 'undefined' &&
     (window.location.hash === '#chat-popout' || window.location.hash === '#widget');
 
-  const chatUnreadCount = chatMessages.filter((m) => m.senderId !== currentProfile?.id).length;
+  const lastChatReadTime = localStorage.getItem(`vdx_chat_read_${currentProfile?.id}`) || '1970-01-01';
+  const chatUnreadCount = chatMessages.filter((m) => {
+    if (m.senderId === currentProfile?.id) return false;
+    if (m.createdAt <= lastChatReadTime) return false;
+    if (m.recipientId) return m.recipientId === currentProfile?.id;
+    if (m.message && (m.message.includes(`@${currentProfile?.firstName}`) || m.message.includes('@all') || m.message.includes('@channel'))) return true;
+    return false;
+  }).length;
 
   // Initialize notification system on app startup — registers SW & syncs permission state
   React.useEffect(() => {
