@@ -103,10 +103,13 @@ function getISTTimeString(dateObj = new Date()): string {
 
 function formatDisplayDate(dateStr?: string): string {
   if (!dateStr) return 'Not Set';
+  const cleanStr = String(dateStr).trim();
+  if (cleanStr === 'Invalid Date' || cleanStr === 'null' || cleanStr === 'undefined' || !cleanStr) {
+    return 'Not Set';
+  }
   try {
-    const raw = String(dateStr).trim();
     // 1. Direct standard date parse
-    const directDate = new Date(raw);
+    const directDate = new Date(cleanStr);
     if (!isNaN(directDate.getTime())) {
       const res = directDate.toLocaleDateString('en-IN', {
         day: 'numeric',
@@ -118,7 +121,7 @@ function formatDisplayDate(dateStr?: string): string {
     }
 
     // 2. Fallback: extract YYYY-MM-DD segment
-    const dateOnly = raw.split('T')[0].split(' ')[0];
+    const dateOnly = cleanStr.split('T')[0].split(' ')[0];
     const parts = dateOnly.split('-');
     if (parts.length === 3) {
       const y = Number(parts[0]);
@@ -132,10 +135,24 @@ function formatDisplayDate(dateStr?: string): string {
         }
       }
     }
-    return raw;
+    return 'Today';
   } catch {
-    return String(dateStr);
+    return 'Today';
   }
+}
+
+function formatNoticeDate(n: any): string {
+  if (!n) return 'Today';
+  let raw = typeof n === 'object' ? (n.date || n.created_at) : n;
+  if (!raw || raw === 'Invalid Date' || raw === 'null' || raw === 'undefined') {
+    if (typeof n === 'object' && n.created_at && n.created_at !== 'Invalid Date') {
+      raw = n.created_at;
+    } else {
+      return 'Today';
+    }
+  }
+  const formatted = formatDisplayDate(raw);
+  return formatted === 'Not Set' ? 'Today' : formatted;
 }
 
 function generateUUID(): string {
@@ -342,7 +359,28 @@ export default function App() {
   const [newChanName, setNewChanName] = useState('');
   const [newChanDesc, setNewChanDesc] = useState('');
   const [newChanIsPrivate, setNewChanIsPrivate] = useState(false);
+  const [newChanMembers, setNewChanMembers] = useState<string[]>([]);
   const [isSavingChan, setIsSavingChan] = useState(false);
+
+  // Chat Image Attachment & Lightbox
+  const [isSendingChatPhoto, setIsSendingChatPhoto] = useState(false);
+  const [chatImageLightboxUrl, setChatImageLightboxUrl] = useState<string | null>(null);
+
+  // HR / Superadmin Employee Record Management Modal
+  const [isEditEmployeeModal, setIsEditEmployeeModal] = useState(false);
+  const [editEmpRole, setEditEmpRole] = useState('employee');
+  const [editEmpDesig, setEditEmpDesig] = useState('');
+  const [editEmpDept, setEditEmpDept] = useState('');
+  const [editEmpJoining, setEditEmpJoining] = useState('');
+  const [isSavingEmpRecord, setIsSavingEmpRecord] = useState(false);
+
+  // Organization Settings Management Modal (HR / Superadmin)
+  const [isOrgSettingsModal, setIsOrgSettingsModal] = useState(false);
+  const [orgShiftStart, setOrgShiftStart] = useState('09:30');
+  const [orgShiftEnd, setOrgShiftEnd] = useState('19:00');
+  const [orgGracePeriod, setOrgGracePeriod] = useState('15');
+  const [orgGeofenceRadius, setOrgGeofenceRadius] = useState('200');
+  const [isSavingOrgSettings, setIsSavingOrgSettings] = useState(false);
 
   // Dynamic Theme-Dependent Styles
   const styles = useMemo(() => createThemedStyles(isDarkMode), [isDarkMode]);
@@ -773,14 +811,12 @@ export default function App() {
           status: (todayRecord.status === 'present' || todayRecord.check_in_time) ? 'present' : todayRecord.status
         };
         setTodayAttendanceRecord(normalizedToday);
-        if (todayRecord.check_in_time && !todayRecord.check_out_time) {
-          setIsCheckedIn(true);
+        setIsCheckedIn(true);
+        if (todayRecord.check_in_time) {
           const t = new Date(todayRecord.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          setCheckInTime(t);
-        } else if (todayRecord.check_out_time) {
-          setIsCheckedIn(false);
-          const outT = formatISTTimeOnly(todayRecord.check_out_time);
-          setCheckInTime(`Shift Completed • Out at ${outT} IST (${todayRecord.total_hours || 8} hrs)`);
+          setCheckInTime(`${t} IST`);
+        } else {
+          setCheckInTime('Present (Today)');
         }
       } else {
         setIsCheckedIn(false);
@@ -858,12 +894,13 @@ export default function App() {
         content: {
           title,
           body,
-          sound: true,
-          priority: Notifications.AndroidNotificationPriority.HIGH,
+          sound: 'default',
+          priority: Notifications.AndroidNotificationPriority.MAX,
+          vibrate: [0, 250, 250, 250],
           color: '#2563eb',
           data
         },
-        trigger: null
+        trigger: { channelId } as any
       });
     } catch (err) {
       console.log('Failed to trigger notification:', err);
@@ -1037,9 +1074,21 @@ export default function App() {
     setTodayAttendanceRecord(null);
   };
 
-  // Geo-Fenced Smart Punch with Shift Gate Enforcement
+  // Geo-Fenced Smart Punch with Shift Gate Enforcement (Single Punch System)
   const handlePunchToggle = async () => {
     if (!supabaseClient || !userProfile) return;
+
+    // If already marked present for today, inform user (single punch system)
+    if (isCheckedIn || todayAttendanceRecord) {
+      const punchTime = todayAttendanceRecord?.check_in_time
+        ? formatISTTimeOnly(todayAttendanceRecord.check_in_time)
+        : (checkInTime || 'IST');
+      Alert.alert(
+        'Attendance Already Recorded ✓',
+        `You have already punched in for today at ${punchTime}.\n\nSingle punch attendance is active. No checkout is needed. If you require adjustments, please submit an Attendance Regularization request.`
+      );
+      return;
+    }
 
     const targetCoords = activeOfficeCoords;
     const isInsideFence = distance !== null && distance <= targetCoords.radiusMeters;
@@ -1055,142 +1104,64 @@ export default function App() {
     const shiftStartTotalMins = (startH || 9) * 60 + (startM || 30);
     const shiftEndTotalMins = (endH || 19) * 60 + (endM || 0);
 
-    // If already checked out for today, block further punch
-    if (todayAttendanceRecord?.check_out_time) {
+    if (currentTotalMins < (shiftStartTotalMins - 30)) {
       Alert.alert(
-        'Shift Completed Today ✓',
-        `You have already punched out for today (${formatISTTimeOnly(todayAttendanceRecord.check_out_time)} IST).\nTotal logged: ${todayAttendanceRecord.total_hours || 8} hrs.\n\nIf you need to make changes, please use Attendance Regularization.`
+        'Too Early to Punch In ⏰',
+        `Your shift starts at ${shiftStartTime} IST. Punch-in opens 30 minutes before shift start (${String(Math.floor((shiftStartTotalMins - 30) / 60)).padStart(2, '0')}:${String((shiftStartTotalMins - 30) % 60).padStart(2, '0')} IST).`
       );
       return;
     }
 
-    // Punch IN
-    if (!isCheckedIn) {
-      if (currentTotalMins < (shiftStartTotalMins - 30)) {
-        Alert.alert(
-          'Too Early to Punch In ⏰',
-          `Your shift starts at ${shiftStartTime} IST. Punch-in opens 30 minutes before shift start (${String(Math.floor((shiftStartTotalMins - 30) / 60)).padStart(2, '0')}:${String((shiftStartTotalMins - 30) % 60).padStart(2, '0')} IST).`
-        );
-        return;
-      }
-
-      if (currentTotalMins > shiftEndTotalMins) {
-        Alert.alert(
-          'Shift Has Ended 🌙',
-          `Your shift ended at ${shiftEndTime} IST. Punch-in is closed. Please submit an attendance regularization request for today.`
-        );
-        return;
-      }
-
-      const newAttId = generateUUID();
-      const newRecord = {
-        id: newAttId,
-        org_id: currentOrg?.id || userProfile.org_id,
-        employee_id: userProfile.id,
-        date: todayStr,
-        check_in_time: new Date().toISOString(),
-        check_in_lat: location?.coords.latitude || null,
-        check_in_long: location?.coords.longitude || null,
-        distance_meters: distance,
-        status: 'present',
-        is_remote: !isInsideFence,
-        regularization_status: 'none',
-        approval_status: isInsideFence ? 'approved' : 'pending_manager_approval',
-        total_hours: 0
-      };
-
-      try {
-        const { error } = await supabaseClient.from('attendance').insert(newRecord);
-        if (!error) {
-          setIsCheckedIn(true);
-          setCheckInTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-          setTodayAttendanceRecord(newRecord);
-          setAttendanceRecords((prev) => [newRecord, ...prev.filter((a) => !(a.employee_id === userProfile.id && a.date === todayStr))]);
-          setAttendanceAlertActive(false);
-
-          sendDeviceNotification(
-            '✅ Punch In Recorded | Vedotrix Pulse',
-            `Checked in at ${nowTimeStr} IST. Geofence: ${isInsideFence ? `In Office (${targetCoords.name})` : 'Remote'}.`,
-            'attendance-alerts'
-          );
-
-          Alert.alert(
-            'Punch In Recorded 📍',
-            `Checked in at ${nowTimeStr} IST.\nLocation: ${isInsideFence ? `In Office (${targetCoords.name})` : `Remote (${distance}m from office)`}`
-          );
-          refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
-        } else {
-          Alert.alert('Database Error', error.message);
-        }
-      } catch (err: any) {
-        Alert.alert('Error', err?.message);
-      }
-    } else {
-      // Punch OUT with confirmation dialog
+    if (currentTotalMins > shiftEndTotalMins) {
       Alert.alert(
-        'Punch Out (End Shift)',
-        'Are you sure you want to end your shift for today? Total logged hours will be calculated.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Punch Out Now',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                const checkOutISO = new Date().toISOString();
-                let totalHours = 8;
-                if (todayAttendanceRecord?.check_in_time) {
-                  const diffMs = new Date(checkOutISO).getTime() - new Date(todayAttendanceRecord.check_in_time).getTime();
-                  totalHours = Math.max(0.5, Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10);
-                }
-
-                const { error } = await supabaseClient
-                  .from('attendance')
-                  .update({
-                    check_out_time: checkOutISO,
-                    total_hours: totalHours
-                  })
-                  .eq('employee_id', userProfile.id)
-                  .eq('date', todayStr);
-
-                if (!error) {
-                  setIsCheckedIn(false);
-                  const updatedRec = {
-                    ...(todayAttendanceRecord || {}),
-                    check_out_time: checkOutISO,
-                    total_hours: totalHours
-                  };
-                  setTodayAttendanceRecord(updatedRec);
-                  setAttendanceRecords((prev) =>
-                    prev.map((a) =>
-                      a.employee_id === userProfile.id && a.date === todayStr
-                        ? { ...a, check_out_time: checkOutISO, total_hours: totalHours }
-                        : a
-                    )
-                  );
-                  setCheckInTime(`Punched out (${nowTimeStr})`);
-
-                  sendDeviceNotification(
-                    '🌙 Punch Out Recorded | Vedotrix Pulse',
-                    `Checked out at ${nowTimeStr} IST. Total logged: ${totalHours} hrs.`,
-                    'attendance-alerts'
-                  );
-
-                  Alert.alert(
-                    'Punch Out Recorded 🏁',
-                    `Daily attendance completed. Logged: ${totalHours} hours. Have a great evening!`
-                  );
-                  refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
-                } else {
-                  Alert.alert('Error', error.message);
-                }
-              } catch (err: any) {
-                Alert.alert('Error', err?.message);
-              }
-            }
-          }
-        ]
+        'Shift Has Ended 🌙',
+        `Your shift ended at ${shiftEndTime} IST. Attendance marking is closed for today. Please submit an attendance regularization request if needed.`
       );
+      return;
+    }
+
+    const newAttId = generateUUID();
+    const newRecord = {
+      id: newAttId,
+      org_id: currentOrg?.id || userProfile.org_id,
+      employee_id: userProfile.id,
+      date: todayStr,
+      check_in_time: new Date().toISOString(),
+      check_in_lat: location?.coords.latitude || null,
+      check_in_long: location?.coords.longitude || null,
+      distance_meters: distance,
+      status: 'present',
+      is_remote: !isInsideFence,
+      regularization_status: 'none',
+      approval_status: isInsideFence ? 'approved' : 'pending_manager_approval',
+      total_hours: 8
+    };
+
+    try {
+      const { error } = await supabaseClient.from('attendance').insert(newRecord);
+      if (!error) {
+        setIsCheckedIn(true);
+        setCheckInTime(`${nowTimeStr.slice(0, 5)} IST`);
+        setTodayAttendanceRecord(newRecord);
+        setAttendanceRecords((prev) => [newRecord, ...prev.filter((a) => !(a.employee_id === userProfile.id && a.date === todayStr))]);
+        setAttendanceAlertActive(false);
+
+        sendDeviceNotification(
+          '✅ Attendance Recorded | Vedotrix Pulse',
+          `Checked in at ${nowTimeStr} IST. Geofence: ${isInsideFence ? `In Office (${targetCoords.name})` : 'Remote'}. Status: Present.`,
+          'attendance-alerts'
+        );
+
+        Alert.alert(
+          'Marked Present for Today ✓',
+          `Checked in at ${nowTimeStr} IST.\nLocation: ${isInsideFence ? `In Office (${targetCoords.name})` : `Remote (${distance}m from office)`}\n\nSingle punch attendance recorded successfully.`
+        );
+        refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
+      } else {
+        Alert.alert('Database Error', error.message);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message);
     }
   };
 
@@ -1910,6 +1881,95 @@ export default function App() {
     }
   };
 
+  const promptChangeProfilePhoto = () => {
+    Alert.alert(
+      'Update Profile Picture',
+      'Choose a picture from your device to update your corporate avatar:',
+      [
+        { text: '📸 Take Photo (Camera)', onPress: takePhotoWithCamera },
+        { text: '🖼️ Choose from Gallery', onPress: pickImageFromGallery },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  const pickAndSendChatPhoto = async (fromCamera: boolean) => {
+    if (!supabaseClient || !userProfile || !currentOrg) return;
+
+    try {
+      if (fromCamera) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Please grant camera access in settings.');
+          return;
+        }
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Please grant gallery access in settings.');
+          return;
+        }
+      }
+
+      const result = fromCamera
+        ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, base64: true });
+
+      if (result.canceled || !result.assets || !result.assets[0] || !result.assets[0].base64) {
+        return;
+      }
+
+      setIsSendingChatPhoto(true);
+      const asset = result.assets[0];
+      const fileName = `chat_${Date.now()}_${generateUUID().slice(0, 8)}.jpg`;
+      const arrayBuffer = decode(asset.base64);
+
+      // Upload to Supabase Storage avatars bucket (publicly readable)
+      const { error: uploadErr } = await supabaseClient.storage
+        .from('avatars')
+        .upload(fileName, arrayBuffer, { contentType: 'image/jpeg', upsert: true });
+
+      if (uploadErr) {
+        Alert.alert('Upload Error', uploadErr.message);
+        return;
+      }
+
+      const { data: pubData } = supabaseClient.storage.from('avatars').getPublicUrl(fileName);
+      const cdnUrl = pubData.publicUrl;
+
+      const newMsg = {
+        id: generateUUID(),
+        org_id: currentOrg.id,
+        sender_id: userProfile.id,
+        sender_name: `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim() || 'Team Member',
+        sender_role: userProfile.role || 'employee',
+        sender_avatar: userProfile.avatar_url || null,
+        channel: chatRecipient ? `dm_${chatRecipient.id}` : activeChatChannel,
+        recipient_id: chatRecipient ? chatRecipient.id : null,
+        message: '📷 Photo attached',
+        attachments: [
+          {
+            id: generateUUID(),
+            name: fileName,
+            url: cdnUrl,
+            category: 'image',
+            size: 102400
+          }
+        ],
+        reactions: [],
+        created_at: new Date().toISOString()
+      };
+
+      setChatMessages((prev) => [...prev, newMsg]);
+
+      await supabaseClient.from('chat_messages').insert([newMsg]);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Could not attach image');
+    } finally {
+      setIsSendingChatPhoto(false);
+    }
+  };
+
   // Update Profile
   const handleSaveProfile = async () => {
     if (!supabaseClient || !userProfile) return;
@@ -2414,23 +2474,21 @@ export default function App() {
               <TouchableOpacity
                 style={[
                   styles.punchButton,
-                  todayAttendanceRecord?.check_out_time
-                    ? { backgroundColor: '#059669' }
-                    : isCheckedIn
-                    ? styles.punchButtonOut
+                  (isCheckedIn || todayAttendanceRecord)
+                    ? { backgroundColor: '#059669', borderColor: '#10b981' }
                     : styles.punchButtonIn
                 ]}
                 onPress={handlePunchToggle}
               >
                 <Text style={styles.punchButtonText}>
-                  {todayAttendanceRecord?.check_out_time
-                    ? '✓ SHIFT COMPLETED TODAY'
-                    : isCheckedIn
-                    ? 'PUNCH OUT (END SHIFT)'
-                    : 'PUNCH IN (CHECK-IN)'}
+                  {(isCheckedIn || todayAttendanceRecord)
+                    ? '✓ ATTENDANCE RECORDED FOR TODAY'
+                    : 'PUNCH IN (MARK PRESENT)'}
                 </Text>
                 {checkInTime && (
-                  <Text style={styles.punchTimeText}>{checkInTime}</Text>
+                  <Text style={styles.punchTimeText}>
+                    {(isCheckedIn || todayAttendanceRecord) ? `Punched In: ${checkInTime}` : checkInTime}
+                  </Text>
                 )}
               </TouchableOpacity>
 
@@ -2640,7 +2698,7 @@ export default function App() {
                           </View>
                           <Text style={styles.noticeCategoryText}>• {notice.category?.toUpperCase() || 'GENERAL'}</Text>
                         </View>
-                        <Text style={styles.noticeDateText}>{formatDisplayDate(notice.date || notice.created_at)}</Text>
+                        <Text style={styles.noticeDateText}>{formatNoticeDate(notice)}</Text>
                       </View>
 
                       <Text style={styles.noticeTitleCompact} numberOfLines={1}>
@@ -2759,63 +2817,106 @@ export default function App() {
               </View>
               <Text style={styles.cardDesc}>Real-time Slack workspace communication for {currentOrg?.name}</Text>
 
-              {/* Channel Pills (Loaded directly from Supabase DB) */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
-                <View style={{ flexDirection: 'row', gap: 6 }}>
-                  {availableChannels.map((chan) => {
-                    const chanKey = chan.name || chan.id;
-                    const isSelected = !chatRecipient && activeChatChannel === chanKey;
-                    return (
-                      <TouchableOpacity
-                        key={chan.id || chan.name}
-                        style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive]}
-                        onPress={() => {
-                          setChatRecipient(null);
-                          setActiveChatChannel(chanKey);
-                        }}
-                      >
-                        <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
-                          # {chan.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+              {/* 1. Public Channels */}
+              <View style={{ marginTop: 6 }}>
+                <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: 4 }}>
+                  📢 Public Channels
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {availableChannels.filter((c) => !c.is_private).map((chan) => {
+                      const chanKey = chan.name || chan.id;
+                      const isSelected = !chatRecipient && activeChatChannel === chanKey;
+                      return (
+                        <TouchableOpacity
+                          key={chan.id || chan.name}
+                          style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive]}
+                          onPress={() => {
+                            setChatRecipient(null);
+                            setActiveChatChannel(chanKey);
+                          }}
+                        >
+                          <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
+                            # {chan.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
 
-                  {/* Teammate DM Pills */}
-                  {teamProfiles.filter((p) => p.id !== userProfile?.id).map((member) => {
-                    const isSelected = chatRecipient?.id === member.id;
-                    const hasValidAvatar = member.avatar_url && (member.avatar_url.startsWith('http') || member.avatar_url.startsWith('data:image'));
-                    return (
-                      <TouchableOpacity
-                        key={member.id}
-                        style={[
-                          styles.chatChannelPill,
-                          isSelected && styles.chatChannelPillActive,
-                          { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8 }
-                        ]}
-                        onPress={() => {
-                          setChatRecipient(member);
-                        }}
-                        onLongPress={() => setInspectedUserProfile(member)}
-                      >
-                        <View style={{ width: 18, height: 18, borderRadius: 9, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
-                          {hasValidAvatar ? (
-                            <Image source={{ uri: member.avatar_url }} style={{ width: '100%', height: '100%' }} />
-                          ) : (
-                            <Text style={{ color: '#fff', fontSize: 9, fontWeight: 'bold' }}>
-                              {(member.first_name?.[0] || 'U').toUpperCase()}
+              {/* 2. Private Groups (Visible only to members or Superadmin) */}
+              {availableChannels.some((c) => c.is_private) && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#f59e0b', textTransform: 'uppercase', marginBottom: 4 }}>
+                    🔒 Private Groups
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {availableChannels.filter((c) => c.is_private).map((chan) => {
+                        const chanKey = chan.name || chan.id;
+                        const isSelected = !chatRecipient && activeChatChannel === chanKey;
+                        return (
+                          <TouchableOpacity
+                            key={chan.id || chan.name}
+                            style={[styles.chatChannelPill, isSelected && styles.chatChannelPillActive, { borderColor: '#d97706' }]}
+                            onPress={() => {
+                              setChatRecipient(null);
+                              setActiveChatChannel(chanKey);
+                            }}
+                          >
+                            <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive, { color: isSelected ? '#ffffff' : '#fbbf24' }]}>
+                              🔒 {chan.name}
                             </Text>
-                          )}
-                        </View>
-                        <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
-                          @{member.first_name}
-                        </Text>
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981' }} />
-                      </TouchableOpacity>
-                    );
-                  })}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
                 </View>
-              </ScrollView>
+              )}
+
+              {/* 3. Direct Messages */}
+              <View style={{ marginTop: 8, marginBottom: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: 4 }}>
+                  💬 Direct Messages
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {teamProfiles.filter((p) => p.id !== userProfile?.id).map((member) => {
+                      const isSelected = chatRecipient?.id === member.id;
+                      const hasValidAvatar = member.avatar_url && (member.avatar_url.startsWith('http') || member.avatar_url.startsWith('data:image'));
+                      return (
+                        <TouchableOpacity
+                          key={member.id}
+                          style={[
+                            styles.chatChannelPill,
+                            isSelected && styles.chatChannelPillActive,
+                            { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8 }
+                          ]}
+                          onPress={() => setChatRecipient(member)}
+                          onLongPress={() => setInspectedUserProfile(member)}
+                        >
+                          <View style={{ width: 20, height: 20, borderRadius: 10, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
+                            {hasValidAvatar ? (
+                              <Image source={{ uri: member.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                            ) : (
+                              <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                                {(member.first_name?.[0] || 'U').toUpperCase()}
+                              </Text>
+                            )}
+                          </View>
+                          <Text style={[styles.chatChannelPillText, isSelected && styles.chatChannelPillTextActive]}>
+                            @{member.first_name}
+                          </Text>
+                          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981' }} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
 
               {/* Active Header Information */}
               <View style={styles.chatActiveHeaderBox}>
@@ -2834,7 +2935,7 @@ export default function App() {
                     )}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.chatActiveHeaderTitle}>
-                        {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : `# ${activeChatChannel}`}
+                        {chatRecipient ? `@${chatRecipient.first_name} ${chatRecipient.last_name}` : (activeChanObj?.is_private ? `🔒 ${activeChatChannel}` : `# ${activeChatChannel}`)}
                       </Text>
                       <Text style={styles.chatActiveHeaderSub}>
                         {chatRecipient
@@ -2858,10 +2959,10 @@ export default function App() {
                 <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                   <Text style={{ fontSize: 32, marginBottom: 8 }}>💬</Text>
                   <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: 'bold' }}>
-                    Welcome to {chatRecipient ? `@${chatRecipient.first_name}` : `#${activeChatChannel}`}!
+                    Welcome to {chatRecipient ? `@${chatRecipient.first_name}` : (activeChanObj?.is_private ? `🔒${activeChatChannel}` : `#${activeChatChannel}`)}!
                   </Text>
                   <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, textAlign: 'center', maxWidth: 260 }}>
-                    Send a message to start the conversation with your team in real time.
+                    Send a message or attach a photo to collaborate with your team in real time.
                   </Text>
                 </View>
               ) : (
@@ -2869,7 +2970,17 @@ export default function App() {
                   {activeConversationMessages.map((msg, index) => {
                     const isMe = msg.sender_id === userProfile?.id;
                     const prevMsg = index > 0 ? activeConversationMessages[index - 1] : null;
-                    const isGrouped = prevMsg && prevMsg.sender_id === msg.sender_id &&
+
+                    // Slack Date Separator logic
+                    const msgDateStr = new Date(msg.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    const prevMsgDateStr = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : null;
+                    const showDateSep = !prevMsgDateStr || msgDateStr !== prevMsgDateStr;
+                    const todayDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    const yDate = new Date(); yDate.setDate(yDate.getDate() - 1);
+                    const yDateStr = yDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    const datePillLabel = msgDateStr === todayDateStr ? 'Today' : msgDateStr === yDateStr ? 'Yesterday' : msgDateStr;
+
+                    const isGrouped = !showDateSep && prevMsg && prevMsg.sender_id === msg.sender_id &&
                       (new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000);
                     const senderProfile = teamProfiles.find((p) => p.id === msg.sender_id) || (isMe ? userProfile : null);
 
@@ -2881,75 +2992,112 @@ export default function App() {
                     const initials = ((senderProfile?.first_name?.[0] || msg.sender_name?.[0] || 'U') + (senderProfile?.last_name?.[0] || '')).toUpperCase();
 
                     return (
-                      <View key={msg.id || index} style={[styles.chatMessageRow, isMe && styles.chatMessageRowMe]}>
-                        {!isMe && (
-                          <View style={{ width: 32, marginRight: 8, alignItems: 'center' }}>
-                            {!isGrouped ? (
-                              <TouchableOpacity
-                                style={{ width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' }}
-                                onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
-                              >
-                                {effectiveAvatar ? (
-                                  <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
-                                ) : (
-                                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
-                                    {initials}
-                                  </Text>
-                                )}
-                              </TouchableOpacity>
-                            ) : (
-                              <View style={{ width: 30 }} />
-                            )}
+                      <React.Fragment key={msg.id || index}>
+                        {showDateSep && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}>
+                            <View style={{ flex: 1, height: 1, backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0' }} />
+                            <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', paddingHorizontal: 10, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: isDarkMode ? '#334155' : '#cbd5e1' }}>
+                              <Text style={{ fontSize: 10, fontWeight: 'bold', color: isDarkMode ? '#94a3b8' : '#64748b' }}>{datePillLabel}</Text>
+                            </View>
+                            <View style={{ flex: 1, height: 1, backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0' }} />
                           </View>
                         )}
 
-                        <View style={{ flex: 1, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
-                          {!isGrouped && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                              <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
-                                <Text style={styles.chatSenderName}>
-                                  {isMe ? 'You' : msg.sender_name}
-                                </Text>
-                              </TouchableOpacity>
-                              {msg.sender_role && (
-                                <View style={styles.chatRolePill}>
-                                  <Text style={styles.chatRolePillText}>{msg.sender_role.toUpperCase()}</Text>
-                                </View>
+                        <View style={[styles.chatMessageRow, isMe && styles.chatMessageRowMe]}>
+                          {!isMe && (
+                            <View style={{ width: 32, marginRight: 8, alignItems: 'center' }}>
+                              {!isGrouped ? (
+                                <TouchableOpacity
+                                  style={{ width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' }}
+                                  onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}
+                                >
+                                  {effectiveAvatar ? (
+                                    <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
+                                  ) : (
+                                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                                      {initials}
+                                    </Text>
+                                  )}
+                                </TouchableOpacity>
+                              ) : (
+                                <View style={{ width: 30 }} />
                               )}
-                              <Text style={styles.chatTimestamp}>
-                                {formatISTTimeOnly(msg.created_at)}
-                              </Text>
                             </View>
                           )}
 
-                          <View style={[styles.chatBubble, isMe ? styles.chatBubbleMe : styles.chatBubbleOther]}>
-                            <Text style={[styles.chatBubbleText, isMe && styles.chatBubbleTextMe]}>
-                              {msg.message}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {isMe && (
-                          <View style={{ width: 32, marginLeft: 8, alignItems: 'center' }}>
-                            {!isGrouped ? (
-                              <TouchableOpacity
-                                style={{ width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center' }}
-                                onPress={() => userProfile && setInspectedUserProfile(userProfile)}
-                              >
-                                {effectiveAvatar ? (
-                                  <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
-                                ) : (
-                                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
-                                    {initials}
+                          <View style={{ flex: 1, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                            {!isGrouped && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                                <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
+                                  <Text style={styles.chatSenderName}>
+                                    {isMe ? 'You' : msg.sender_name}
                                   </Text>
+                                </TouchableOpacity>
+                                {senderProfile?.designation && (
+                                  <View style={[styles.chatRolePill, { backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9' }]}>
+                                    <Text style={[styles.chatRolePillText, { color: '#38bdf8' }]}>{senderProfile.designation}</Text>
+                                  </View>
                                 )}
-                              </TouchableOpacity>
-                            ) : (
-                              <View style={{ width: 30 }} />
+                                <Text style={styles.chatTimestamp}>
+                                  {formatISTTimeOnly(msg.created_at)}
+                                </Text>
+                              </View>
                             )}
+
+                            <View style={[styles.chatBubble, isMe ? styles.chatBubbleMe : styles.chatBubbleOther]}>
+                              {msg.message && msg.message !== '📷 Photo attached' && (
+                                <Text style={[styles.chatBubbleText, isMe && styles.chatBubbleTextMe]}>
+                                  {msg.message}
+                                </Text>
+                              )}
+
+                              {/* Render Attachments (e.g. photos sent in chat) */}
+                              {msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
+                                <View style={{ gap: 4, marginTop: 4 }}>
+                                  {msg.attachments.map((att: any, attIdx: number) => (
+                                    <TouchableOpacity
+                                      key={att.id || attIdx}
+                                      activeOpacity={0.85}
+                                      onPress={() => setChatImageLightboxUrl(att.url)}
+                                      style={{ borderRadius: 10, overflow: 'hidden' }}
+                                    >
+                                      <Image
+                                        source={{ uri: att.url }}
+                                        style={{ width: 220, height: 160, borderRadius: 10, backgroundColor: '#0f172a' }}
+                                        resizeMode="cover"
+                                      />
+                                      <Text style={{ fontSize: 9, color: isMe ? '#dbeafe' : '#94a3b8', marginTop: 2 }}>
+                                        🔍 Tap to view photo
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
                           </View>
-                        )}
-                      </View>
+
+                          {isMe && (
+                            <View style={{ width: 32, marginLeft: 8, alignItems: 'center' }}>
+                              {!isGrouped ? (
+                                <TouchableOpacity
+                                  style={{ width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center' }}
+                                  onPress={() => userProfile && setInspectedUserProfile(userProfile)}
+                                >
+                                  {effectiveAvatar ? (
+                                    <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
+                                  ) : (
+                                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                                      {initials}
+                                    </Text>
+                                  )}
+                                </TouchableOpacity>
+                              ) : (
+                                <View style={{ width: 30 }} />
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      </React.Fragment>
                     );
                   })}
                 </View>
@@ -2957,6 +3105,24 @@ export default function App() {
 
               {/* Compose Box */}
               <View style={styles.chatComposerContainer}>
+                <TouchableOpacity
+                  style={{ paddingHorizontal: 10, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' }}
+                  disabled={isSendingChatPhoto}
+                  onPress={() => {
+                    Alert.alert(
+                      'Attach Photo in Chat',
+                      'Share an image in this conversation:',
+                      [
+                        { text: '📸 Take Photo (Camera)', onPress: () => pickAndSendChatPhoto(true) },
+                        { text: '🖼️ Choose from Gallery', onPress: () => pickAndSendChatPhoto(false) },
+                        { text: 'Cancel', style: 'cancel' }
+                      ]
+                    );
+                  }}
+                >
+                  <Text style={{ fontSize: 20 }}>{isSendingChatPhoto ? '⏳' : '📷'}</Text>
+                </TouchableOpacity>
+
                 <TextInput
                   style={styles.chatComposerInput}
                   value={chatInputText}
@@ -3712,7 +3878,12 @@ export default function App() {
                       </View>
                     ) : (
                       notices.map((n) => (
-                        <View key={n.id} style={[styles.noticeCard, n.is_pinned && { borderColor: '#f59e0b' }]}>
+                        <TouchableOpacity
+                          key={n.id}
+                          activeOpacity={0.7}
+                          onPress={() => setSelectedNoticeForView(n)}
+                          style={[styles.noticeCard, n.is_pinned && { borderColor: '#f59e0b' }]}
+                        >
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                             <View style={{ flex: 1, paddingRight: 6 }}>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -3721,14 +3892,17 @@ export default function App() {
                               </View>
                             </View>
                             <View style={[styles.priorityTag, n.priority === 'critical' ? styles.priorityCritical : styles.priorityHigh]}>
-                              <Text style={styles.priorityText}>{n.priority?.toUpperCase()}</Text>
+                              <Text style={styles.priorityText}>{n.priority?.toUpperCase() || 'NORMAL'}</Text>
                             </View>
                           </View>
-                          <Text style={styles.noticeBody}>{n.content}</Text>
-                          <Text style={styles.noticeDate}>
-                            📅 {formatDisplayDate(n.date)} • Published by: {n.author_name} ({n.author_role?.toUpperCase()})
-                          </Text>
-                        </View>
+                          <Text style={styles.noticeBody} numberOfLines={3}>{n.content}</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                            <Text style={styles.noticeDate}>
+                              📅 {formatNoticeDate(n)} • By: {n.author_name || 'HR'} ({n.author_role?.toUpperCase() || 'ADMIN'})
+                            </Text>
+                            <Text style={{ fontSize: 11, color: '#38bdf8', fontWeight: 'bold' }}>Read Notice →</Text>
+                          </View>
+                        </TouchableOpacity>
                       ))
                     )}
                   </View>
@@ -3847,15 +4021,36 @@ export default function App() {
               <View style={{ gap: 14 }}>
                 <View style={styles.card}>
                   <View style={styles.profileHeaderBox}>
-                    <View style={styles.profileAvatarLarge}>
-                      {userProfile?.avatar_url ? (
-                        <Image source={{ uri: userProfile.avatar_url }} style={styles.profileAvatarLargeImg} />
-                      ) : (
-                        <Text style={styles.profileAvatarLargeText}>
-                          {(userProfile?.first_name?.[0] || 'U') + (userProfile?.last_name?.[0] || '')}
-                        </Text>
-                      )}
-                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={promptChangeProfilePhoto}
+                      style={{ position: 'relative' }}
+                    >
+                      <View style={styles.profileAvatarLarge}>
+                        {userProfile?.avatar_url ? (
+                          <Image source={{ uri: userProfile.avatar_url }} style={styles.profileAvatarLargeImg} />
+                        ) : (
+                          <Text style={styles.profileAvatarLargeText}>
+                            {(userProfile?.first_name?.[0] || 'U') + (userProfile?.last_name?.[0] || '')}
+                          </Text>
+                        )}
+                      </View>
+                      <View style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        right: 0,
+                        backgroundColor: '#2563eb',
+                        width: 26,
+                        height: 26,
+                        borderRadius: 13,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: 2,
+                        borderColor: isDarkMode ? '#0d121d' : '#ffffff'
+                      }}>
+                        <Text style={{ fontSize: 12 }}>📷</Text>
+                      </View>
+                    </TouchableOpacity>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.profileName}>
                         {userProfile?.first_name} {userProfile?.last_name}
@@ -3867,16 +4062,25 @@ export default function App() {
                     </View>
                   </View>
 
-                  <TouchableOpacity
-                    style={styles.editProfileBtn}
-                    onPress={() => {
-                      setEditPhone(userProfile?.phone || '');
-                      setEditAvatarUrl(userProfile?.avatar_url || '');
-                      setIsEditProfileModal(true);
-                    }}
-                  >
-                    <Text style={styles.editProfileBtnText}>✏️ Edit Contact / Avatar</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={[styles.editProfileBtn, { flex: 1, backgroundColor: '#2563eb', borderColor: '#3b82f6' }]}
+                      onPress={promptChangeProfilePhoto}
+                    >
+                      <Text style={[styles.editProfileBtnText, { color: '#ffffff' }]}>📷 Change Photo</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.editProfileBtn, { flex: 1 }]}
+                      onPress={() => {
+                        setEditPhone(userProfile?.phone || '');
+                        setEditAvatarUrl(userProfile?.avatar_url || '');
+                        setIsEditProfileModal(true);
+                      }}
+                    >
+                      <Text style={styles.editProfileBtnText}>✏️ Edit Profile</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 {/* Details Card */}
@@ -3981,6 +4185,45 @@ export default function App() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+
+                {/* Organization Settings Card (HR / Superadmin / Owner) */}
+                {isPrivileged && (
+                  <View style={[styles.card, { borderColor: '#6366f1' }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={[styles.cardTitle, { color: '#818cf8' }]}>⚙️ Organization Settings</Text>
+                      <TouchableOpacity
+                        style={[styles.smallAddBtn, { backgroundColor: '#4f46e5' }]}
+                        onPress={() => {
+                          setOrgShiftStart(currentOrg?.settings?.shiftStartTime || '09:30');
+                          setOrgShiftEnd(currentOrg?.settings?.shiftEndTime || '19:00');
+                          setOrgGracePeriod(String(currentOrg?.settings?.gracePeriodMins ?? 15));
+                          setOrgGeofenceRadius(String(activeOfficeCoords.radiusMeters || 200));
+                          setIsOrgSettingsModal(true);
+                        }}
+                      >
+                        <Text style={styles.smallAddBtnText}>⚙️ Configure</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={styles.cardDesc}>Configure shifts, grace period & GPS geofence for {currentOrg?.name}</Text>
+
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Shift Timing:</Text>
+                      <Text style={styles.detailVal}>
+                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'} IST
+                      </Text>
+                    </View>
+
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Grace Period:</Text>
+                      <Text style={styles.detailVal}>{currentOrg?.settings?.gracePeriodMins ?? 15} minutes</Text>
+                    </View>
+
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Office Geofence:</Text>
+                      <Text style={styles.detailVal}>{activeOfficeCoords.radiusMeters}m radius ({activeOfficeCoords.name})</Text>
+                    </View>
+                  </View>
+                )}
 
                 <TouchableOpacity style={styles.profileLogoutBtn} onPress={handleLogout}>
                   <Text style={styles.profileLogoutBtnText}>Log Out from Device</Text>
@@ -5305,6 +5548,21 @@ export default function App() {
                       </TouchableOpacity>
                     )}
 
+                    {isPrivileged && !isSelf && (
+                      <TouchableOpacity
+                        style={[styles.loginBtn, { backgroundColor: '#4f46e5' }]}
+                        onPress={() => {
+                          setEditEmpRole(inspectedUserProfile.role || 'employee');
+                          setEditEmpDesig(inspectedUserProfile.designation || '');
+                          setEditEmpDept(inspectedUserProfile.department || '');
+                          setEditEmpJoining(inspectedUserProfile.joining_date || '');
+                          setIsEditEmployeeModal(true);
+                        }}
+                      >
+                        <Text style={styles.loginBtnText}>✏️ Manage Employee Record (HR/Admin)</Text>
+                      </TouchableOpacity>
+                    )}
+
                     {isSelf && (
                       <TouchableOpacity
                         style={[styles.loginBtn, { backgroundColor: '#0284c7' }]}
@@ -5430,6 +5688,89 @@ export default function App() {
               placeholderTextColor="#64748b"
             />
 
+            {/* Private Group Toggle */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                backgroundColor: isDarkMode ? '#141b2d' : '#f1f5f9',
+                marginVertical: 10,
+                borderWidth: 1,
+                borderColor: newChanIsPrivate ? '#f59e0b' : (isDarkMode ? '#1e293b' : '#cbd5e1')
+              }}
+              onPress={() => setNewChanIsPrivate(!newChanIsPrivate)}
+            >
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={{ fontSize: 13, fontWeight: 'bold', color: newChanIsPrivate ? '#fbbf24' : (isDarkMode ? '#ffffff' : '#0f172a') }}>
+                  {newChanIsPrivate ? '🔒 Private Group' : '📢 Public Channel'}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                  {newChanIsPrivate
+                    ? 'Only selected members can see and send messages in this group'
+                    : 'Anyone in the organization can view and join'}
+                </Text>
+              </View>
+              <View style={{
+                width: 22,
+                height: 22,
+                borderRadius: 11,
+                backgroundColor: newChanIsPrivate ? '#f59e0b' : '#475569',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>{newChanIsPrivate ? '✓' : ''}</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* If Private Group, show Member Multi-Select List */}
+            {newChanIsPrivate && (
+              <View style={{ marginVertical: 6 }}>
+                <Text style={[styles.inputLabel, { marginBottom: 6 }]}>Select Group Members ({newChanMembers.length} selected):</Text>
+                <ScrollView style={{ maxHeight: 150, borderWidth: 1, borderColor: isDarkMode ? '#1e293b' : '#e2e8f0', borderRadius: 8, padding: 6 }}>
+                  {teamProfiles.filter((p) => p.id !== userProfile?.id).map((member) => {
+                    const isMemberSelected = newChanMembers.includes(member.id);
+                    return (
+                      <TouchableOpacity
+                        key={member.id}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 6,
+                          paddingHorizontal: 8,
+                          borderRadius: 6,
+                          backgroundColor: isMemberSelected ? (isDarkMode ? '#1e293b' : '#e0f2fe') : 'transparent'
+                        }}
+                        onPress={() => {
+                          setNewChanMembers((prev) =>
+                            isMemberSelected ? prev.filter((id) => id !== member.id) : [...prev, member.id]
+                          );
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                              {(member.first_name?.[0] || 'U').toUpperCase()}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 12, color: isDarkMode ? '#fff' : '#0f172a', fontWeight: isMemberSelected ? 'bold' : 'normal' }}>
+                            {member.first_name} {member.last_name} ({member.designation || 'Staff'})
+                          </Text>
+                        </View>
+                        <Text style={{ color: isMemberSelected ? '#38bdf8' : '#64748b', fontSize: 13, fontWeight: 'bold' }}>
+                          {isMemberSelected ? '✓' : '+'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
             <TouchableOpacity
               style={[styles.loginBtn, (!newChanName.trim() || isSavingChan) && { opacity: 0.5 }]}
               disabled={!newChanName.trim() || isSavingChan}
@@ -5439,13 +5780,16 @@ export default function App() {
                 try {
                   const cleanName = newChanName.trim().toLowerCase();
                   const newChanId = generateUUID();
+                  const memberIds = newChanIsPrivate
+                    ? Array.from(new Set([userProfile.id, ...newChanMembers]))
+                    : [];
                   const { error } = await supabaseClient.from('chat_channels').insert({
                     id: newChanId,
                     org_id: currentOrg.id,
                     name: cleanName,
-                    description: newChanDesc.trim() || 'Custom discussion channel',
+                    description: newChanDesc.trim() || (newChanIsPrivate ? 'Private discussion group' : 'Custom discussion channel'),
                     is_private: newChanIsPrivate,
-                    member_ids: [userProfile.id],
+                    member_ids: memberIds,
                     created_by: userProfile.id,
                     created_by_name: `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim(),
                     created_at: new Date().toISOString()
@@ -5454,6 +5798,8 @@ export default function App() {
                     Alert.alert('Channel Created 🎉', `#${cleanName} is now live.`);
                     setNewChanName('');
                     setNewChanDesc('');
+                    setNewChanIsPrivate(false);
+                    setNewChanMembers([]);
                     setIsNewChannelModal(false);
                     setActiveChatChannel(cleanName);
                     setChatRecipient(null);
@@ -5468,12 +5814,277 @@ export default function App() {
                 }
               }}
             >
-              <Text style={styles.loginBtnText}>{isSavingChan ? 'Creating...' : 'Create Channel'}</Text>
+              <Text style={styles.loginBtnText}>{isSavingChan ? 'Creating...' : (newChanIsPrivate ? 'Create Private Group' : 'Create Channel')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsNewChannelModal(false)}>
               <Text style={styles.modalCloseBtnText}>Cancel</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 16: READ FULL OFFICIAL NOTICE */}
+      {/* ========================================================================= */}
+      <Modal visible={selectedNoticeForView !== null} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '85%' }]}>
+            {selectedNoticeForView && (
+              <>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 8 }}>
+                  <View style={[
+                    styles.noticePriorityBadge,
+                    selectedNoticeForView.priority === 'urgent' || selectedNoticeForView.priority === 'critical' ? styles.priorityUrgent :
+                    selectedNoticeForView.priority === 'high' ? styles.priorityHigh : styles.priorityNormal
+                  ]}>
+                    <Text style={styles.noticePriorityText}>{(selectedNoticeForView.priority || 'NORMAL').toUpperCase()}</Text>
+                  </View>
+                  <Text style={styles.noticeCategoryText}>{selectedNoticeForView.category?.toUpperCase() || 'GENERAL'}</Text>
+                </View>
+
+                <Text style={[styles.modalTitle, { textAlign: 'left', width: '100%', fontSize: 18, marginBottom: 4 }]}>
+                  {selectedNoticeForView.title}
+                </Text>
+
+                <Text style={{ fontSize: 11, color: '#94a3b8', width: '100%', marginBottom: 12 }}>
+                  📅 Published {formatNoticeDate(selectedNoticeForView)} • By {selectedNoticeForView.author_name || 'HR Management'} ({selectedNoticeForView.author_role?.toUpperCase() || 'ADMIN'})
+                </Text>
+
+                <ScrollView style={{ width: '100%', maxHeight: 320, marginVertical: 6 }} showsVerticalScrollIndicator={false}>
+                  <Text style={[styles.noticeFullContent, { fontSize: 13, lineHeight: 22, color: isDarkMode ? '#e2e8f0' : '#1e293b' }]}>
+                    {selectedNoticeForView.content}
+                  </Text>
+                </ScrollView>
+
+                <TouchableOpacity
+                  style={[styles.loginBtn, { marginTop: 14 }]}
+                  onPress={() => setSelectedNoticeForView(null)}
+                >
+                  <Text style={styles.loginBtnText}>Close Notice</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 17: CHAT IMAGE LIGHTBOX */}
+      {/* ========================================================================= */}
+      <Modal visible={chatImageLightboxUrl !== null} animationType="fade" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20 }}
+            onPress={() => setChatImageLightboxUrl(null)}
+          >
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>✕ Close</Text>
+          </TouchableOpacity>
+          {chatImageLightboxUrl && (
+            <Image
+              source={{ uri: chatImageLightboxUrl }}
+              style={{ width: '100%', height: '80%', borderRadius: 12 }}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 18: MANAGE EMPLOYEE RECORD (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isEditEmployeeModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Manage Employee Record</Text>
+            <Text style={styles.modalSub}>Update employee details in corporate Supabase database</Text>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', marginTop: 8 }}>
+              <Text style={styles.inputLabel}>Corporate Role</Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginVertical: 6 }}>
+                {['employee', 'manager', 'hr'].map((r) => (
+                  <TouchableOpacity
+                    key={r}
+                    style={[
+                      styles.filterTab,
+                      editEmpRole === r && styles.filterTabActive,
+                      { flex: 1, paddingVertical: 8 }
+                    ]}
+                    onPress={() => setEditEmpRole(r)}
+                  >
+                    <Text style={[styles.filterTabText, editEmpRole === r && styles.filterTabTextActive, { textAlign: 'center' }]}>
+                      {r.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.inputLabel}>Official Designation</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editEmpDesig}
+                onChangeText={setEditEmpDesig}
+                placeholder="e.g. Senior Software Engineer"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Department</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editEmpDept}
+                onChangeText={setEditEmpDept}
+                placeholder="e.g. Engineering, Sales, Operations"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Date of Joining (YYYY-MM-DD)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editEmpJoining}
+                onChangeText={setEditEmpJoining}
+                placeholder="e.g. 2026-01-15"
+                placeholderTextColor="#64748b"
+              />
+
+              <TouchableOpacity
+                style={[styles.loginBtn, { marginTop: 14 }]}
+                disabled={isSavingEmpRecord}
+                onPress={async () => {
+                  if (!supabaseClient || !inspectedUserProfile) return;
+                  setIsSavingEmpRecord(true);
+                  try {
+                    const updates: any = {
+                      role: editEmpRole,
+                      designation: editEmpDesig.trim() || 'Staff',
+                      department: editEmpDept.trim() || 'Operations'
+                    };
+                    if (editEmpJoining.trim()) {
+                      updates.joining_date = editEmpJoining.trim();
+                    }
+
+                    const { error } = await supabaseClient
+                      .from('profiles')
+                      .update(updates)
+                      .eq('id', inspectedUserProfile.id);
+
+                    if (!error) {
+                      const updatedEmp = { ...inspectedUserProfile, ...updates };
+                      setInspectedUserProfile(updatedEmp);
+                      setTeamProfiles((prev) => prev.map((p) => p.id === inspectedUserProfile.id ? { ...p, ...updates } : p));
+                      Alert.alert('Employee Updated ✓', `${inspectedUserProfile.first_name}'s record has been updated.`);
+                      setIsEditEmployeeModal(false);
+                    } else {
+                      Alert.alert('Database Error', error.message);
+                    }
+                  } catch (e: any) {
+                    Alert.alert('Error', e?.message);
+                  } finally {
+                    setIsSavingEmpRecord(false);
+                  }
+                }}
+              >
+                <Text style={styles.loginBtnText}>{isSavingEmpRecord ? 'Saving...' : 'Save Employee Changes'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsEditEmployeeModal(false)}>
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 19: ORGANIZATION SETTINGS (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isOrgSettingsModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Organization Shift & Geofence</Text>
+            <Text style={styles.modalSub}>Update working hours and attendance policies for {currentOrg?.name}</Text>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', marginTop: 8 }}>
+              <Text style={styles.inputLabel}>Shift Start Time (HH:MM IST)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={orgShiftStart}
+                onChangeText={setOrgShiftStart}
+                placeholder="09:30"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Shift End Time (HH:MM IST)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={orgShiftEnd}
+                onChangeText={setOrgShiftEnd}
+                placeholder="19:00"
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={styles.inputLabel}>Late Grace Period (Minutes)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={orgGracePeriod}
+                onChangeText={setOrgGracePeriod}
+                placeholder="15"
+                placeholderTextColor="#64748b"
+                keyboardType="numeric"
+              />
+
+              <Text style={styles.inputLabel}>Geofence Radius (Meters)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={orgGeofenceRadius}
+                onChangeText={setOrgGeofenceRadius}
+                placeholder="200"
+                placeholderTextColor="#64748b"
+                keyboardType="numeric"
+              />
+
+              <TouchableOpacity
+                style={[styles.loginBtn, { marginTop: 14, backgroundColor: '#4f46e5' }]}
+                disabled={isSavingOrgSettings}
+                onPress={async () => {
+                  if (!supabaseClient || !currentOrg) return;
+                  setIsSavingOrgSettings(true);
+                  try {
+                    const curSettings = currentOrg.settings || {};
+                    const newSettings = {
+                      ...curSettings,
+                      shiftStartTime: orgShiftStart.trim() || '09:30',
+                      shiftEndTime: orgShiftEnd.trim() || '19:00',
+                      gracePeriodMins: parseInt(orgGracePeriod) || 15
+                    };
+
+                    const { error } = await supabaseClient
+                      .from('organizations')
+                      .update({ settings: newSettings })
+                      .eq('id', currentOrg.id);
+
+                    if (!error) {
+                      const updatedOrg = { ...currentOrg, settings: newSettings };
+                      setCurrentOrg(updatedOrg);
+                      Alert.alert('Settings Saved ✓', 'Organization shift and attendance policies updated.');
+                      setIsOrgSettingsModal(false);
+                      refreshAllData(supabaseClient, currentOrg.id, userProfile?.id);
+                    } else {
+                      Alert.alert('Database Error', error.message);
+                    }
+                  } catch (e: any) {
+                    Alert.alert('Error', e?.message);
+                  } finally {
+                    setIsSavingOrgSettings(false);
+                  }
+                }}
+              >
+                <Text style={styles.loginBtnText}>{isSavingOrgSettings ? 'Saving...' : 'Save Organization Settings'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsOrgSettingsModal(false)}>
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
