@@ -21,7 +21,16 @@ import * as Updates from 'expo-updates';
 import { decode } from 'base64-arraybuffer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'react-native-bcrypt';
+
+// Configure secure pure-JS random fallback for react-native-bcrypt (cross-platform, zero native Node crypto dependency)
+bcrypt.setRandomFallback((len: number) => {
+  const buf: number[] = [];
+  for (let i = 0; i < len; i++) {
+    buf.push(Math.floor(Math.random() * 256));
+  }
+  return buf;
+});
 
 // Safely load expo-image-picker to prevent native module crashes on older APK builds
 let SafeImagePicker: any = null;
