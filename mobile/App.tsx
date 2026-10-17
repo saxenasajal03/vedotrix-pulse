@@ -18,10 +18,17 @@ import {
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
-import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+// Safely load expo-image-picker to prevent native module crashes on older APK builds
+let SafeImagePicker: any = null;
+try {
+  SafeImagePicker = require('expo-image-picker');
+} catch (e) {
+  console.log('ImagePicker native module not available in this APK build:', e);
+}
 
 // Configure foreground notifications
 Notifications.setNotificationHandler({
@@ -1781,8 +1788,24 @@ export default function App() {
     'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=200&h=200&fit=crop&crop=faces'
   ];
 
+  // Safe check if native ImagePicker is compiled into running APK
+  const checkImagePickerAvailable = (): boolean => {
+    if (!SafeImagePicker || !SafeImagePicker.launchImageLibraryAsync) {
+      Alert.alert(
+        'Update App for Photos 📲',
+        'Camera and photo features require the latest app build. Would you like to download the updated APK?',
+        [
+          { text: 'Download Latest APK', onPress: () => Linking.openURL('https://expo.dev/accounts/sajalandroid/projects/vedotrix-pulse/builds/0b27f171-f36b-4ad4-850c-5397c1bf369b') },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+      return false;
+    }
+    return true;
+  };
+
   // Upload Profile Photo to Supabase Storage
-  const uploadProfilePhoto = async (asset: ImagePicker.ImagePickerAsset) => {
+  const uploadProfilePhoto = async (asset: any) => {
     if (!supabaseClient || !userProfile) return;
     setIsUploadingPhoto(true);
     try {
@@ -1839,14 +1862,15 @@ export default function App() {
   };
 
   const pickImageFromGallery = async () => {
+    if (!checkImagePickerAvailable()) return;
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } = await SafeImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Please grant photo gallery permission in your device settings.');
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      const result = await SafeImagePicker.launchImageLibraryAsync({
+        mediaTypes: SafeImagePicker.MediaTypeOptions?.Images || 'Images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.7,
@@ -1861,13 +1885,14 @@ export default function App() {
   };
 
   const takePhotoWithCamera = async () => {
+    if (!checkImagePickerAvailable()) return;
     try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      const { status } = await SafeImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Please grant camera permission in your device settings.');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await SafeImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.7,
@@ -1894,17 +1919,18 @@ export default function App() {
   };
 
   const pickAndSendChatPhoto = async (fromCamera: boolean) => {
+    if (!checkImagePickerAvailable()) return;
     if (!supabaseClient || !userProfile || !currentOrg) return;
 
     try {
       if (fromCamera) {
-        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        const { status } = await SafeImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
           Alert.alert('Permission Denied', 'Please grant camera access in settings.');
           return;
         }
       } else {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        const { status } = await SafeImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
           Alert.alert('Permission Denied', 'Please grant gallery access in settings.');
           return;
@@ -1912,8 +1938,8 @@ export default function App() {
       }
 
       const result = fromCamera
-        ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true })
-        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, base64: true });
+        ? await SafeImagePicker.launchCameraAsync({ quality: 0.7, base64: true })
+        : await SafeImagePicker.launchImageLibraryAsync({ mediaTypes: SafeImagePicker.MediaTypeOptions?.Images || 'Images', quality: 0.7, base64: true });
 
       if (result.canceled || !result.assets || !result.assets[0] || !result.assets[0].base64) {
         return;
