@@ -2011,6 +2011,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         return { success: true, message: `Signed in successfully via ${provider}.` };
       } else {
+        await client.auth.signOut().catch(() => {});
+        addToast(
+          'Google Account Not Registered',
+          `The Google account "${cleanEmail}" is verified by Google, but not registered in Vedotrix Pulse. Please contact HR.`,
+          'error'
+        );
         return {
           success: false,
           message: `Access Denied: The Google account "${cleanEmail}" is not registered in Vedotrix Pulse. Please ask your HR/admin to register your email.`
@@ -2033,6 +2039,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: true, message: 'Logged in successfully.' };
       }
 
+      const client = getSupabaseClient();
+      await client.auth.signOut().catch(() => {});
+      addToast(
+        'Google Account Not Registered',
+        `The Google account "${cleanEmail}" is not registered in Vedotrix Pulse. Please contact HR.`,
+        'error'
+      );
       return {
         success: false,
         message: `The account "${cleanEmail}" is not registered. Please contact your organization administrator.`
@@ -2372,7 +2385,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // If past shift start time and user has not marked attendance today
       if (currentMins >= shiftMins) {
         const hasPunchedToday = attendanceRecords.some(
-          (a) => a.employeeId === currentProfile.id && a.date === todayStr && a.punchIn
+          (a) => a.employeeId === currentProfile.id && a.date === todayStr && (a.checkInTime || a.status === 'present' || a.status === 'half_day')
         );
         if (!hasPunchedToday) {
           items.push({

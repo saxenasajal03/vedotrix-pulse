@@ -100,7 +100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Pending tasks specifically assigned to current user
   const myPendingTasksCount = tasks.filter(
-    (t) => (t.assignedTo === currentProfile?.id || t.assignedToEmail === currentProfile?.email) && t.status !== 'completed'
+    (t) => (t.assignedTo === currentProfile?.id || (t as any).assignedToEmail === currentProfile?.email) && t.status !== 'done'
   ).length;
 
   // Pending regularizations requiring approval by current user (leadership or direct manager)

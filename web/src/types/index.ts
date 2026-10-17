@@ -266,6 +266,7 @@ export interface InAppNotification {
   timestamp: string;
   createdAt?: string;
   linkTab?: string;
+  priority?: 'low' | 'medium' | 'high' | 'critical';
 }
 
 export interface SystemBroadcast {

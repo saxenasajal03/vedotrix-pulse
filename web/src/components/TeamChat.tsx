@@ -2669,7 +2669,7 @@ export const TeamChat: React.FC<TeamChatProps> = ({
               <div className="flex items-center space-x-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => handleDownloadAttachment({ id: 'dl', name: previewPdf.name, url: previewPdf.url, size: 0, category: 'document' })}
+                  onClick={() => handleDownloadAttachment({ id: 'dl', name: previewPdf.name, url: previewPdf.url, size: 0, type: 'application/pdf', category: 'document' })}
                   className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-sm transition"
                 >
                   <Download className="w-3.5 h-3.5" />

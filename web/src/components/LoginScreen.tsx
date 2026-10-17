@@ -53,11 +53,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
 
-  // Google SSO Modal & Authentication State
-  const [showGoogleModal, setShowGoogleModal] = useState(false);
-  const [googleEmail, setGoogleEmail] = useState('');
+  // Google SSO State
+  const [showGoogleSetupModal, setShowGoogleSetupModal] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const [googleModalError, setGoogleModalError] = useState<string | null>(null);
 
   // Auto-detect organization silently from typed email (does NOT expose other tenants)
   const detectedOrg = useMemo(() => {
@@ -135,36 +133,58 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setIsLoading(false);
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     setErrorMessage(null);
-    setGoogleModalError(null);
-    setGoogleEmail(email.trim());
-    setShowGoogleModal(true);
-  };
-
-  const handleGoogleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!googleEmail.trim()) return;
     setIsGoogleLoading(true);
-    setErrorMessage(null);
-    setGoogleModalError(null);
 
     try {
-      const result = await loginWithRegisteredEmail(googleEmail.trim(), 'Google');
-      if (result.success) {
-        setShowGoogleModal(false);
-        if (onLoginSuccess) onLoginSuccess();
-      } else {
-        setGoogleModalError(result.message);
-        addToast('Google Sign-In Denied', result.message, 'error');
+      const { getSupabaseClient } = await import('../lib/supabaseClient');
+      const supabase = getSupabaseClient();
+
+      // Launch authentic Supabase Google OAuth flow
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account'
+          }
+        }
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data?.url) {
+        // Probe URL to check if Google provider is enabled on Supabase project
+        try {
+          const probe = await fetch(data.url, { redirect: 'manual' });
+          if (probe.status === 400) {
+            const probeJson = await probe.json().catch(() => null);
+            if (probeJson?.msg?.includes('provider is not enabled') || probeJson?.error_code === 'validation_failed') {
+              setIsGoogleLoading(false);
+              setShowGoogleSetupModal(true);
+              return;
+            }
+          }
+        } catch {
+          // If browser restricts probe, proceed directly to OAuth redirect
+        }
+
+        // Direct user to authentic Google Account selection & authentication screen
+        window.location.href = data.url;
+        return;
       }
     } catch (err: any) {
-      const msg = err?.message || 'Google authentication failed.';
-      setGoogleModalError(msg);
-      setErrorMessage(msg);
-    } finally {
+      console.warn('Google OAuth initiation note:', err);
       setIsGoogleLoading(false);
+      setShowGoogleSetupModal(true);
+      return;
     }
+
+    setIsGoogleLoading(false);
   };
 
   const handleSsoClick = (provider: string) => {
@@ -598,16 +618,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               <button
                 type="button"
                 onClick={() => handleSsoClick('Google')}
-                className="flex items-center justify-center py-2.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition text-xs font-semibold text-slate-700 shadow-xs"
+                disabled={isGoogleLoading}
+                className="flex items-center justify-center py-2.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition text-xs font-semibold text-slate-700 shadow-xs disabled:opacity-75"
                 title="Continue with Google"
               >
-                <svg className="w-4 h-4 mr-1.5 shrink-0" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
-                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.24v3.15C3.26 21.43 7.33 24 12 24z" />
-                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.24C.45 8.16 0 9.97 0 12s.45 3.84 1.24 5.42l4.04-3.15z" />
-                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.57 1.24 6.58l4.04 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
-                </svg>
-                <span className="truncate">Google</span>
+                {isGoogleLoading ? (
+                  <div className="w-4 h-4 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin mr-1.5 shrink-0" />
+                ) : (
+                  <svg className="w-4 h-4 mr-1.5 shrink-0" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.24v3.15C3.26 21.43 7.33 24 12 24z" />
+                    <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.24C.45 8.16 0 9.97 0 12s.45 3.84 1.24 5.42l4.04-3.15z" />
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.57 1.24 6.58l4.04 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                  </svg>
+                )}
+                <span className="truncate">{isGoogleLoading ? 'Connecting...' : 'Google'}</span>
               </button>
 
               {/* Microsoft */}
@@ -709,12 +734,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         </div>
       )}
 
-      {/* Google Registered Account Sign-In Modal */}
-      {showGoogleModal && (
+      {/* Real Google OAuth Setup & Guidance Modal (Zero-Bypass Security) */}
+      {showGoogleSetupModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5">
-            <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center mx-auto">
-              <svg className="w-6 h-6" viewBox="0 0 24 24">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5">
+            <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center mx-auto">
+              <svg className="w-7 h-7" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
                 <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.24v3.15C3.26 21.43 7.33 24 12 24z" />
                 <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.24C.45 8.16 0 9.97 0 12s.45 3.84 1.24 5.42l4.04-3.15z" />
@@ -722,64 +747,67 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               </svg>
             </div>
 
-            <div className="text-center space-y-1">
-              <h3 className="text-lg font-bold text-slate-900">Continue with Google</h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Sign in with your registered Google work email. Access is verified securely against active employee accounts.
+            <div className="text-center space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-[11px] font-bold border border-amber-200">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                <span>Supabase Google Provider Setup Required</span>
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Google Single Sign-On</h3>
+              <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                Direct email bypass is disabled for your organization&apos;s security. To allow users to authenticate with their official Google account, enable the Google provider in your Supabase project dashboard.
               </p>
             </div>
 
-            {googleModalError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start space-x-2 animate-in fade-in duration-150">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
-                <span>{googleModalError}</span>
-              </div>
-            )}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 space-y-2.5">
+              <p className="font-bold text-slate-800 text-[11px] uppercase tracking-wider">Quick Setup (2 Minutes):</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-600 text-xs">
+                <li>
+                  Go to <span className="font-semibold text-slate-800">Supabase Dashboard → Authentication → Providers</span>.
+                </li>
+                <li>
+                  Click on <span className="font-semibold text-slate-800">Google</span> and toggle it <span className="font-semibold text-emerald-600">Enabled</span>.
+                </li>
+                <li>
+                  Enter your Google Cloud <span className="font-semibold text-slate-800">Client ID</span> &amp; <span className="font-semibold text-slate-800">Client Secret</span>.
+                </li>
+                <li>
+                  Set Authorized Redirect URI in Google Cloud Console:
+                  <code className="mt-1 block p-1.5 bg-white border border-slate-200 rounded-lg text-[10px] text-blue-600 font-mono select-all break-all">
+                    https://cqevzpvyqvckvenutuzz.supabase.co/auth/v1/callback
+                  </code>
+                </li>
+              </ol>
+            </div>
 
-            <form onSubmit={handleGoogleEmailSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">
-                  Registered Google Work Email
-                </label>
-                <input
-                  type="email"
-                  required
-                  autoFocus
-                  value={googleEmail}
-                  onChange={(e) => {
-                    setGoogleEmail(e.target.value);
-                    if (googleModalError) setGoogleModalError(null);
-                  }}
-                  placeholder="name@company.com or your work email"
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                />
-              </div>
-
-              <div className="flex items-center space-x-3 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowGoogleModal(false)}
-                  disabled={isGoogleLoading}
-                  className="w-1/2 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isGoogleLoading || !googleEmail.trim()}
-                  className="w-1/2 py-2.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold shadow-md transition disabled:opacity-50 flex items-center justify-center space-x-1.5"
-                >
-                  {isGoogleLoading ? (
-                    <span>Verifying...</span>
-                  ) : (
-                    <>
-                      <span>Sign In</span>
-                      <span>→</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1">
+              <a
+                href="https://supabase.com/dashboard/project/cqevzpvyqvckvenutuzz/auth/providers"
+                target="_blank"
+                rel="noreferrer"
+                className="w-full sm:flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition flex items-center justify-center gap-1.5"
+              >
+                <span>Open Supabase Auth</span>
+                <span className="text-sm">↗</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGoogleSetupModal(false);
+                  handleGoogleLogin();
+                }}
+                disabled={isGoogleLoading}
+                className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold shadow-sm transition disabled:opacity-50"
+              >
+                {isGoogleLoading ? 'Connecting...' : 'Retry Google Sign-In'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGoogleSetupModal(false)}
+                className="w-full sm:w-auto py-2.5 px-4 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       )}
