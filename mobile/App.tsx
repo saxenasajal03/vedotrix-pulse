@@ -225,6 +225,13 @@ export default function App() {
   const [editChannelIsPrivate, setEditChannelIsPrivate] = useState<boolean>(false);
   const [isSavingChannelSettings, setIsSavingChannelSettings] = useState<boolean>(false);
 
+  // Message Edit, Pin, and Action Menu States
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState<string>('');
+  const [isSavingMessageEdit, setIsSavingMessageEdit] = useState<boolean>(false);
+  const [activeMessageActionId, setActiveMessageActionId] = useState<string | null>(null);
+  const [showPinnedMessagesModal, setShowPinnedMessagesModal] = useState<boolean>(false);
+
   // Selected Notice for Full Screen Reading Modal
   const [selectedNoticeForView, setSelectedNoticeForView] = useState<any | null>(null);
 
@@ -662,6 +669,107 @@ export default function App() {
       console.warn('Reaction update error:', e);
     }
     setActiveReactionMsgId(null);
+  };
+
+  // Edit Chat Message (15-min limit for normal members; anytime for Superadmin/HR)
+  const editChatMessage = async (messageId: string, newText: string) => {
+    if (!newText.trim() || !supabaseClient) return;
+    const targetMsg = chatMessages.find((m) => m.id === messageId);
+    if (!targetMsg) return;
+
+    const createdTime = new Date(targetMsg.created_at).getTime();
+    const diffMinutes = (Date.now() - createdTime) / (60 * 1000);
+    const canEdit = isPrivileged || (targetMsg.sender_id === userProfile?.id && diffMinutes <= 15);
+
+    if (!canEdit) {
+      Alert.alert('Cannot Edit Message', 'Messages can only be edited within 15 minutes of sending.');
+      return;
+    }
+
+    setIsSavingMessageEdit(true);
+    const editedAt = new Date().toISOString();
+    const trimmed = newText.trim();
+
+    setChatMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, message: trimmed, is_edited: true, edited_at: editedAt } : m))
+    );
+
+    try {
+      await supabaseClient
+        .from('chat_messages')
+        .update({
+          message: trimmed,
+          is_edited: true,
+          edited_at: editedAt
+        })
+        .eq('id', messageId);
+      setEditingMessageId(null);
+      setEditingMessageText('');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not edit message.');
+    } finally {
+      setIsSavingMessageEdit(false);
+    }
+  };
+
+  // Delete Chat Message (15-min limit for normal members; anytime for Superadmin/HR)
+  const deleteChatMessage = async (messageId: string) => {
+    if (!supabaseClient) return;
+    const targetMsg = chatMessages.find((m) => m.id === messageId);
+    if (!targetMsg) return;
+
+    const createdTime = new Date(targetMsg.created_at).getTime();
+    const diffMinutes = (Date.now() - createdTime) / (60 * 1000);
+    const canDelete = isPrivileged || (targetMsg.sender_id === userProfile?.id && diffMinutes <= 15);
+
+    if (!canDelete) {
+      Alert.alert('Cannot Delete Message', 'Messages can only be deleted within 15 minutes of sending.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setChatMessages((prev) => prev.filter((m) => m.id !== messageId));
+            setActiveMessageActionId(null);
+            try {
+              await supabaseClient.from('chat_messages').delete().eq('id', messageId);
+            } catch (e: any) {
+              console.warn('Delete chat error:', e);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Toggle Pin Chat Message to Conversation
+  const togglePinChatMessage = async (messageId: string) => {
+    if (!supabaseClient) return;
+    const targetMsg = chatMessages.find((m) => m.id === messageId);
+    if (!targetMsg) return;
+
+    const nextPinned = !targetMsg.is_pinned;
+    setChatMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, is_pinned: nextPinned } : m))
+    );
+    setActiveMessageActionId(null);
+
+    try {
+      await supabaseClient.from('chat_messages').update({ is_pinned: nextPinned }).eq('id', messageId);
+      Alert.alert(
+        nextPinned ? 'Message Pinned 📌' : 'Message Unpinned',
+        nextPinned ? 'This message is now pinned to the top of this channel.' : 'Message removed from pinned items.'
+      );
+    } catch (e: any) {
+      console.warn('Pin chat error:', e);
+    }
   };
 
   // Send Document / PDF Attachment in Chat
@@ -2442,6 +2550,11 @@ export default function App() {
     });
   }, [chatMessages, activeChatChannel, activeChanObj, chatRecipient, userProfile?.id]);
 
+  // Pinned messages for active channel/conversation
+  const pinnedMessages = useMemo(() => {
+    return activeConversationMessages.filter((m) => m.is_pinned);
+  }, [activeConversationMessages]);
+
   // Mention candidates when typing @
   const mentionMatch = chatInputText.match(/(?:^|\s)@([a-zA-Z0-9_-]*)$/);
   const mentionQuery = mentionMatch ? mentionMatch[1].toLowerCase() : null;
@@ -3593,6 +3706,36 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* Pinned Messages Banner */}
+                {pinnedMessages.length > 0 && (
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderWidth: 1,
+                      borderColor: isDarkMode ? '#334155' : '#e2e8f0',
+                      marginBottom: 2
+                    }}
+                    onPress={() => setShowPinnedMessagesModal(true)}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 8 }}>
+                      <Text style={{ fontSize: 13 }}>📌</Text>
+                      <Text style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                        {pinnedMessages.length} Pinned {pinnedMessages.length === 1 ? 'Message' : 'Messages'}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#94a3b8' }} numberOfLines={1}>
+                        • {pinnedMessages[pinnedMessages.length - 1].sender_name}: "{pinnedMessages[pinnedMessages.length - 1].message || 'Attachment'}"
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#0284c7' }}>View All ›</Text>
+                  </TouchableOpacity>
+                )}
+
                 {/* Messages Feed Area */}
                 <View style={[styles.card, { minHeight: 360, paddingBottom: 10 }]}>
                   {activeConversationMessages.length === 0 ? (
@@ -3646,14 +3789,18 @@ export default function App() {
                               </View>
                             )}
 
-                            <View style={{
-                              flexDirection: 'row',
-                              alignItems: 'flex-start',
-                              paddingVertical: isGrouped ? 2 : 4,
-                              paddingHorizontal: 4,
-                              borderRadius: 8,
-                              backgroundColor: isMe ? (isDarkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.5)') : 'transparent'
-                            }}>
+                            <TouchableOpacity
+                              activeOpacity={0.88}
+                              onLongPress={() => setActiveMessageActionId(msg.id)}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'flex-start',
+                                paddingVertical: isGrouped ? 2 : 4,
+                                paddingHorizontal: 4,
+                                borderRadius: 8,
+                                backgroundColor: isMe ? (isDarkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.5)') : 'transparent'
+                              }}
+                            >
                               {/* Left Avatar */}
                               <View style={{ width: 36, marginRight: 10, alignItems: 'center' }}>
                                 {!isGrouped ? (
@@ -3678,28 +3825,95 @@ export default function App() {
                               <View style={{ flex: 1 }}>
                                 {/* Sender Info Row */}
                                 {!isGrouped && (
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                                    <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
-                                      <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
-                                        {isMe ? `${userProfile?.first_name || 'You'} (You)` : msg.sender_name}
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+                                      <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
+                                        <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                                          {isMe ? `${userProfile?.first_name || 'You'} (You)` : msg.sender_name}
+                                        </Text>
+                                      </TouchableOpacity>
+                                      {senderProfile?.designation && (
+                                        <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                          <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0284c7' }}>{senderProfile.designation}</Text>
+                                        </View>
+                                      )}
+                                      <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                                        {formatISTTimeOnly(msg.created_at)}
                                       </Text>
+                                      {msg.is_edited && (
+                                        <Text style={{ fontSize: 9, color: '#94a3b8', fontStyle: 'italic' }}>(edited)</Text>
+                                      )}
+                                      {msg.is_pinned && (
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: 'rgba(245, 158, 11, 0.18)', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                          <Text style={{ fontSize: 9 }}>📌</Text>
+                                          <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#f59e0b' }}>Pinned</Text>
+                                        </View>
+                                      )}
+                                    </View>
+
+                                    <TouchableOpacity
+                                      style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}
+                                      onPress={() => setActiveMessageActionId(msg.id)}
+                                    >
+                                      <Text style={{ color: '#94a3b8', fontSize: 14, fontWeight: 'bold' }}>⋯</Text>
                                     </TouchableOpacity>
-                                    {senderProfile?.designation && (
-                                      <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
-                                        <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0284c7' }}>{senderProfile.designation}</Text>
-                                      </View>
-                                    )}
-                                    <Text style={{ fontSize: 10, color: '#94a3b8' }}>
-                                      {formatISTTimeOnly(msg.created_at)}
-                                    </Text>
                                   </View>
                                 )}
 
-                                {/* Message Text with @mentions highlighting */}
-                                {msg.message && msg.message !== '📷 Photo attached' && (
-                                  <View style={{ marginTop: 1 }}>
-                                    {renderMessageContentWithMentions(msg.message, false)}
+                                {/* Message Text or Inline Edit Box */}
+                                {editingMessageId === msg.id ? (
+                                  <View style={{
+                                    backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc',
+                                    borderWidth: 1,
+                                    borderColor: '#0284c7',
+                                    borderRadius: 10,
+                                    padding: 8,
+                                    marginTop: 4
+                                  }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                                      <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#0284c7' }}>✏️ Editing Message</Text>
+                                      <Text style={{ fontSize: 9, color: '#94a3b8' }}>• 15-min window</Text>
+                                    </View>
+                                    <TextInput
+                                      style={{
+                                        color: isDarkMode ? '#f8fafc' : '#0f172a',
+                                        fontSize: 13,
+                                        minHeight: 45,
+                                        padding: 8,
+                                        backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
+                                        borderRadius: 6,
+                                        borderWidth: 1,
+                                        borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                                      }}
+                                      value={editingMessageText}
+                                      onChangeText={setEditingMessageText}
+                                      multiline
+                                      autoFocus
+                                    />
+                                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                                      <TouchableOpacity
+                                        style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: isDarkMode ? '#334155' : '#e2e8f0' }}
+                                        onPress={() => { setEditingMessageId(null); setEditingMessageText(''); }}
+                                      >
+                                        <Text style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#475569' }}>Cancel</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        style={{ paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, backgroundColor: '#0284c7', opacity: isSavingMessageEdit || !editingMessageText.trim() ? 0.6 : 1 }}
+                                        disabled={isSavingMessageEdit || !editingMessageText.trim()}
+                                        onPress={() => editChatMessage(msg.id, editingMessageText)}
+                                      >
+                                        <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#ffffff' }}>
+                                          {isSavingMessageEdit ? 'Saving...' : 'Save Changes'}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    </View>
                                   </View>
+                                ) : (
+                                  msg.message && msg.message !== '📷 Photo attached' && (
+                                    <View style={{ marginTop: 1 }}>
+                                      {renderMessageContentWithMentions(msg.message, false)}
+                                    </View>
+                                  )
                                 )}
 
                                 {/* Attachments rendering (Images, Documents, PDFs) */}
@@ -3834,7 +4048,7 @@ export default function App() {
                                   </View>
                                 )}
                               </View>
-                            </View>
+                            </TouchableOpacity>
                           </React.Fragment>
                         );
                       })}
@@ -7346,6 +7560,303 @@ export default function App() {
             <TouchableOpacity
               style={[styles.modalCloseBtn, { marginTop: 12, width: '100%' }]}
               onPress={() => setIsChannelSettingsModalOpen(false)}
+            >
+              <Text style={styles.modalCloseBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 23: MESSAGE ACTIONS & QUICK REACTIONS SHEET                         */}
+      {/* ========================================================================= */}
+      <Modal visible={activeMessageActionId !== null} animationType="slide" transparent>
+        {(() => {
+          const actionTargetMsg = activeConversationMessages.find((m) => m.id === activeMessageActionId);
+          if (!actionTargetMsg) return null;
+
+          const msgCreatedTime = new Date(actionTargetMsg.created_at).getTime();
+          const diffMinutes = (Date.now() - msgCreatedTime) / (60 * 1000);
+          const canEditMsg = isPrivileged || (actionTargetMsg.sender_id === userProfile?.id && diffMinutes <= 15);
+          const canDeleteMsg = isPrivileged || (actionTargetMsg.sender_id === userProfile?.id && diffMinutes <= 15);
+          const isMsgPinned = Boolean(actionTargetMsg.is_pinned);
+
+          return (
+            <View style={styles.modalOverlay}>
+              <View style={[styles.modalCard, { paddingBottom: 16 }]}>
+                {/* Header Preview */}
+                <View style={{ width: '100%', marginBottom: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: isDarkMode ? '#1e293b' : '#e2e8f0' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                      {actionTargetMsg.sender_name}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                      {formatISTTimeOnly(actionTargetMsg.created_at)}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 12, color: isDarkMode ? '#94a3b8' : '#64748b' }} numberOfLines={2}>
+                    "{actionTargetMsg.message || 'Attachment'}"
+                  </Text>
+                </View>
+
+                {/* Quick Emoji Reactions */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5, width: '100%' }}>
+                  Quick Reactions
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 14, backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', padding: 8, borderRadius: 12 }}>
+                  {['👍', '❤️', '🎉', '🔥', '🚀', '👀', '👏', '💯'].map((em) => (
+                    <TouchableOpacity
+                      key={em}
+                      style={{ padding: 4 }}
+                      onPress={() => {
+                        addChatReaction(actionTargetMsg.id, em);
+                        setActiveMessageActionId(null);
+                      }}
+                    >
+                      <Text style={{ fontSize: 20 }}>{em}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Action Buttons List */}
+                <View style={{ gap: 8, width: '100%' }}>
+                  {/* Pin / Unpin */}
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                      borderWidth: 1,
+                      borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                    }}
+                    onPress={() => togglePinChatMessage(actionTargetMsg.id)}
+                  >
+                    <Text style={{ fontSize: 16 }}>{isMsgPinned ? '📌' : '📍'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                        {isMsgPinned ? 'Unpin from Conversation' : 'Pin to Conversation'}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                        {isMsgPinned ? 'Remove from top banner' : 'Keep visible for everyone in channel'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Quote & Reply */}
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                      borderWidth: 1,
+                      borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                    }}
+                    onPress={() => {
+                      const quote = `> ${actionTargetMsg.message || 'Attachment'}\n`;
+                      setChatInputText((prev) => (prev ? `${quote}${prev}` : quote));
+                      setActiveMessageActionId(null);
+                    }}
+                  >
+                    <Text style={{ fontSize: 16 }}>💬</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                        Quote & Reply
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                        Reference this message in your reply
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Edit Message (if canEdit) */}
+                  {canEditMsg && actionTargetMsg.message && actionTargetMsg.message !== '📷 Photo attached' && (
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                        borderWidth: 1,
+                        borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                      }}
+                      onPress={() => {
+                        setEditingMessageId(actionTargetMsg.id);
+                        setEditingMessageText(actionTargetMsg.message);
+                        setActiveMessageActionId(null);
+                      }}
+                    >
+                      <Text style={{ fontSize: 16 }}>✏️</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0284c7' }}>
+                          Edit Message
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                          Available within 15 minutes of sending
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Delete Message (if canDelete) */}
+                  {canDeleteMsg && (
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        borderWidth: 1,
+                        borderColor: 'rgba(239, 68, 68, 0.3)'
+                      }}
+                      onPress={() => deleteChatMessage(actionTargetMsg.id)}
+                    >
+                      <Text style={{ fontSize: 16 }}>🗑️</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#ef4444' }}>
+                          Delete Message
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#ef4444', opacity: 0.8 }}>
+                          Permanently remove this message
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Cancel Button */}
+                <TouchableOpacity
+                  style={[styles.modalCloseBtn, { marginTop: 14, width: '100%' }]}
+                  onPress={() => setActiveMessageActionId(null)}
+                >
+                  <Text style={styles.modalCloseBtnText}>Close Menu</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })()}
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 24: PINNED MESSAGES DRAWER / MODAL                                  */}
+      {/* ========================================================================= */}
+      <Modal visible={showPinnedMessagesModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '85%', paddingBottom: 16 }]}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <Text style={{ fontSize: 20 }}>📌</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.modalTitle, { textAlign: 'left' }]}>
+                    Pinned Messages ({pinnedMessages.length})
+                  </Text>
+                  <Text style={[styles.modalSub, { textAlign: 'left', marginBottom: 0 }]}>
+                    Important messages pinned in this conversation
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowPinnedMessagesModal(false)}
+                style={{ padding: 4 }}
+              >
+                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Pinned Messages List */}
+            {pinnedMessages.length === 0 ? (
+              <View style={{ paddingVertical: 35, alignItems: 'center' }}>
+                <Text style={{ fontSize: 32, marginBottom: 8 }}>📌</Text>
+                <Text style={{ color: isDarkMode ? '#f8fafc' : '#0f172a', fontSize: 14, fontWeight: 'bold' }}>
+                  No Pinned Messages
+                </Text>
+                <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, textAlign: 'center' }}>
+                  Long-press any message in this channel or tap ⋯ to pin it here for quick reference.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={{ width: '100%', maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                <View style={{ gap: 10 }}>
+                  {pinnedMessages.map((msg) => {
+                    const senderProfile = teamProfiles.find((p) => p.id === msg.sender_id);
+                    const effectiveAvatar = senderProfile?.avatar_url || msg.sender_avatar;
+                    const initials = ((senderProfile?.first_name?.[0] || msg.sender_name?.[0] || 'U') + (senderProfile?.last_name?.[0] || '')).toUpperCase();
+
+                    return (
+                      <View
+                        key={msg.id}
+                        style={{
+                          padding: 12,
+                          borderRadius: 12,
+                          backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                          borderWidth: 1,
+                          borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                        }}
+                      >
+                        {/* Top row */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <View style={{ width: 26, height: 26, borderRadius: 13, overflow: 'hidden', backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' }}>
+                              {effectiveAvatar ? (
+                                <Image source={{ uri: effectiveAvatar }} style={{ width: '100%', height: '100%' }} />
+                              ) : (
+                                <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{initials}</Text>
+                              )}
+                            </View>
+                            <Text style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                              {msg.sender_name}
+                            </Text>
+                            <Text style={{ fontSize: 10, color: '#94a3b8' }}>
+                              {formatISTTimeOnly(msg.created_at)}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={{
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                              backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                              borderWidth: 1,
+                              borderColor: 'rgba(245, 158, 11, 0.3)'
+                            }}
+                            onPress={() => togglePinChatMessage(msg.id)}
+                          >
+                            <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#f59e0b' }}>Unpin</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* Message Content */}
+                        {msg.message && (
+                          <Text style={{ fontSize: 12, color: isDarkMode ? '#e2e8f0' : '#334155', lineHeight: 17 }}>
+                            {msg.message}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={[styles.modalCloseBtn, { marginTop: 12, width: '100%' }]}
+              onPress={() => setShowPinnedMessagesModal(false)}
             >
               <Text style={styles.modalCloseBtnText}>Close</Text>
             </TouchableOpacity>
