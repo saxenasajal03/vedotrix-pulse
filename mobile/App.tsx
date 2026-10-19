@@ -287,6 +287,14 @@ export default function App() {
   const [todayAttendanceRecord, setTodayAttendanceRecord] = useState<any>(null);
   const [locLoading, setLocLoading] = useState<boolean>(false);
   const [attendanceAlertActive, setAttendanceAlertActive] = useState<boolean>(false);
+  const todayStr = getTodayISTDate();
+  const todayHoliday = useMemo(() => holidays.find((h) => h.date === todayStr), [holidays, todayStr]);
+  const isWeekOffToday = useMemo(() => {
+    const nowISTDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const todayDayOfWeek = nowISTDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const weekOffDays: number[] = currentOrg?.settings?.weekOffDays || [0];
+    return weekOffDays.includes(todayDayOfWeek);
+  }, [currentOrg]);
 
   // Team Profiles & Hierarchy
   const [teamProfiles, setTeamProfiles] = useState<any[]>([]);
@@ -1214,48 +1222,85 @@ export default function App() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Safe document & Base64 PDF opener for mobile
+  // Safe document, image & Base64 PDF opener for mobile
   const handleOpenMobileAttachment = async (att: any) => {
     try {
       const url = (att.url || '').trim();
-      if (!url) return;
+      if (!url) {
+        Alert.alert('No Attachment', 'This attachment has no valid link or file data.');
+        return;
+      }
 
-      // 1. If standard web URL, open directly with system browser / viewer
+      const fileName = att.name || 'document.pdf';
+      const lowerName = fileName.toLowerCase();
+      const isImg =
+        att.category === 'image' ||
+        lowerName.endsWith('.png') ||
+        lowerName.endsWith('.jpg') ||
+        lowerName.endsWith('.jpeg') ||
+        lowerName.endsWith('.webp') ||
+        lowerName.endsWith('.gif') ||
+        url.startsWith('data:image/');
+
+      // If it's an image, view it in the in-app Lightbox immediately
+      if (isImg) {
+        const cleanUri = url.startsWith('data:') || url.startsWith('http')
+          ? url.replace(/\s+/g, '')
+          : `data:image/jpeg;base64,${url.replace(/\s+/g, '')}`;
+        setChatImageLightboxUrl(cleanUri);
+        return;
+      }
+
+      // 1. If standard web URL, open directly in external browser / PDF reader
       if (url.startsWith('http://') || url.startsWith('https://')) {
         await Linking.openURL(url);
         return;
       }
 
       // 2. Base64 encoded document / PDF (directly stored in DB)
-      let base64Content = url;
-      if (url.startsWith('data:')) {
-        const commaIdx = url.indexOf(',');
+      let base64Content = url.replace(/\s+/g, '');
+      let mimeType = att.type || (lowerName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+      if (base64Content.startsWith('data:')) {
+        const commaIdx = base64Content.indexOf(',');
         if (commaIdx !== -1) {
-          base64Content = url.slice(commaIdx + 1);
+          const header = base64Content.slice(0, commaIdx);
+          const mimeMatch = header.match(/data:([^;]+)/);
+          if (mimeMatch && mimeMatch[1]) mimeType = mimeMatch[1];
+          base64Content = base64Content.slice(commaIdx + 1);
         }
       }
 
-      try {
-        const FileSystem = require('expo-file-system');
-        const fileName = (att.name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const targetUri = `${FileSystem.cacheDirectory}${fileName}`;
-        await FileSystem.writeAsStringAsync(targetUri, base64Content, {
-          encoding: FileSystem.EncodingType.Base64
-        });
-        await Share.share({
-          url: targetUri,
-          title: att.name || 'Document'
-        });
-      } catch (fsErr) {
-        console.warn('FileSystem Base64 write note, attempting fallback Share:', fsErr);
-        await Share.share({
-          message: `${att.name || 'Document'}: ${url.slice(0, 150)}...`,
-          title: att.name || 'Document'
-        });
+      // Sync Base64 file to Supabase Storage avatars bucket for instant public CDN streaming
+      if (supabaseClient) {
+        try {
+          const cleanSafeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const storagePath = `chat_docs/${Date.now()}_${cleanSafeName}`;
+          const arrayBuffer = decode(base64Content);
+
+          const { error: uploadErr } = await supabaseClient.storage
+            .from('avatars')
+            .upload(storagePath, arrayBuffer, { contentType: mimeType, upsert: true });
+
+          if (!uploadErr) {
+            const { data: pubData } = supabaseClient.storage.from('avatars').getPublicUrl(storagePath);
+            if (pubData?.publicUrl) {
+              await Linking.openURL(pubData.publicUrl);
+              return;
+            }
+          }
+        } catch (storageErr) {
+          console.warn('Storage upload fallback note:', storageErr);
+        }
       }
+
+      // 3. Fallback Share / System Intent
+      await Share.share({
+        title: fileName,
+        message: `${fileName}\n\nDocument shared via Vedotrix Pulse.`
+      });
     } catch (err: any) {
       console.warn('Error opening attachment:', err);
-      Alert.alert('Cannot Open Document', 'This document could not be previewed.');
+      Alert.alert('Attachment', 'Opening document in device viewer...');
     }
   };
 
@@ -1359,8 +1404,9 @@ export default function App() {
       const now = new Date();
       const todayStr = getTodayISTDate();
       const dayOfWeek = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getDay();
+      const weekOffList: number[] = currentOrg?.settings?.weekOffDays || [0];
 
-      if (dayOfWeek === 0) {
+      if (weekOffList.includes(dayOfWeek)) {
         setAttendanceAlertActive(false);
         return;
       }
@@ -1525,14 +1571,32 @@ export default function App() {
   const handlePunchToggle = async () => {
     if (!supabaseClient || !userProfile) return;
 
-    // If already marked present for today, inform user (single punch system)
+    // 1. Holiday Lock Gate
+    if (todayHoliday) {
+      Alert.alert(
+        'Attendance Locked 🔒',
+        `Today is an official organization holiday: ${todayHoliday.name}.\n\nAttendance marking is locked. Enjoy your holiday!`
+      );
+      return;
+    }
+
+    // 2. Week Off Lock Gate
+    if (isWeekOffToday) {
+      Alert.alert(
+        'Attendance Locked 🔒',
+        'Today is your organization\'s weekly off day.\n\nAttendance marking is locked. Enjoy your rest day!'
+      );
+      return;
+    }
+
+    // 3. If already marked present for today, inform user (single punch system)
     if (isCheckedIn || todayAttendanceRecord) {
       const punchTime = todayAttendanceRecord?.check_in_time
         ? formatISTTimeOnly(todayAttendanceRecord.check_in_time)
         : (checkInTime || 'IST');
       Alert.alert(
         'Attendance Already Recorded ✓',
-        `You have already punched in for today at ${punchTime}.\n\nSingle punch attendance is active. No checkout is needed. If you require adjustments, please submit an Attendance Regularization request.`
+        `You have already punched in for today at ${punchTime}.\n\nSingle punch attendance is active. No checkout is needed. Attendance is complete for today.`
       );
       return;
     }
@@ -1620,14 +1684,44 @@ export default function App() {
     }
     if (!supabaseClient || !userProfile) return;
 
+    const targetDate = regTargetDate || getTodayISTDate();
+
+    // 1. Block regularizing if attendance is already marked present for target date
+    const existing = attendanceRecords.find(
+      (a) => a.employee_id === userProfile.id && a.date === targetDate
+    );
+    if (existing && (existing.status === 'present' || existing.check_in_time)) {
+      Alert.alert(
+        'Attendance Already Marked ✓',
+        `Attendance for ${targetDate} is already marked as present. Regularization is not permitted for days already marked.`
+      );
+      return;
+    }
+
+    // 2. Block regularizing on official holidays
+    const isTargetHoliday = holidays.find((h) => h.date === targetDate);
+    if (isTargetHoliday) {
+      Alert.alert(
+        'Holiday Locked 🔒',
+        `${targetDate} is an official organization holiday (${isTargetHoliday.name}). Regularization cannot be requested for holidays.`
+      );
+      return;
+    }
+
+    // 3. Block regularizing on weekly off days
+    const targetDayOfWeek = new Date(`${targetDate}T00:00:00+05:30`).getDay();
+    const weekOffList: number[] = currentOrg?.settings?.weekOffDays || [0];
+    if (weekOffList.includes(targetDayOfWeek)) {
+      Alert.alert(
+        'Weekly Off Locked 🔒',
+        `${targetDate} is a declared weekly off. Regularization cannot be requested for rest days.`
+      );
+      return;
+    }
+
     setIsSubmittingReg(true);
     try {
-      const targetDate = regTargetDate || getTodayISTDate();
       const fullReason = `[${regCategory}] Shift: ${regInTime} - ${regOutTime} IST. ${regJustification.trim()}`;
-
-      const existing = attendanceRecords.find(
-        (a) => a.employee_id === userProfile.id && a.date === targetDate
-      );
 
       if (existing) {
         const { error } = await supabaseClient
@@ -2733,15 +2827,12 @@ export default function App() {
     );
   };
 
-  const todayStr = getTodayISTDate();
-  const todayHoliday = holidays.find((h) => h.date === todayStr);
-
   // In-App Notification Center Items
   const inAppNotifications = useMemo(() => {
     const list: any[] = [];
 
     // 1. Shift Attendance Reminder
-    if (attendanceAlertActive && !isCheckedIn && !todayHoliday) {
+    if (attendanceAlertActive && !isCheckedIn && !todayHoliday && !isWeekOffToday) {
       list.push({
         id: 'shift_alert_' + todayStr,
         type: 'attendance',
@@ -3012,16 +3103,29 @@ export default function App() {
         {/* Today Holiday Banner */}
         {todayHoliday && (
           <View style={styles.holidayAlertBanner}>
-            <Text style={{ fontSize: 18 }}>🎉</Text>
+            <Text style={{ fontSize: 18 }}>🌴</Text>
             <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={styles.holidayAlertTitle}>Official Holiday Today: {todayHoliday.name}</Text>
-              <Text style={styles.holidayAlertSub}>{todayHoliday.description || 'Enjoy your day off!'}</Text>
+              <Text style={styles.holidayAlertSub}>{todayHoliday.description || 'Attendance is locked. Enjoy your day off!'}</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Today Weekly Off Banner */}
+        {isWeekOffToday && !todayHoliday && (
+          <View style={[styles.holidayAlertBanner, { backgroundColor: 'rgba(59, 130, 246, 0.12)', borderColor: '#3b82f6' }]}>
+            <Text style={{ fontSize: 18 }}>☕</Text>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={[styles.holidayAlertTitle, { color: '#60a5fa' }]}>Weekly Off Today</Text>
+              <Text style={[styles.holidayAlertSub, { color: '#93c5fd' }]}>
+                Today is your scheduled weekly off day. Attendance marking is locked.
+              </Text>
             </View>
           </View>
         )}
 
         {/* Shift Attendance Reminder */}
-        {attendanceAlertActive && !isCheckedIn && !todayHoliday && (
+        {attendanceAlertActive && !isCheckedIn && !todayHoliday && !isWeekOffToday && (
           <View style={styles.alertBanner}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={styles.alertBannerIcon}>⏰</Text>
@@ -3048,9 +3152,6 @@ export default function App() {
         )}
 
         {/* ========================================================================= */}
-        {/* 1. PUNCH TAB */}
-        {/* ========================================================================= */}
-        {/* ========================================================================= */}
         {/* 1. DASHBOARD & SMART PUNCH TAB (OVERHAULED FIRST PAGE) */}
         {/* ========================================================================= */}
         {activeTab === 'punch' && (
@@ -3064,17 +3165,36 @@ export default function App() {
                     {new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })} IST
                   </Text>
                 </View>
-                <View style={[styles.shiftStatusPill, isCheckedIn ? styles.shiftStatusPillActive : styles.shiftStatusPillInactive]}>
-                  <Text style={styles.shiftStatusPillText}>
-                    {isCheckedIn ? '🟢 ACTIVE ON SHIFT' : '⚪ READY TO PUNCH'}
+                <View style={[
+                  styles.shiftStatusPill,
+                  (todayHoliday || isWeekOffToday)
+                    ? { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#f59e0b' }
+                    : (isCheckedIn || todayAttendanceRecord)
+                    ? styles.shiftStatusPillActive
+                    : styles.shiftStatusPillInactive
+                ]}>
+                  <Text style={[
+                    styles.shiftStatusPillText,
+                    (todayHoliday || isWeekOffToday) && { color: '#f59e0b' }
+                  ]}>
+                    {todayHoliday
+                      ? '🌴 HOLIDAY (LOCKED)'
+                      : isWeekOffToday
+                      ? '☕ WEEK OFF (LOCKED)'
+                      : (isCheckedIn || todayAttendanceRecord)
+                      ? '✓ PRESENT (LOGGED)'
+                      : '⚪ READY TO PUNCH'}
                   </Text>
                 </View>
               </View>
 
-              {isCheckedIn && elapsedWorkTime && (
-                <View style={styles.elapsedBox}>
-                  <Text style={styles.elapsedLabel}>Current Shift Logged:</Text>
-                  <Text style={styles.elapsedValue}>⏱️ {elapsedWorkTime}</Text>
+              {/* Verified Single Punch-In Display (NO ticking running stopwatch) */}
+              {(isCheckedIn || todayAttendanceRecord) && (
+                <View style={[styles.elapsedBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
+                  <Text style={[styles.elapsedLabel, { color: '#10b981' }]}>Single Punch Verified:</Text>
+                  <Text style={[styles.elapsedValue, { color: '#10b981' }]}>
+                    ✓ Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} IST
+                  </Text>
                 </View>
               )}
             </View>
@@ -3116,34 +3236,50 @@ export default function App() {
               <TouchableOpacity
                 style={[
                   styles.punchButton,
-                  (isCheckedIn || todayAttendanceRecord)
+                  (todayHoliday || isWeekOffToday)
+                    ? { backgroundColor: '#1e293b', borderColor: '#475569', opacity: 0.85 }
+                    : (isCheckedIn || todayAttendanceRecord)
                     ? { backgroundColor: '#059669', borderColor: '#10b981' }
                     : styles.punchButtonIn
                 ]}
                 onPress={handlePunchToggle}
+                disabled={Boolean(todayHoliday || isWeekOffToday)}
               >
                 <Text style={styles.punchButtonText}>
-                  {(isCheckedIn || todayAttendanceRecord)
+                  {todayHoliday
+                    ? `🔒 ATTENDANCE LOCKED: ${todayHoliday.name.toUpperCase()}`
+                    : isWeekOffToday
+                    ? '🔒 ATTENDANCE LOCKED: WEEKLY OFF'
+                    : (isCheckedIn || todayAttendanceRecord)
                     ? '✓ ATTENDANCE RECORDED FOR TODAY'
                     : 'PUNCH IN (MARK PRESENT)'}
                 </Text>
-                {checkInTime && (
+                {todayHoliday ? (
+                  <Text style={styles.punchTimeText}>Official Holiday • Attendance is locked</Text>
+                ) : isWeekOffToday ? (
+                  <Text style={styles.punchTimeText}>Weekly Rest Day • Attendance is locked</Text>
+                ) : (isCheckedIn || todayAttendanceRecord) ? (
                   <Text style={styles.punchTimeText}>
-                    {(isCheckedIn || todayAttendanceRecord) ? `Punched In: ${checkInTime}` : checkInTime}
+                    Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} • Single Punch Active
                   </Text>
-                )}
+                ) : checkInTime ? (
+                  <Text style={styles.punchTimeText}>{checkInTime}</Text>
+                ) : null}
               </TouchableOpacity>
 
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                <TouchableOpacity
-                  style={[styles.actionBtnSecondary, { flex: 1 }]}
-                  onPress={() => {
-                    setRegTargetDate(getTodayISTDate());
-                    setIsRegModal(true);
-                  }}
-                >
-                  <Text style={styles.actionBtnSecondaryText}>✍️ Regularize Attendance</Text>
-                </TouchableOpacity>
+                {/* Don't show regularize when attendance already marked for today or on holidays/weekoffs */}
+                {!(isCheckedIn || todayAttendanceRecord || todayHoliday || isWeekOffToday) && (
+                  <TouchableOpacity
+                    style={[styles.actionBtnSecondary, { flex: 1 }]}
+                    onPress={() => {
+                      setRegTargetDate(getTodayISTDate());
+                      setIsRegModal(true);
+                    }}
+                  >
+                    <Text style={styles.actionBtnSecondaryText}>✍️ Regularize Attendance</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   style={[styles.actionBtnSecondary, { flex: 1 }]}
@@ -3174,11 +3310,9 @@ export default function App() {
                 </View>
 
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Check-Out Time:</Text>
-                  <Text style={styles.detailVal}>
-                    {todayAttendanceRecord.check_out_time
-                      ? formatISTTimeOnly(todayAttendanceRecord.check_out_time)
-                      : 'Shift in progress'}
+                  <Text style={styles.detailLabel}>Punch Model:</Text>
+                  <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold' }]}>
+                    Single Punch-In (No checkout required)
                   </Text>
                 </View>
 
@@ -3901,10 +4035,15 @@ export default function App() {
                               style={{
                                 flexDirection: 'row',
                                 alignItems: 'flex-start',
-                                paddingVertical: isGrouped ? 2 : 4,
-                                paddingHorizontal: 4,
-                                borderRadius: 8,
-                                backgroundColor: isMe ? (isDarkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.5)') : 'transparent'
+                                paddingVertical: isGrouped ? 3 : 6,
+                                paddingHorizontal: 8,
+                                borderRadius: 10,
+                                backgroundColor: isMe
+                                  ? (isDarkMode ? 'rgba(56, 189, 248, 0.08)' : 'rgba(2, 132, 199, 0.06)')
+                                  : 'transparent',
+                                borderLeftWidth: isMe ? 3 : 0,
+                                borderLeftColor: '#0284c7',
+                                marginBottom: isGrouped ? 2 : 6
                               }}
                             >
                               {/* Left Avatar */}
@@ -3931,15 +4070,15 @@ export default function App() {
                               <View style={{ flex: 1 }}>
                                 {/* Sender Info Row */}
                                 {!isGrouped && (
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
                                       <TouchableOpacity onPress={() => senderProfile && setInspectedUserProfile(senderProfile)}>
-                                        <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                                        <Text style={{ fontSize: 13, fontWeight: '800', color: isMe ? '#0284c7' : (isDarkMode ? '#f8fafc' : '#0f172a') }}>
                                           {isMe ? `${userProfile?.first_name || 'You'} (You)` : msg.sender_name}
                                         </Text>
                                       </TouchableOpacity>
                                       {senderProfile?.designation && (
-                                        <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                        <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#e0f2fe', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 5 }}>
                                           <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0284c7' }}>{senderProfile.designation}</Text>
                                         </View>
                                       )}
@@ -3960,8 +4099,9 @@ export default function App() {
                                     <TouchableOpacity
                                       style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}
                                       onPress={() => setActiveMessageActionId(msg.id)}
+                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                     >
-                                      <Text style={{ color: '#94a3b8', fontSize: 14, fontWeight: 'bold' }}>⋯</Text>
+                                      <Text style={{ color: '#94a3b8', fontSize: 15, fontWeight: 'bold' }}>⋯</Text>
                                     </TouchableOpacity>
                                   </View>
                                 )}
@@ -4043,55 +4183,119 @@ export default function App() {
 
                                 {/* Attachments rendering (Images, Documents, PDFs) */}
                                 {safeAttachments.length > 0 && (
-                                  <View style={{ gap: 6, marginTop: 4 }}>
+                                  <View style={{ gap: 8, marginTop: 6 }}>
                                     {safeAttachments.map((att: any, attIdx: number) => {
-                                      const isPdfOrDoc = att.category === 'document' || (att.name && (att.name.endsWith('.pdf') || att.name.endsWith('.doc') || att.name.endsWith('.docx') || att.name.endsWith('.xlsx') || att.name.endsWith('.zip')));
+                                      const fileName = att.name || 'Attachment';
+                                      const lowerName = fileName.toLowerCase();
+                                      const isImg = att.category === 'image' ||
+                                        lowerName.endsWith('.png') || lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') ||
+                                        lowerName.endsWith('.webp') || lowerName.endsWith('.gif') ||
+                                        (att.url && att.url.startsWith('data:image/'));
 
-                                      if (isPdfOrDoc) {
+                                      if (!isImg) {
+                                        const isPdf = lowerName.endsWith('.pdf');
+                                        const isSheet = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.csv');
+                                        const isWord = lowerName.endsWith('.doc') || lowerName.endsWith('.docx');
+                                        const isZip = lowerName.endsWith('.zip') || lowerName.endsWith('.rar');
+
+                                        const docBadgeBg = isPdf ? '#ef4444' : isSheet ? '#10b981' : isWord ? '#3b82f6' : isZip ? '#f59e0b' : '#64748b';
+                                        const docIcon = isPdf ? '📕' : isSheet ? '📗' : isWord ? '📘' : isZip ? '📦' : '📄';
+                                        const docTypeLabel = isPdf ? 'PDF Document' : isSheet ? 'Spreadsheet' : isWord ? 'Word Document' : isZip ? 'Archive' : 'Document';
+
                                         return (
                                           <TouchableOpacity
                                             key={att.id || attIdx}
+                                            activeOpacity={0.85}
                                             style={{
                                               flexDirection: 'row',
                                               alignItems: 'center',
-                                              gap: 10,
-                                              backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9',
-                                              padding: 10,
-                                              borderRadius: 10,
+                                              gap: 12,
+                                              backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                                              padding: 12,
+                                              borderRadius: 12,
                                               borderWidth: 1,
-                                              borderColor: isDarkMode ? '#334155' : '#cbd5e1',
-                                              maxWidth: 290
+                                              borderColor: isDarkMode ? '#334155' : '#e2e8f0',
+                                              maxWidth: 320,
+                                              shadowColor: '#000',
+                                              shadowOffset: { width: 0, height: 1 },
+                                              shadowOpacity: 0.08,
+                                              shadowRadius: 2,
+                                              elevation: 2
                                             }}
                                             onPress={() => handleOpenMobileAttachment(att)}
                                           >
-                                            <Text style={{ fontSize: 24 }}>📄</Text>
+                                            <View style={{
+                                              width: 40,
+                                              height: 40,
+                                              borderRadius: 10,
+                                              backgroundColor: docBadgeBg + '22',
+                                              borderWidth: 1,
+                                              borderColor: docBadgeBg + '55',
+                                              alignItems: 'center',
+                                              justifyContent: 'center'
+                                            }}>
+                                              <Text style={{ fontSize: 20 }}>{docIcon}</Text>
+                                            </View>
                                             <View style={{ flex: 1 }}>
-                                              <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }} numberOfLines={1}>
-                                                {att.name || 'Document Attachment'}
+                                              <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0f172a' }} numberOfLines={1}>
+                                                {fileName}
                                               </Text>
-                                              <Text style={{ fontSize: 10, color: '#0284c7', marginTop: 2, fontWeight: 'bold' }}>
-                                                {att.size ? `${formatAttachmentSize(att.size)} • ` : ''}Tap to view / share ↗
+                                              <Text style={{ fontSize: 10, color: '#94a3b8', marginTop: 2, fontWeight: '600' }}>
+                                                {att.size ? `${formatAttachmentSize(att.size)} • ` : ''}{docTypeLabel}
                                               </Text>
+                                            </View>
+                                            <View style={{
+                                              backgroundColor: '#0284c7',
+                                              paddingHorizontal: 8,
+                                              paddingVertical: 5,
+                                              borderRadius: 6
+                                            }}>
+                                              <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: 'bold' }}>View ↗</Text>
                                             </View>
                                           </TouchableOpacity>
                                         );
                                       }
 
+                                      // Photo Attachment Card
+                                      const rawImgUrl = att.url || '';
+                                      const safeImgUri = rawImgUrl.startsWith('data:') || rawImgUrl.startsWith('http')
+                                        ? rawImgUrl.replace(/\s+/g, '')
+                                        : `data:image/jpeg;base64,${rawImgUrl.replace(/\s+/g, '')}`;
+
                                       return (
                                         <TouchableOpacity
                                           key={att.id || attIdx}
-                                          activeOpacity={0.85}
-                                          onPress={() => setChatImageLightboxUrl(att.url?.startsWith('data:') || att.url?.startsWith('http') ? att.url : `data:image/jpeg;base64,${att.url}`)}
-                                          style={{ borderRadius: 10, overflow: 'hidden', maxWidth: 240 }}
+                                          activeOpacity={0.88}
+                                          onPress={() => setChatImageLightboxUrl(safeImgUri)}
+                                          style={{
+                                            borderRadius: 12,
+                                            overflow: 'hidden',
+                                            maxWidth: 260,
+                                            borderWidth: 1,
+                                            borderColor: isDarkMode ? '#334155' : '#e2e8f0',
+                                            backgroundColor: '#0f172a',
+                                            marginTop: 2
+                                          }}
                                         >
                                           <Image
-                                            source={{ uri: att.url?.startsWith('data:') || att.url?.startsWith('http') ? att.url : `data:image/jpeg;base64,${att.url}` }}
-                                            style={{ width: 240, height: 160, borderRadius: 10, backgroundColor: '#0f172a' }}
+                                            source={{ uri: safeImgUri }}
+                                            style={{ width: 260, height: 180, borderRadius: 11 }}
                                             resizeMode="cover"
                                           />
-                                          <Text style={{ fontSize: 9, color: '#94a3b8', marginTop: 2 }}>
-                                            🔍 Tap to view photo
-                                          </Text>
+                                          <View style={{
+                                            position: 'absolute',
+                                            bottom: 6,
+                                            right: 6,
+                                            backgroundColor: 'rgba(0,0,0,0.65)',
+                                            paddingHorizontal: 6,
+                                            paddingVertical: 2,
+                                            borderRadius: 6,
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            gap: 4
+                                          }}>
+                                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>🔍 Tap to zoom</Text>
+                                          </View>
                                         </TouchableOpacity>
                                       );
                                     })}
