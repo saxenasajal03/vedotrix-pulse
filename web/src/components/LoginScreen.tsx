@@ -17,6 +17,8 @@ import {
   Laptop,
   Users
 } from 'lucide-react';
+import { FestiveLogo } from './FestiveLogo';
+import { getActiveFestival } from '../lib/festivalEngine';
 
 interface LoginScreenProps {
   onLoginSuccess?: () => void;
@@ -56,6 +58,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   // Google SSO State
   const [showGoogleSetupModal, setShowGoogleSetupModal] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const activeFestival = getActiveFestival();
 
   // Auto-detect organization silently from typed email (does NOT expose other tenants)
   const detectedOrg = useMemo(() => {
@@ -441,16 +444,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         <div className="lg:col-span-5 w-full">
           <div className="w-full max-w-md mx-auto bg-white rounded-3xl p-7 sm:p-9 shadow-2xl shadow-slate-200/70 border border-slate-200/80 space-y-6 relative">
             {/* Card Brand Emblem */}
-            <div className="text-center space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-blue-500/25">
-                <ShieldCheck className="w-7 h-7 text-white" />
-              </div>
+            <div className="text-center space-y-1.5">
+              <FestiveLogo
+                src="/vedotrix-logo.png"
+                alt="Vedotrix Pulse"
+                size="lg"
+                className="mx-auto"
+              />
               <h3 className="text-lg font-black text-slate-900 tracking-tight pt-1">
                 Vedotrix <span className="text-blue-600">Pulse</span>
               </h3>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Secure • Flexible • Connected
-              </p>
+              {activeFestival.id !== 'none' ? (
+                <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-600 border border-amber-500/30 shadow-xs">
+                  <span>{activeFestival.iconSymbol}</span>
+                  <span>{activeFestival.badgeText}</span>
+                </div>
+              ) : (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Secure • Flexible • Connected
+                </p>
+              )}
             </div>
 
             {/* Welcome Back Header */}

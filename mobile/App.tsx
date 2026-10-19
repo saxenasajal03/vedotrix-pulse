@@ -188,10 +188,91 @@ function generateOfferSerial(orgCode: string = 'VDX'): string {
   return `VDX-${cleanCode}-${year}-${hex}`;
 }
 
+export interface MobileFestivalConfig {
+  id: 'dussehra' | 'diwali' | 'newyear' | 'none';
+  name: string;
+  shortLabel: string;
+  iconSymbol: string;
+  greetingTitle: string;
+  wishMessage: string;
+  badgeText: string;
+  primaryColor: string;
+  secondaryColor: string;
+}
+
+export const getActiveMobileFestival = (dateObj?: Date): MobileFestivalConfig => {
+  const d = dateObj || new Date();
+  const istDateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const parts = istDateStr.split('-');
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+
+  // 1. Dussehra Season: Mid to Late October (Oct 15 - Oct 26)
+  if (month === 10 && day >= 15 && day <= 26) {
+    return {
+      id: 'dussehra',
+      name: 'Dussehra (Vijayadashami)',
+      shortLabel: 'Dussehra Utsav',
+      iconSymbol: '🏹',
+      greetingTitle: 'Happy Dussehra! 🏹',
+      wishMessage: 'May the triumph of good over evil bless you with wisdom, courage, and unending prosperity.',
+      badgeText: '🏹 VIJAYADASHAMI SPECIAL',
+      primaryColor: '#f59e0b',
+      secondaryColor: '#dc2626'
+    };
+  }
+
+  // 2. Diwali Season: Late October to Mid November (Oct 27 - Nov 15)
+  if ((month === 10 && day >= 27) || (month === 11 && day <= 15)) {
+    return {
+      id: 'diwali',
+      name: 'Diwali (Deepavali)',
+      shortLabel: 'Diwali Utsav',
+      iconSymbol: '🪔',
+      greetingTitle: 'Shubh Deepavali! 🪔',
+      wishMessage: 'May the divine festival of lights illuminate your life with infinite wealth, health, and supreme joy.',
+      badgeText: '🪔 SHUBH DEEPAVALI',
+      primaryColor: '#fbbf24',
+      secondaryColor: '#ea580c'
+    };
+  }
+
+  // 3. New Year & Holidays (Dec 20 - Jan 3)
+  if ((month === 12 && day >= 20) || (month === 1 && day <= 3)) {
+    return {
+      id: 'newyear',
+      name: 'New Year & Holidays',
+      shortLabel: 'New Year 2027',
+      iconSymbol: '🎉',
+      greetingTitle: 'Happy New Year! 🎉',
+      wishMessage: 'Wishing you breakthrough milestones, joyful celebrations, and grand success.',
+      badgeText: '🎉 NEW YEAR SPECIAL',
+      primaryColor: '#38bdf8',
+      secondaryColor: '#818cf8'
+    };
+  }
+
+  return {
+    id: 'none',
+    name: 'Vedotrix Pulse',
+    shortLabel: 'Standard',
+    iconSymbol: '⚡',
+    greetingTitle: 'Welcome to Vedotrix Pulse',
+    wishMessage: 'Empowering your enterprise operations with precision.',
+    badgeText: '⚡ ENTERPRISE',
+    primaryColor: '#2563eb',
+    secondaryColor: '#0ea5e9'
+  };
+};
+
 export default function App() {
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseConnected, setSupabaseConnected] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Dynamic Festival Celebration State
+  const activeFestival = useMemo(() => getActiveMobileFestival(), []);
+  const [isFestiveBannerDismissed, setIsFestiveBannerDismissed] = useState(false);
 
   // Authentication & Profile State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -2969,14 +3050,37 @@ export default function App() {
       <SafeAreaView style={styles.loginContainer}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={isDarkMode ? '#07090e' : '#f8fafc'} />
         <View style={styles.loginCard}>
-          <Image source={require('./assets/icon.png')} style={styles.loginLogo} resizeMode="contain" />
+          {/* Festive App Icon with Dynamic Ring and Floating Emblem */}
+          <View style={styles.festiveLoginLogoContainer}>
+            <View
+              style={[
+                styles.festiveLogoRing,
+                activeFestival.id !== 'none' && { borderColor: activeFestival.primaryColor }
+              ]}
+            >
+              <Image source={require('./assets/icon.png')} style={styles.loginLogo} resizeMode="contain" />
+            </View>
+            {activeFestival.id !== 'none' && (
+              <View style={[styles.festiveFloatingBadge, { backgroundColor: activeFestival.primaryColor }]}>
+                <Text style={styles.festiveFloatingBadgeEmoji}>{activeFestival.iconSymbol}</Text>
+              </View>
+            )}
+          </View>
           <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'flex-end', marginBottom: -25, zIndex: 10 }}>
           <TouchableOpacity style={styles.themeToggleBtn} onPress={handleToggleTheme}>
             <Text style={{ fontSize: 15 }}>{isDarkMode ? '☀️' : '🌙'}</Text>
           </TouchableOpacity>
         </View>
         <Text style={styles.loginTitle}>Vedotrix Pulse</Text>
-          <Text style={styles.loginSubtitle}>Multi-Tenant Enterprise HRMS & Mobile Suite</Text>
+          {activeFestival.id !== 'none' ? (
+            <View style={[styles.festiveLoginPill, { borderColor: `${activeFestival.primaryColor}66` }]}>
+              <Text style={[styles.festiveLoginPillText, { color: activeFestival.primaryColor }]}>
+                {activeFestival.badgeText}
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.loginSubtitle}>Multi-Tenant Enterprise HRMS & Mobile Suite</Text>
+          )}
           <Text style={styles.loginBrand}>Designed & Managed by Vedotrix Technologies</Text>
 
           <Text style={styles.inputLabel}>Work Email Address</Text>
@@ -3025,13 +3129,33 @@ export default function App() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Image source={require('./assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+          <View style={styles.festiveHeaderLogoContainer}>
+            <View
+              style={[
+                styles.festiveHeaderLogoRing,
+                activeFestival.id !== 'none' && { borderColor: activeFestival.primaryColor }
+              ]}
+            >
+              <Image source={require('./assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+            </View>
+            {activeFestival.id !== 'none' && (
+              <View style={[styles.festiveHeaderBadge, { backgroundColor: activeFestival.primaryColor }]}>
+                <Text style={styles.festiveHeaderBadgeEmoji}>{activeFestival.iconSymbol}</Text>
+              </View>
+            )}
+          </View>
           <View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={styles.brandTitle}>
                 Vedotrix <Text style={styles.brandAccent}>Pulse</Text>
               </Text>
-              {isVedotrixSuperadmin && (
+              {activeFestival.id !== 'none' ? (
+                <View style={[styles.superBadge, { backgroundColor: `${activeFestival.primaryColor}25`, borderColor: activeFestival.primaryColor }]}>
+                  <Text style={[styles.superBadgeText, { color: activeFestival.primaryColor }]}>
+                    {activeFestival.iconSymbol} {activeFestival.shortLabel.toUpperCase()}
+                  </Text>
+                </View>
+              ) : isVedotrixSuperadmin && (
                 <View style={styles.superBadge}>
                   <Text style={styles.superBadgeText}>SUPER</Text>
                 </View>
@@ -3100,6 +3224,31 @@ export default function App() {
           />
         }
       >
+        {/* Festive Celebration Banner (Dussehra / Diwali / Holidays) */}
+        {activeFestival.id !== 'none' && !isFestiveBannerDismissed && (
+          <View style={[styles.festiveCardBanner, { borderColor: `${activeFestival.primaryColor}55` }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <Text style={{ fontSize: 24 }}>{activeFestival.iconSymbol}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.festiveCardBadge, { color: activeFestival.primaryColor }]}>
+                    {activeFestival.badgeText}
+                  </Text>
+                  <Text style={styles.festiveCardTitle}>{activeFestival.greetingTitle}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsFestiveBannerDismissed(true)}
+                style={styles.festiveCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.festiveCloseBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.festiveCardWish}>{activeFestival.wishMessage}</Text>
+          </View>
+        )}
+
         {/* Today Holiday Banner */}
         {todayHoliday && (
           <View style={styles.holidayAlertBanner}>
@@ -8702,11 +8851,119 @@ function createThemedStyles(isDark: boolean) {
     borderColor: cardBorder,
     alignItems: 'center'
   },
+  festiveLoginLogoContainer: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10
+  },
+  festiveLogoRing: {
+    borderWidth: 2,
+    borderColor: '#38bdf8',
+    borderRadius: 20,
+    padding: 3,
+    backgroundColor: '#07090e'
+  },
+  festiveFloatingBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+    elevation: 4
+  },
+  festiveFloatingBadgeEmoji: {
+    fontSize: 13
+  },
+  festiveLoginPill: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+    marginTop: 4,
+    marginBottom: 2
+  },
+  festiveLoginPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#f59e0b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
+  },
+  festiveHeaderLogoContainer: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  festiveHeaderLogoRing: {
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    borderRadius: 11,
+    padding: 2,
+    backgroundColor: '#07090e'
+  },
+  festiveHeaderBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ffffff'
+  },
+  festiveHeaderBadgeEmoji: {
+    fontSize: 9
+  },
+  festiveCardBanner: {
+    backgroundColor: isDark ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.16)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12
+  },
+  festiveCardBadge: {
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
+  },
+  festiveCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: textPrimary,
+    marginTop: 1
+  },
+  festiveCardWish: {
+    fontSize: 11,
+    color: textSecondary,
+    marginTop: 6,
+    lineHeight: 16
+  },
+  festiveCloseBtn: {
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'
+  },
+  festiveCloseBtnText: {
+    fontSize: 12,
+    color: textSecondary,
+    fontWeight: '700'
+  },
   loginLogo: {
     width: 60,
     height: 60,
-    borderRadius: 16,
-    marginBottom: 10
+    borderRadius: 16
   },
   loginTitle: {
     fontSize: 22,

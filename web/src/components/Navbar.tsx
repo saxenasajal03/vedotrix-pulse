@@ -22,6 +22,8 @@ import {
 import { NotificationDropdown } from './NotificationDropdown';
 import { EditOrganizationModal } from './EditOrganizationModal';
 import { UserProfileModal } from './UserProfileModal';
+import { FestiveLogo } from './FestiveLogo';
+import { getActiveFestival } from '../lib/festivalEngine';
 
 interface NavbarProps {
   onOpenVerifyModal: () => void;
@@ -70,7 +72,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'midnight', label: 'Midnight Galaxy', icon: Sparkles, desc: 'Deep Space Navy', colorDot: 'bg-indigo-400' },
     { id: 'emerald-dark', label: 'Emerald Forest', icon: Trees, desc: 'Cyber Green & Mint', colorDot: 'bg-emerald-400' },
     { id: 'crimson-dark', label: 'Crimson Velvet', icon: Flame, desc: 'Rose Obsidian Dark', colorDot: 'bg-rose-400' },
-    { id: 'royal-navy', label: 'Royal Cobalt', icon: Compass, desc: 'Deep Ocean & Blue', colorDot: 'bg-blue-500' }
+    { id: 'royal-navy', label: 'Royal Cobalt', icon: Compass, desc: 'Deep Ocean & Blue', colorDot: 'bg-blue-500' },
+    { id: 'festive-gold', label: 'Festive Utsav', icon: Sparkles, desc: 'Dussehra & Diwali Gold', colorDot: 'bg-amber-400' }
   ];
 
   const currentThemeMeta = themeOptions.find((t) => t.id === theme) || themeOptions[0];
@@ -108,16 +111,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Tenant Switcher Pill */}
           <div className="relative hidden lg:flex items-center space-x-1.5">
             <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700 hover:bg-slate-100 transition cursor-pointer">
-              <div className="w-5 h-5 rounded-md bg-white border border-slate-200 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
-                <img
-                  src={currentOrg?.logoUrl || '/vedotrix-logo.png'}
-                  alt={currentOrg?.name || 'Organization'}
-                  className="w-full h-full object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = '/vedotrix-logo.png';
-                  }}
-                />
-              </div>
+              <FestiveLogo
+                src={currentOrg?.logoUrl || '/vedotrix-logo.png'}
+                alt={currentOrg?.name || 'Organization'}
+                size="sm"
+              />
               <span className="font-semibold text-xs text-slate-800 max-w-[130px] truncate">
                 {currentOrg?.name || 'Vedotrix Technologies'}
               </span>

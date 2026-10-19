@@ -250,6 +250,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'theme-emerald-dark',
       'theme-crimson-dark',
       'theme-royal-navy',
+      'theme-festive-gold',
       'dark',
       'light'
     );

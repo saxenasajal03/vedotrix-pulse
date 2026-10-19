@@ -20,6 +20,7 @@ import {
   Megaphone,
   MessageSquare
 } from 'lucide-react';
+import { FestiveLogo } from './FestiveLogo';
 
 interface SidebarProps {
   activeTab: string;
@@ -224,17 +225,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => handleTabClick('dashboard')}
             className="flex items-center space-x-3 cursor-pointer group min-w-0"
           >
-            {/* Dynamic Organization Logo */}
-            <div className="w-11 h-11 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center shadow-lg shadow-blue-500/10 shrink-0 group-hover:scale-105 transition-transform overflow-hidden p-1.5">
-              <img
-                src={currentOrg.logoUrl || '/vedotrix-logo.png'}
-                alt={currentOrg.name}
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/vedotrix-logo.png';
-                }}
-              />
-            </div>
+            {/* Dynamic Organization Festive Logo */}
+            <FestiveLogo
+              src={currentOrg.logoUrl || '/vedotrix-logo.png'}
+              alt={currentOrg.name}
+              size="md"
+              className="group-hover:scale-105 transition-transform"
+            />
             <div className="min-w-0">
               <div className="flex items-center space-x-1.5">
                 <span className="text-sm font-extrabold text-white tracking-tight leading-snug truncate">

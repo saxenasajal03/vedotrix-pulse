@@ -13,7 +13,8 @@ export type ThemeMode =
   | 'midnight'
   | 'emerald-dark'
   | 'crimson-dark'
-  | 'royal-navy';
+  | 'royal-navy'
+  | 'festive-gold';
 
 export interface Organization {
   id: string;

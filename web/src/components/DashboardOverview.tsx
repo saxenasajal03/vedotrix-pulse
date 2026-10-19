@@ -33,6 +33,7 @@ import {
 import { formatCurrency, formatSalaryOrStipend, getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 import { EditOrganizationModal } from './EditOrganizationModal';
 import { fetchLiveWeather } from '../lib/weather';
+import { FestiveBanner } from './FestiveBanner';
 
 interface DashboardOverviewProps {
   onOpenCreateOffer: () => void;
@@ -400,6 +401,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Dynamic Festival Celebrations & Greeting Banner */}
+      <FestiveBanner />
+
       {/* 1. Header Greeting & Weather/Date Widget with Dynamic IST Time */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
