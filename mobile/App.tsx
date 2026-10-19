@@ -7369,8 +7369,45 @@ export default function App() {
                   </Text>
                 </ScrollView>
 
+                {(() => {
+                  const urlMatch = selectedNoticeForView.content?.match(/https?:\/\/[^\s]+/);
+                  const targetUrl = selectedNoticeForView.action_url || (urlMatch ? urlMatch[0] : null);
+                  const isApk = targetUrl && (targetUrl.includes('.apk') || targetUrl.includes('expo.dev/artifacts'));
+                  if (!targetUrl) return null;
+                  return (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: isApk ? '#f59e0b' : '#3b82f6',
+                        paddingVertical: 12,
+                        paddingHorizontal: 16,
+                        borderRadius: 12,
+                        marginTop: 10,
+                        width: '100%',
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 8,
+                        shadowColor: isApk ? '#f59e0b' : '#3b82f6',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.3,
+                        shadowRadius: 8,
+                        elevation: 4
+                      }}
+                      onPress={() => {
+                        Linking.openURL(targetUrl).catch(() => {
+                          Alert.alert('Unable to open link', targetUrl);
+                        });
+                      }}
+                    >
+                      <Text style={{ color: '#0f172a', fontWeight: 'bold', fontSize: 13 }}>
+                        {isApk ? '🏹 Download & Install Festive Edition APK' : '🔗 Open Link'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })()}
+
                 <TouchableOpacity
-                  style={[styles.loginBtn, { marginTop: 14 }]}
+                  style={[styles.loginBtn, { marginTop: 10 }]}
                   onPress={() => setSelectedNoticeForView(null)}
                 >
                   <Text style={styles.loginBtnText}>Close Notice</Text>
