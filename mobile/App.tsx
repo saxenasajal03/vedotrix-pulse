@@ -265,6 +265,10 @@ export const getActiveMobileFestival = (dateObj?: Date): MobileFestivalConfig =>
   };
 };
 
+const APP_ICON_DEFAULT = require('./assets/icon-standard.png');
+const APP_ICON_DUSSEHRA = require('./assets/icon-dussehra.png');
+const APP_ICON_DIWALI = require('./assets/icon-diwali.png');
+
 export default function App() {
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseConnected, setSupabaseConnected] = useState<boolean>(false);
@@ -273,6 +277,13 @@ export default function App() {
   // Dynamic Festival Celebration State
   const activeFestival = useMemo(() => getActiveMobileFestival(), []);
   const [isFestiveBannerDismissed, setIsFestiveBannerDismissed] = useState(false);
+
+  // Dynamic Decorated App Icon based on active festival
+  const activeAppIcon = useMemo(() => {
+    if (activeFestival.id === 'dussehra') return APP_ICON_DUSSEHRA;
+    if (activeFestival.id === 'diwali') return APP_ICON_DIWALI;
+    return APP_ICON_DEFAULT;
+  }, [activeFestival.id]);
 
   // Authentication & Profile State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -3058,7 +3069,7 @@ export default function App() {
                 activeFestival.id !== 'none' && { borderColor: activeFestival.primaryColor }
               ]}
             >
-              <Image source={require('./assets/icon.png')} style={styles.loginLogo} resizeMode="contain" />
+              <Image source={activeAppIcon} style={styles.loginLogo} resizeMode="cover" />
             </View>
             {activeFestival.id !== 'none' && (
               <View style={[styles.festiveFloatingBadge, { backgroundColor: activeFestival.primaryColor }]}>
@@ -3136,7 +3147,7 @@ export default function App() {
                 activeFestival.id !== 'none' && { borderColor: activeFestival.primaryColor }
               ]}
             >
-              <Image source={require('./assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+              <Image source={activeAppIcon} style={styles.logoImage} resizeMode="cover" />
             </View>
             {activeFestival.id !== 'none' && (
               <View style={[styles.festiveHeaderBadge, { backgroundColor: activeFestival.primaryColor }]}>

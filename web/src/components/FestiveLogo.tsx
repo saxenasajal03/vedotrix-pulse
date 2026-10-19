@@ -49,6 +49,16 @@ export const FestiveLogo: React.FC<FestiveLogoProps> = ({
 
   const isFestive = festival.id !== 'none';
 
+  // Automatically switch logo to the decorated festival image
+  const effectiveSrc = React.useMemo(() => {
+    if (!src || src === '/vedotrix-logo.png' || src.includes('vedotrix-logo')) {
+      if (festival.id === 'dussehra') return '/vedotrix-logo-dussehra.png';
+      if (festival.id === 'diwali') return '/vedotrix-logo-diwali.png';
+      return '/vedotrix-logo.png';
+    }
+    return src;
+  }, [src, festival.id]);
+
   return (
     <div
       className={`relative inline-flex items-center justify-center shrink-0 ${sizeClasses[size]} ${className}`}
@@ -56,7 +66,7 @@ export const FestiveLogo: React.FC<FestiveLogoProps> = ({
     >
       {/* Outer Festive Glowing Ring */}
       <div
-        className={`w-full h-full rounded-xl overflow-hidden p-1.5 flex items-center justify-center transition-all duration-300 ${
+        className={`w-full h-full rounded-xl overflow-hidden p-1 flex items-center justify-center transition-all duration-300 ${
           isFestive
             ? 'bg-slate-900 border-2 shadow-lg'
             : 'bg-slate-900 border border-slate-700/80 shadow-md'
@@ -71,9 +81,9 @@ export const FestiveLogo: React.FC<FestiveLogoProps> = ({
         }
       >
         <img
-          src={src}
+          src={effectiveSrc}
           alt={alt}
-          className="w-full h-full object-contain select-none"
+          className="w-full h-full object-cover rounded-lg select-none"
           onError={(e) => {
             (e.target as HTMLImageElement).src = '/vedotrix-logo.png';
           }}
