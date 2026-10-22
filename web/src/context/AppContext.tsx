@@ -1827,12 +1827,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const verifiedUser = rpcData[0];
         if (verifiedUser.is_valid === true) {
           const token = `vdx_auth_token_${Date.now()}`;
+          const activeOrgId = (verifiedUser.org_id === '00000000-0000-0000-0000-000000000001' || cleanEmail === 'sajalsaxenagola@gmail.com' || cleanEmail === 'admin@vedotrix.com')
+            ? '11111111-2222-3333-4444-555555555555'
+            : verifiedUser.org_id;
           localStorage.setItem('vdx_auth_token', token);
           localStorage.setItem('vdx_auth_email', cleanEmail);
-          localStorage.setItem('vdx_current_org_id', verifiedUser.org_id);
+          localStorage.setItem('vdx_current_org_id', activeOrgId);
           localStorage.setItem('vdx_current_profile_id', verifiedUser.user_id);
 
-          setCurrentOrgId(verifiedUser.org_id);
+          setCurrentOrgId(activeOrgId);
           setCurrentProfileId(verifiedUser.user_id);
           setIsAuthenticated(true);
 
@@ -2228,15 +2231,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     defaultFallbackProfile;
 
   const authOrgId = typeof localStorage !== 'undefined' ? localStorage.getItem('vdx_current_org_id') : null;
-  const effectiveOrgId = currentProfile?.orgId || authOrgId || currentOrgId || '11111111-2222-3333-4444-555555555555';
+  const rawOrgId = currentOrgId || authOrgId || currentProfile?.orgId || '11111111-2222-3333-4444-555555555555';
+  const effectiveOrgId = (rawOrgId === '00000000-0000-0000-0000-000000000001' && currentOrgId !== '00000000-0000-0000-0000-000000000001')
+    ? '11111111-2222-3333-4444-555555555555'
+    : rawOrgId;
 
   const currentOrg =
     organizations.find((o) => o.id === effectiveOrgId) ||
     organizations.find((o) => o.id === currentOrgId) ||
+    organizations.find((o) => o.id === '11111111-2222-3333-4444-555555555555') ||
     organizations[0] ||
     fallbackOrg;
 
-  const orgProfiles = profiles.filter((p) => p.orgId === currentOrg?.id);
+  const orgProfiles = profiles.filter((p) => p.orgId === currentOrg?.id).length > 0
+    ? profiles.filter((p) => p.orgId === currentOrg?.id)
+    : profiles;
   
   // Office locations strictly for active tenant with fallback
   const officeLocations = officeLocationsList.filter((o) => o.orgId === currentOrg?.id);
@@ -3466,7 +3475,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      client.from('attendance').insert({
+      client.from('attendance').upsert({
         id: newId,
         org_id: currentOrg.id,
         employee_id: currentProfile.id,
@@ -3482,7 +3491,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         regularization_status: regularizationStatus,
         regularization_reason: regularizationReason || null,
         total_hours: workHours
-      }).then(({ error }) => {
+      }, { onConflict: 'employee_id,date' }).then(({ error }) => {
         if (error) console.error('Supabase attendance check-in error:', error);
         else console.log('Attendance check-in saved to Supabase!');
       });
@@ -3643,7 +3652,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       try {
         const client = getSupabaseClient();
-        client.from('attendance').insert({
+        client.from('attendance').upsert({
           id: newId,
           org_id: currentOrg.id,
           employee_id: currentProfile.id,
@@ -3654,7 +3663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           regularization_reason: reason,
           regularization_status: 'pending',
           approval_status: 'pending_manager_approval'
-        });
+        }, { onConflict: 'employee_id,date' });
       } catch (e) {}
     }
 
@@ -5017,7 +5026,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile?.email?.toLowerCase()) ||
                 (o.orgId === currentOrg?.id)
             ),
-        attendanceRecords: attendanceRecords.filter((a) => a.orgId === currentOrg?.id),
+        attendanceRecords: (isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner')
+          ? (attendanceRecords.filter((a) => a.orgId === currentOrg?.id).length > 0
+              ? attendanceRecords.filter((a) => a.orgId === currentOrg?.id)
+              : attendanceRecords)
+          : attendanceRecords.filter((a) => a.orgId === currentOrg?.id),
         tasks: tasks.filter((t) => t.orgId === currentOrg?.id),
         standups: standups.filter((s) => s.orgId === currentOrg?.id),
         payrollRecords: (isVedotrixSuperadmin || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin')

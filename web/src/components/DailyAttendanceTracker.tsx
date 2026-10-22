@@ -204,12 +204,17 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     );
   }, [holidays, currentOrg.id]);
 
-  // Attendance records for inspected employee in this month
+  // Attendance records for inspected employee in this month (match by ID or matching email across profiles)
   const employeeMonthPunches = useMemo(() => {
-    return attendanceRecords.filter(
-      (a) => a.employeeId === inspectedEmployee.id && a.date.startsWith(monthPrefix)
-    );
-  }, [attendanceRecords, inspectedEmployee.id, monthPrefix]);
+    return attendanceRecords.filter((a) => {
+      if (a.employeeId === inspectedEmployee.id) return true;
+      if (inspectedEmployee.email) {
+        const p = orgProfiles.find((x) => x.id === a.employeeId);
+        if (p?.email && p.email.toLowerCase() === inspectedEmployee.email.toLowerCase()) return true;
+      }
+      return false;
+    }).filter((a) => a.date.startsWith(monthPrefix));
+  }, [attendanceRecords, inspectedEmployee.id, inspectedEmployee.email, monthPrefix, orgProfiles]);
 
   // Leave requests for inspected employee
   const employeeLeaves = useMemo(() => {
@@ -279,10 +284,15 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       } else if (punch) {
         if (punch.regularizationStatus === 'pending' || punch.approvalStatus === 'pending_manager_approval') {
           status = 'pending';
-        } else if (punch.status === 'regularized' || (!punch.checkInTime && punch.regularizationStatus === 'approved')) {
-          // Only true absent-day regularizations without punch-in are tagged regularized
-          status = 'regularized';
-        } else if (punch.status === 'absent' && punch.regularizationStatus !== 'approved') {
+        } else if (
+          punch.approvalStatus === 'approved' ||
+          punch.regularizationStatus === 'approved' ||
+          punch.status === 'present' ||
+          punch.status === 'regularized' ||
+          punch.status === 'half_day'
+        ) {
+          status = (!punch.checkInTime && punch.regularizationStatus === 'approved') ? 'regularized' : 'present';
+        } else if (punch.approvalStatus === 'rejected' || punch.status === 'absent') {
           status = 'absent';
         } else {
           // Standard punch-in or verified presence
@@ -406,9 +416,26 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
 
   const rosterEmployeeData = useMemo(() => {
     return managedTeam.map((emp) => {
-      const record = attendanceRecords.find(
-        (a) => a.employeeId === emp.id && a.date === selectedRosterDate
-      );
+      const empRecords = attendanceRecords.filter((a) => {
+        if (a.employeeId === emp.id) return true;
+        if (emp.email) {
+          const p = orgProfiles.find((x) => x.id === a.employeeId);
+          if (p?.email && p.email.toLowerCase() === emp.email.toLowerCase()) return true;
+        }
+        return false;
+      }).filter((a) => a.date === selectedRosterDate);
+
+      // Prefer approved, present or pending records over absent
+      const record = empRecords.find((a) =>
+        a.approvalStatus === 'approved' ||
+        a.regularizationStatus === 'approved' ||
+        a.status === 'present' ||
+        a.status === 'regularized' ||
+        a.status === 'half_day' ||
+        a.approvalStatus === 'pending_manager_approval' ||
+        a.regularizationStatus === 'pending'
+      ) || empRecords[0];
+
       const leave = leaveRequests.find(
         (l) =>
           l.employeeId === emp.id &&
@@ -428,10 +455,16 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       if (record) {
         if (record.approvalStatus === 'pending_manager_approval' || record.regularizationStatus === 'pending') {
           status = 'pending_approval';
+        } else if (
+          record.approvalStatus === 'approved' ||
+          record.regularizationStatus === 'approved' ||
+          record.status === 'present' ||
+          record.status === 'regularized' ||
+          record.status === 'half_day'
+        ) {
+          status = 'present';
         } else if (record.approvalStatus === 'rejected' || record.status === 'absent') {
           status = 'absent';
-        } else if (record.status === 'present' || record.status === 'regularized' || record.status === 'half_day' || record.approvalStatus === 'approved') {
-          status = 'present';
         }
       } else if (leave) {
         status = 'on_leave';
@@ -441,7 +474,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
 
       return { employee: emp, record, leave, status };
     });
-  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings]);
+  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings, orgProfiles]);
 
   const filteredRosterData = useMemo(() => {
     return rosterEmployeeData.filter(({ employee, status }) => {

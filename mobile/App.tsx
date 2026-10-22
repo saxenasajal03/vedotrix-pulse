@@ -1717,8 +1717,11 @@ export default function App() {
       ? `Out-of-Office Location (${distance !== null ? `${distance}m away` : 'Remote GPS'}). Pending approval from Reporting Manager / HR / Superadmin.`
       : null;
 
-    const newRecord = {
-      id: newAttId,
+    // Check if attendance record already exists for today to update instead of conflict
+    const existing = attendanceRecords.find((a) => a.employee_id === userProfile.id && a.date === todayStr);
+
+    const recordPayload = {
+      id: existing?.id || newAttId,
       org_id: currentOrg?.id || userProfile.org_id,
       employee_id: userProfile.id,
       date: todayStr,
@@ -1735,12 +1738,15 @@ export default function App() {
     };
 
     try {
-      const { error } = await supabaseClient.from('attendance').insert(newRecord);
+      const { error } = existing
+        ? await supabaseClient.from('attendance').update(recordPayload).eq('id', existing.id)
+        : await supabaseClient.from('attendance').upsert(recordPayload, { onConflict: 'employee_id,date' });
+
       if (!error) {
         setIsCheckedIn(true);
         setCheckInTime(`${nowTimeStr.slice(0, 5)} IST`);
-        setTodayAttendanceRecord(newRecord);
-        setAttendanceRecords((prev) => [newRecord, ...prev.filter((a) => !(a.employee_id === userProfile.id && a.date === todayStr))]);
+        setTodayAttendanceRecord(recordPayload);
+        setAttendanceRecords((prev) => [recordPayload, ...prev.filter((a) => !(a.employee_id === userProfile.id && a.date === todayStr))]);
         setAttendanceAlertActive(false);
 
         sendDeviceNotification(
@@ -1860,7 +1866,7 @@ export default function App() {
         if (checkInISO) insertPayload.check_in_time = checkInISO;
         if (checkOutISO) insertPayload.check_out_time = checkOutISO;
 
-        const { error } = await supabaseClient.from('attendance').insert(insertPayload);
+        const { error } = await supabaseClient.from('attendance').upsert(insertPayload, { onConflict: 'employee_id,date' });
         if (error) throw error;
       }
 

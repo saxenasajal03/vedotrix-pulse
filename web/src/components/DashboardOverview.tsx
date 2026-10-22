@@ -116,10 +116,22 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const isManager = !isTopLeadership && managedTeam.length > 0;
   const isIndividual = !isTopLeadership && !isManager;
 
+  // Helper to recognize present status (approved, regularized or marked present)
+  const isRecordPresent = (a: any) =>
+    Boolean(
+      a && (
+        a.status === 'present' ||
+        a.status === 'regularized' ||
+        a.status === 'half_day' ||
+        a.approvalStatus === 'approved' ||
+        a.regularizationStatus === 'approved'
+      )
+    );
+
   // 1. Top Leadership Metrics (Org-wide)
   const totalEmployees = orgProfiles.length;
   const todayPunches = attendanceRecords.filter((a) => a.date === todayStr);
-  const presentCount = todayPunches.filter((a) => a.status === 'present' || a.status === 'regularized').length;
+  const presentCount = todayPunches.filter(isRecordPresent).length;
   const halfDayCount = todayPunches.filter((a) => a.status === 'half_day').length;
   const onLeaveCount = leaveRequests.filter((l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr).length;
   const absentCount = Math.max(0, totalEmployees - (presentCount + halfDayCount + onLeaveCount));
@@ -133,7 +145,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // 2. Manager Metrics (Strictly scoped to employees managed by them)
   const managedTeamIds = new Set(managedTeam.map((m) => m.id));
   const managerPunches = todayPunches.filter((a) => managedTeamIds.has(a.employeeId));
-  const managerPresentCount = managerPunches.filter((a) => a.status === 'present' || a.status === 'regularized').length;
+  const managerPresentCount = managerPunches.filter(isRecordPresent).length;
   const managerOnLeaveCount = leaveRequests.filter(
     (l) => l.status === 'approved' && l.startDate <= todayStr && l.endDate >= todayStr && managedTeamIds.has(l.employeeId)
   ).length;
@@ -149,7 +161,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     (l) => l.employeeId === currentProfile?.id && (l.status === 'approved' || l.status === 'pending') && l.startDate <= todayStr && l.endDate >= todayStr
   );
   const myMonthPunchesCount = attendanceRecords.filter(
-    (a) => a.employeeId === currentProfile?.id && a.date.startsWith(todayStr.slice(0, 7)) && (a.status === 'present' || a.status === 'regularized')
+    (a) => a.employeeId === currentProfile?.id && a.date.startsWith(todayStr.slice(0, 7)) && isRecordPresent(a)
   ).length;
   const myPendingRequestsCount =
     leaveRequests.filter((l) => l.employeeId === currentProfile?.id && l.status === 'pending').length +
@@ -163,7 +175,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     ? presentCount
     : isManager
     ? managerPresentCount
-    : (myTodayPunch && (myTodayPunch.status === 'present' || myTodayPunch.status === 'regularized') ? 1 : 0);
+    : (isRecordPresent(myTodayPunch) ? 1 : 0);
   const displayOnLeave = isTopLeadership ? onLeaveCount : isManager ? managerOnLeaveCount : (myActiveLeave ? 1 : 0);
   const displayAbsent = Math.max(0, displayTotal - (displayPresent + displayOnLeave));
   const displayRate = isTopLeadership
@@ -181,11 +193,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     const label = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
     let count = 0;
     if (isTopLeadership) {
-      count = attendanceRecords.filter((a) => a.date === dateStr && (a.status === 'present' || a.status === 'regularized')).length;
+      count = attendanceRecords.filter((a) => a.date === dateStr && isRecordPresent(a)).length;
     } else if (isManager) {
-      count = attendanceRecords.filter((a) => a.date === dateStr && managedTeamIds.has(a.employeeId) && (a.status === 'present' || a.status === 'regularized')).length;
+      count = attendanceRecords.filter((a) => a.date === dateStr && managedTeamIds.has(a.employeeId) && isRecordPresent(a)).length;
     } else {
-      count = attendanceRecords.filter((a) => a.date === dateStr && a.employeeId === currentProfile?.id && (a.status === 'present' || a.status === 'regularized')).length;
+      count = attendanceRecords.filter((a) => a.date === dateStr && a.employeeId === currentProfile?.id && isRecordPresent(a)).length;
     }
     return { dateStr, label, count };
   });
