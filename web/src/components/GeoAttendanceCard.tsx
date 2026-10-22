@@ -395,7 +395,11 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
             />
             <span className="text-base font-bold text-white">
               {todayRecord
-                ? '✓ Attendance Recorded for Today (IST)'
+                ? todayRecord.approvalStatus === 'pending_manager_approval'
+                  ? '⏳ Attendance Logged • Pending Manager/HR Approval'
+                  : todayRecord.approvalStatus === 'rejected'
+                  ? '✕ Attendance Rejected by Manager'
+                  : '✓ Attendance Recorded & Verified (Present)'
                 : activeLeaveToday
                 ? `Locked: On ${activeLeaveToday.leaveType.toUpperCase()} Leave`
                 : isWeekOffToday

@@ -11,7 +11,9 @@ export const RegularizationApprovalQueue: React.FC = () => {
     currentProfile?.role === 'hr' ||
     currentProfile?.role === 'manager' ||
     isVedotrixSuperadmin;
-  const pendingRequests = attendanceRecords.filter((a) => a.regularizationStatus === 'pending');
+  const pendingRequests = attendanceRecords.filter(
+    (a) => a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval'
+  );
 
   if (!isReviewer || pendingRequests.length === 0) return null;
 

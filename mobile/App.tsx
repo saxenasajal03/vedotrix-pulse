@@ -207,23 +207,11 @@ export const getActiveMobileFestival = (dateObj?: Date): MobileFestivalConfig =>
   const month = parseInt(parts[1], 10);
   const day = parseInt(parts[2], 10);
 
-  // 1. Dussehra Season: Mid to Late October (Oct 15 - Oct 26)
-  if (month === 10 && day >= 15 && day <= 26) {
-    return {
-      id: 'dussehra',
-      name: 'Dussehra (Vijayadashami)',
-      shortLabel: 'Dussehra Utsav',
-      iconSymbol: '🏹',
-      greetingTitle: 'Happy Dussehra! 🏹',
-      wishMessage: 'May the triumph of good over evil bless you with wisdom, courage, and unending prosperity.',
-      badgeText: '🏹 VIJAYADASHAMI SPECIAL',
-      primaryColor: '#f59e0b',
-      secondaryColor: '#dc2626'
-    };
-  }
+  // 1. Dussehra Season: Concluded for 2026 (ended Oct 20)
+  // (Past season - Dussehra theme removed)
 
-  // 2. Diwali Season: Late October to Mid November (Oct 27 - Nov 15)
-  if ((month === 10 && day >= 27) || (month === 11 && day <= 15)) {
+  // 2. Diwali Season: Late October to Mid November (Oct 28 - Nov 15)
+  if ((month === 10 && day >= 28) || (month === 11 && day <= 15)) {
     return {
       id: 'diwali',
       name: 'Diwali (Deepavali)',
@@ -1724,6 +1712,11 @@ export default function App() {
     }
 
     const newAttId = generateUUID();
+    const requiresApproval = !isInsideFence;
+    const outOfOfficeReason = requiresApproval
+      ? `Out-of-Office Location (${distance !== null ? `${distance}m away` : 'Remote GPS'}). Pending approval from Reporting Manager / HR / Superadmin.`
+      : null;
+
     const newRecord = {
       id: newAttId,
       org_id: currentOrg?.id || userProfile.org_id,
@@ -1734,9 +1727,10 @@ export default function App() {
       check_in_long: location?.coords.longitude || null,
       distance_meters: distance,
       status: 'present',
-      is_remote: !isInsideFence,
-      regularization_status: 'none',
-      approval_status: isInsideFence ? 'approved' : 'pending_manager_approval',
+      is_remote: requiresApproval,
+      regularization_status: requiresApproval ? 'pending' : 'none',
+      regularization_reason: outOfOfficeReason,
+      approval_status: requiresApproval ? 'pending_manager_approval' : 'approved',
       total_hours: 8
     };
 
@@ -1750,15 +1744,24 @@ export default function App() {
         setAttendanceAlertActive(false);
 
         sendDeviceNotification(
-          '✅ Attendance Recorded | Vedotrix Pulse',
-          `Checked in at ${nowTimeStr} IST. Geofence: ${isInsideFence ? `In Office (${targetCoords.name})` : 'Remote'}. Status: Present.`,
+          requiresApproval ? '⏳ Attendance Logged (Approval Required) | Vedotrix Pulse' : '✅ Attendance Recorded | Vedotrix Pulse',
+          requiresApproval
+            ? `Checked in at ${nowTimeStr} IST (${distance}m from office). Pending Manager / HR approval.`
+            : `Checked in at ${nowTimeStr} IST. Geofence: In Office (${targetCoords.name}). Status: Present.`,
           'attendance-alerts'
         );
 
-        Alert.alert(
-          'Marked Present for Today ✓',
-          `Checked in at ${nowTimeStr} IST.\nLocation: ${isInsideFence ? `In Office (${targetCoords.name})` : `Remote (${distance}m from office)`}\n\nSingle punch attendance recorded successfully.`
-        );
+        if (requiresApproval) {
+          Alert.alert(
+            'Attendance Logged (Pending Approval) ⏳',
+            `Checked in at ${nowTimeStr} IST.\nLocation: Outside Office Perimeter (${distance !== null ? `${distance}m away` : 'Remote'}).\n\nYour attendance has been submitted and is pending verification from your Reporting Manager, HR, or Superadmin.`
+          );
+        } else {
+          Alert.alert(
+            'Marked Present for Today ✓',
+            `Checked in at ${nowTimeStr} IST.\nLocation: In Office (${targetCoords.name})\n\nSingle punch attendance recorded successfully.`
+          );
+        }
         refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
       } else {
         Alert.alert('Database Error', error.message);
@@ -2739,11 +2742,12 @@ export default function App() {
      userProfile?.email?.toLowerCase() === 'sajalsaxenagola@gmail.com')
   );
 
-  // Filter pending approvals
+  // Filter pending approvals (both manual regularizations & remote out-of-office punches)
   const pendingRegularizations = useMemo(() => {
     if (!canApprove) return [];
     return attendanceRecords.filter((a) => {
-      if (a.regularization_status !== 'pending') return false;
+      const isPending = a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval';
+      if (!isPending) return false;
       if (isSuperadmin || isHR || isOwner) return true;
       const emp = teamProfiles.find((p) => p.id === a.employee_id);
       return emp?.manager_id === userProfile?.id;
@@ -3398,6 +3402,8 @@ export default function App() {
                   styles.punchButton,
                   (todayHoliday || isWeekOffToday)
                     ? { backgroundColor: '#1e293b', borderColor: '#475569', opacity: 0.85 }
+                    : todayAttendanceRecord?.approval_status === 'pending_manager_approval'
+                    ? { backgroundColor: '#d97706', borderColor: '#f59e0b' }
                     : (isCheckedIn || todayAttendanceRecord)
                     ? { backgroundColor: '#059669', borderColor: '#10b981' }
                     : styles.punchButtonIn
@@ -3410,14 +3416,20 @@ export default function App() {
                     ? `🔒 ATTENDANCE LOCKED: ${todayHoliday.name.toUpperCase()}`
                     : isWeekOffToday
                     ? '🔒 ATTENDANCE LOCKED: WEEKLY OFF'
+                    : todayAttendanceRecord?.approval_status === 'pending_manager_approval'
+                    ? '⏳ ATTENDANCE PENDING APPROVAL'
                     : (isCheckedIn || todayAttendanceRecord)
-                    ? '✓ ATTENDANCE RECORDED FOR TODAY'
+                    ? '✓ ATTENDANCE RECORDED (PRESENT)'
                     : 'PUNCH IN (MARK PRESENT)'}
                 </Text>
                 {todayHoliday ? (
                   <Text style={styles.punchTimeText}>Official Holiday • Attendance is locked</Text>
                 ) : isWeekOffToday ? (
                   <Text style={styles.punchTimeText}>Weekly Rest Day • Attendance is locked</Text>
+                ) : todayAttendanceRecord?.approval_status === 'pending_manager_approval' ? (
+                  <Text style={styles.punchTimeText}>
+                    Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} (Remote) • Awaiting Manager/HR Approval
+                  </Text>
                 ) : (isCheckedIn || todayAttendanceRecord) ? (
                   <Text style={styles.punchTimeText}>
                     Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} • Single Punch Active
@@ -5210,7 +5222,9 @@ export default function App() {
                             </Text>
                             <Text style={styles.approvalEmpRole}>{emp?.designation || 'Staff'}</Text>
                           </View>
-                          <Text style={styles.approvalReason}>"{reg.regularization_reason}"</Text>
+                          <Text style={styles.approvalReason}>
+                            "{reg.regularization_reason || (reg.is_remote ? `Outside Office Perimeter (${reg.distance_meters ? `${reg.distance_meters}m away` : 'Remote GPS'}) - Approval Required` : 'Attendance Regularization Request')}"
+                          </Text>
                           <Text style={styles.approvalMeta}>📅 Target Date: {formatDisplayDate(reg.date)}</Text>
 
                           <View style={styles.btnRow}>

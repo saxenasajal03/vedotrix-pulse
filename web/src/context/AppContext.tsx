@@ -6,6 +6,7 @@ import {
   OfficeLocation,
   OfferLetter,
   AttendanceRecord,
+  AttendanceStatus,
   TaskItem,
   DailyStandup,
   PayrollRecord,
@@ -795,6 +796,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             totalHours: a.total_hours ? Number(a.total_hours) : 0
           }));
           setAttendanceRecords(mappedAtt);
+          try {
+            localStorage.setItem('vdx_attendance', JSON.stringify(mappedAtt));
+          } catch {}
         }
 
         if (!errTasks && cloudTasks) {
@@ -3668,14 +3672,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const approverUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
     const targetAtt = attendanceRecords.find((a) => a.id === attendanceId);
 
-    setAttendanceRecords((prev) =>
-      prev.map((a) => {
+    setAttendanceRecords((prev) => {
+      const updated = prev.map((a) => {
         if (a.id === attendanceId) {
           return {
             ...a,
             regularizationStatus: status,
-            approvalStatus: status === 'approved' ? 'approved' : 'rejected',
-            status: status === 'approved' ? 'present' : 'absent',
+            approvalStatus: (status === 'approved' ? 'approved' : 'rejected') as 'approved' | 'rejected',
+            status: (status === 'approved' ? 'present' : 'absent') as AttendanceStatus,
             totalHours: status === 'approved' && (!a.totalHours || a.totalHours === 0) ? (currentOrg.settings?.workHoursPerDay || 8) : a.totalHours,
             regularizedBy: currentProfile.id,
             approvedBy: currentProfile.id,
@@ -3683,8 +3687,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         }
         return a;
-      })
-    );
+      });
+      try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
+      return updated;
+    });
 
     try {
       const client = getSupabaseClient();

@@ -127,7 +127,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const onLeaveRate = totalEmployees > 0 ? Math.round((onLeaveCount / totalEmployees) * 100) : 0;
   const pendingApprovalsCount =
     leaveRequests.filter((l) => l.status === 'pending').length +
-    attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length +
+    attendanceRecords.filter((a) => a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval').length +
     accessRequests.filter((r) => r.status === 'pending').length;
 
   // 2. Manager Metrics (Strictly scoped to employees managed by them)

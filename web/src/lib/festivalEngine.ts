@@ -141,13 +141,11 @@ export function getActiveFestival(dateObj?: Date): FestivalConfig {
   const month = parseInt(monthStr, 10);
   const day = parseInt(dayStr, 10);
 
-  // 1. Dussehra Season: Mid to Late October (e.g., Oct 15 - Oct 26)
-  if (month === 10 && day >= 15 && day <= 26) {
-    return FESTIVALS.dussehra;
-  }
+  // 1. Dussehra Season: Concluded for 2026 (ended Oct 20)
+  // (Past season - Dussehra theme removed)
 
-  // 2. Diwali Season: Late October to Mid November (e.g., Oct 27 - Nov 15)
-  if ((month === 10 && day >= 27) || (month === 11 && day <= 15)) {
+  // 2. Diwali Season: Late October to Mid November (Oct 28 - Nov 15)
+  if ((month === 10 && day >= 28) || (month === 11 && day <= 15)) {
     return FESTIVALS.diwali;
   }
 

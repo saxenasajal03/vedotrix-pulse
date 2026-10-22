@@ -97,13 +97,17 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   // For employees: strictly 'calendar'
   const [activeViewTab, setActiveViewTab] = useState<'calendar' | 'daily_roster' | 'regularizations'>('calendar');
 
-  // Pending regularizations count for badge & tab
+  // Pending regularizations & out-of-office presence approval count for badge & tab
   const pendingRegularizationsCount = useMemo(() => {
     if (isHrOrSuperadmin) {
-      return attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length;
+      return attendanceRecords.filter(
+        (a) => a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval'
+      ).length;
     }
     const reportIds = new Set(selectableEmployees.map((m) => m.id));
-    return attendanceRecords.filter((a) => a.regularizationStatus === 'pending' && reportIds.has(a.employeeId)).length;
+    return attendanceRecords.filter(
+      (a) => (a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval') && reportIds.has(a.employeeId)
+    ).length;
   }, [attendanceRecords, isHrOrSuperadmin, selectableEmployees]);
 
   // Regularizations queue filter states
@@ -413,22 +417,37 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
           l.endDate >= selectedRosterDate
       );
 
-      let status: 'present' | 'on_leave' | 'not_marked' = 'not_marked';
-      if (record && (record.status === 'present' || record.status === 'regularized' || record.status === 'half_day')) {
-        status = 'present';
+      const [shiftEndH, shiftEndM] = (currentOrg.settings?.shiftEndTime || '18:30').split(':').map(Number);
+      const shiftEndMins = (shiftEndH || 18) * 60 + (shiftEndM || 30);
+      const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
+      const isPast = selectedRosterDate < todayIST;
+      const isToday = selectedRosterDate === todayIST;
+
+      let status: 'present' | 'pending_approval' | 'on_leave' | 'absent' | 'not_marked' = 'not_marked';
+      if (record) {
+        if (record.approvalStatus === 'pending_manager_approval' || record.regularizationStatus === 'pending') {
+          status = 'pending_approval';
+        } else if (record.approvalStatus === 'rejected' || record.status === 'absent') {
+          status = 'absent';
+        } else if (record.status === 'present' || record.status === 'regularized' || record.status === 'half_day' || record.approvalStatus === 'approved') {
+          status = 'present';
+        }
       } else if (leave) {
         status = 'on_leave';
+      } else if (isPast || (isToday && currentTotalMins >= shiftEndMins)) {
+        status = 'absent';
       }
 
       return { employee: emp, record, leave, status };
     });
-  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate]);
+  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings]);
 
   const filteredRosterData = useMemo(() => {
     return rosterEmployeeData.filter(({ employee, status }) => {
       if (rosterFilterTab === 'present' && status !== 'present') return false;
       if (rosterFilterTab === 'on_leave' && status !== 'on_leave') return false;
-      if (rosterFilterTab === 'not_marked' && status !== 'not_marked') return false;
+      if (rosterFilterTab === 'not_marked' && status !== 'not_marked' && status !== 'absent' && status !== 'pending_approval') return false;
       if (rosterDept !== 'all' && employee.department !== rosterDept) return false;
       if (rosterSearch.trim()) {
         const q = rosterSearch.toLowerCase();
@@ -471,15 +490,18 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     return Array.from(new Set(managedTeam.map((p) => p.department).filter(Boolean)));
   }, [managedTeam]);
 
-  // Regularization records memo for View 3
+  // Regularization & out-of-office presence records memo for View 3
   const regularizationList = useMemo(() => {
     const allowedEmpIds = isHrOrSuperadmin ? null : new Set(managedTeam.map((m) => m.id));
 
     return attendanceRecords
       .filter((a) => {
-        if (!a.regularizationStatus || a.regularizationStatus === 'none') return false;
+        const isPendingRemote = a.approvalStatus === 'pending_manager_approval';
+        const isReg = a.regularizationStatus && a.regularizationStatus !== 'none';
+        if (!isPendingRemote && !isReg) return false;
         if (allowedEmpIds && !allowedEmpIds.has(a.employeeId)) return false;
-        if (regFilterStatus !== 'all' && a.regularizationStatus !== regFilterStatus) return false;
+        const effectiveStatus = isPendingRemote ? 'pending' : a.regularizationStatus;
+        if (regFilterStatus !== 'all' && effectiveStatus !== regFilterStatus) return false;
         if (regSearchQuery.trim()) {
           const emp = orgProfiles.find((p) => p.id === a.employeeId);
           const name = emp ? `${emp.firstName} ${emp.lastName}`.toLowerCase() : '';
@@ -495,15 +517,17 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   const regStats = useMemo(() => {
     const allowedEmpIds = isHrOrSuperadmin ? null : new Set(managedTeam.map((m) => m.id));
     const allRegs = attendanceRecords.filter((a) => {
-      if (!a.regularizationStatus || a.regularizationStatus === 'none') return false;
+      const isPendingRemote = a.approvalStatus === 'pending_manager_approval';
+      const isReg = a.regularizationStatus && a.regularizationStatus !== 'none';
+      if (!isPendingRemote && !isReg) return false;
       if (allowedEmpIds && !allowedEmpIds.has(a.employeeId)) return false;
       return true;
     });
     return {
       all: allRegs.length,
-      pending: allRegs.filter((a) => a.regularizationStatus === 'pending').length,
-      approved: allRegs.filter((a) => a.regularizationStatus === 'approved').length,
-      rejected: allRegs.filter((a) => a.regularizationStatus === 'rejected').length
+      pending: allRegs.filter((a) => a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending').length,
+      approved: allRegs.filter((a) => a.regularizationStatus === 'approved' && a.approvalStatus !== 'pending_manager_approval').length,
+      rejected: allRegs.filter((a) => a.regularizationStatus === 'rejected' || a.approvalStatus === 'rejected').length
     };
   }, [attendanceRecords, isHrOrSuperadmin, managedTeam]);
 
@@ -1172,13 +1196,22 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                             ✓ Present
                           </span>
+                        ) : status === 'pending_approval' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 w-fit">
+                            <Clock className="w-3 h-3" />
+                            Pending Approval
+                          </span>
                         ) : status === 'on_leave' ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/20 text-blue-400 border border-blue-500/30">
                             ✈️ Leave ({leave?.leaveType})
                           </span>
-                        ) : (
+                        ) : status === 'absent' ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                            ✗ Not Marked
+                            ✗ Absent
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-500/20 text-slate-400 border border-slate-500/30">
+                            ⏱️ Not Marked
                           </span>
                         )}
                       </td>
@@ -1186,18 +1219,42 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                         {record?.checkInTime ? formatISTTime(record.checkInTime) : '—'}
                       </td>
                       <td className="py-3 px-4 truncate max-w-xs text-[var(--text-muted)]">
-                        {record?.officeAddress || (record?.isRemote ? 'Remote (WFH)' : '—')}
+                        {record?.officeAddress || (record?.isRemote ? `Remote (${record.distanceMeters ? `${Math.round(record.distanceMeters)}m` : 'WFH'})` : '—')}
                       </td>
                       <td className="py-3 px-4">
-                        <button
-                          onClick={() => {
-                            setSelectedEmpId(employee.id);
-                            setActiveViewTab('calendar');
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[11px] font-bold transition"
-                        >
-                          View Calendar
-                        </button>
+                        <div className="flex items-center space-x-1.5 justify-end">
+                          {status === 'pending_approval' && record?.id && (isHrOrSuperadmin || (isManager && employee.managerId === currentProfile.id)) && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => resolveRegularization(record.id, 'approved', `Approved by ${currentProfile.firstName}`)}
+                                className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold transition flex items-center gap-1"
+                                title="Approve Presence"
+                              >
+                                <Check className="w-3 h-3" />
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => resolveRegularization(record.id, 'rejected', `Rejected by ${currentProfile.firstName}`)}
+                                className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold transition flex items-center gap-1"
+                                title="Reject Presence"
+                              >
+                                <X className="w-3 h-3" />
+                                Reject
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => {
+                              setSelectedEmpId(employee.id);
+                              setActiveViewTab('calendar');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[11px] font-bold transition"
+                          >
+                            Calendar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
