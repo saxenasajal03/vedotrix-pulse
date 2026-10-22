@@ -2243,25 +2243,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     organizations[0] ||
     fallbackOrg;
 
-  // Helper to check if a profile is the Vedotrix Root Platform Superadmin
-  // He is the supercontroller of the entire platform, NOT an employee of any client organization.
-  const isPlatformSuperadminProfile = (p: { id?: string; email?: string; role?: string; orgId?: string }) => {
+  const isVedotrixOrg = currentOrg?.id === '00000000-0000-0000-0000-000000000001';
+
+  // Helper: In Vedotrix organization ONLY, Sajal who is superadmin / root platform supercontroller is excluded from employee headcount.
+  // In ALL OTHER organizations, ANY superadmin (even named Sajal) belonging to that organization IS FULLY SHOWN & COUNTED on their HRMS!
+  const isSajalRootSuperadmin = (p: { id?: string; email?: string; role?: string }) => {
+    const email = p.email?.toLowerCase();
     return (
       p.id === '00000000-0000-0000-0000-000000000003' ||
-      p.email?.toLowerCase() === 'admin@vedotrix.com' ||
-      (p.role === 'superadmin' && (p.orgId === '00000000-0000-0000-0000-000000000001' || p.email?.toLowerCase().includes('vedotrix.com')))
+      p.id === '00000000-0000-0000-0000-000000000004' ||
+      email === 'admin@vedotrix.com' ||
+      email === 'sajalsaxenagola@gmail.com'
     );
   };
 
-  const isRootPlatformOrg = currentOrg?.id === '00000000-0000-0000-0000-000000000001';
-
   // orgProfiles strictly scopes employees to current organization.
-  // Vedotrix Superadmin is NEVER counted as an employee of any client organization!
   const tenantProfiles = profiles.filter((p) => p.orgId === currentOrg?.id);
-  const orgProfiles = (tenantProfiles.length > 0 ? tenantProfiles : profiles).filter((p) => {
-    if (!isRootPlatformOrg && isPlatformSuperadminProfile(p)) {
-      return false; // Strictly exclude Vedotrix Superadmin from client organizations
+  const candidateProfiles = tenantProfiles.length > 0 ? tenantProfiles : profiles.filter((p) => p.orgId === currentOrg?.id);
+
+  const orgProfiles = candidateProfiles.filter((p) => {
+    // 1. In Vedotrix organization ONLY: Do NOT count Sajal who is superadmin / platform supercontroller
+    if (isVedotrixOrg && isSajalRootSuperadmin(p)) {
+      return false;
     }
+    // 2. In ALL other organizations: Any employee or superadmin belonging to that organization MUST be shown!
     return true;
   });
   
@@ -5058,7 +5063,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               : attendanceRecords)
           : attendanceRecords.filter((a) => a.orgId === currentOrg?.id)
         ).filter((a) => {
-          if (!isRootPlatformOrg && a.employeeId === '00000000-0000-0000-0000-000000000003') {
+          // In Vedotrix organization ONLY: exclude root superadmin attendance
+          if (isVedotrixOrg && (a.employeeId === '00000000-0000-0000-0000-000000000003' || a.employeeId === '00000000-0000-0000-0000-000000000004')) {
             return false;
           }
           return true;
