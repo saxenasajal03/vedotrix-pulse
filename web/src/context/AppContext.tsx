@@ -792,7 +792,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             regularizationStatus: a.regularization_status || 'none',
             regularizationReason: a.regularization_reason,
             regularizedBy: a.regularized_by,
-            regularizationNotes: a.regularization_notes,
+            regularizationNotes: a.regularization_notes || a.approval_notes,
             totalHours: a.total_hours ? Number(a.total_hours) : 0
           }));
           setAttendanceRecords(mappedAtt);
@@ -1305,7 +1305,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               regularizationStatus: a.regularization_status || 'none',
               regularizationReason: a.regularization_reason,
               regularizedBy: a.regularized_by,
-              regularizationNotes: a.regularization_notes,
+              regularizationNotes: a.regularization_notes || a.approval_notes,
               totalHours: a.total_hours ? Number(a.total_hours) : 0
             };
             setAttendanceRecords((prev) => {
@@ -1335,7 +1335,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                       regularizationStatus: a.regularization_status || att.regularizationStatus,
                       regularizationReason: a.regularization_reason ?? att.regularizationReason,
                       regularizedBy: a.regularized_by ?? att.regularizedBy,
-                      regularizationNotes: a.regularization_notes ?? att.regularizationNotes,
+                      regularizationNotes: a.regularization_notes ?? a.approval_notes ?? att.regularizationNotes,
                       totalHours: a.total_hours ? Number(a.total_hours) : att.totalHours
                     }
                   : att
@@ -1727,7 +1727,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             regularizationStatus: a.regularization_status || 'none',
             regularizationReason: a.regularization_reason,
             regularizedBy: a.regularized_by,
-            regularizationNotes: a.regularization_notes,
+            regularizationNotes: a.regularization_notes || a.approval_notes,
             totalHours: a.total_hours ? Number(a.total_hours) : 0
           }));
           setAttendanceRecords((prev) => {
@@ -2243,9 +2243,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     organizations[0] ||
     fallbackOrg;
 
-  const orgProfiles = profiles.filter((p) => p.orgId === currentOrg?.id).length > 0
-    ? profiles.filter((p) => p.orgId === currentOrg?.id)
-    : profiles;
+  // Helper to check if a profile is the Vedotrix Root Platform Superadmin
+  // He is the supercontroller of the entire platform, NOT an employee of any client organization.
+  const isPlatformSuperadminProfile = (p: { id?: string; email?: string; role?: string; orgId?: string }) => {
+    return (
+      p.id === '00000000-0000-0000-0000-000000000003' ||
+      p.email?.toLowerCase() === 'admin@vedotrix.com' ||
+      (p.role === 'superadmin' && (p.orgId === '00000000-0000-0000-0000-000000000001' || p.email?.toLowerCase().includes('vedotrix.com')))
+    );
+  };
+
+  const isRootPlatformOrg = currentOrg?.id === '00000000-0000-0000-0000-000000000001';
+
+  // orgProfiles strictly scopes employees to current organization.
+  // Vedotrix Superadmin is NEVER counted as an employee of any client organization!
+  const tenantProfiles = profiles.filter((p) => p.orgId === currentOrg?.id);
+  const orgProfiles = (tenantProfiles.length > 0 ? tenantProfiles : profiles).filter((p) => {
+    if (!isRootPlatformOrg && isPlatformSuperadminProfile(p)) {
+      return false; // Strictly exclude Vedotrix Superadmin from client organizations
+    }
+    return true;
+  });
   
   // Office locations strictly for active tenant with fallback
   const officeLocations = officeLocationsList.filter((o) => o.orgId === currentOrg?.id);
@@ -3680,6 +3698,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const resolveRegularization = (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => {
     const approverUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
     const targetAtt = attendanceRecords.find((a) => a.id === attendanceId);
+    const approverName = `${currentProfile.firstName || ''} ${currentProfile.lastName || ''}`.trim() || 'HR/Admin';
+    const roleTitle = currentProfile.designation || currentProfile.role?.toUpperCase() || 'Authority';
+    const nowISTDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+    const defaultNote = status === 'approved'
+      ? `Regularized & Approved by ${approverName} (${roleTitle}) on ${nowISTDateStr}`
+      : `Regularization Rejected by ${approverName} (${roleTitle}) on ${nowISTDateStr}`;
+    const effectiveNote = notes?.trim() ? `${notes.trim()} (By ${approverName} on ${nowISTDateStr})` : defaultNote;
 
     setAttendanceRecords((prev) => {
       const updated = prev.map((a) => {
@@ -3692,7 +3717,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             totalHours: status === 'approved' && (!a.totalHours || a.totalHours === 0) ? (currentOrg.settings?.workHoursPerDay || 8) : a.totalHours,
             regularizedBy: currentProfile.id,
             approvedBy: currentProfile.id,
-            regularizationNotes: notes
+            regularizationNotes: effectiveNote
           };
         }
         return a;
@@ -3709,7 +3734,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         status: status === 'approved' ? 'present' : 'absent',
         regularized_by: approverUuid,
         approved_by: approverUuid,
-        approval_notes: notes || null
+        regularization_notes: effectiveNote,
+        approval_notes: effectiveNote
       };
       if (status === 'approved') {
         updatePayload.total_hours = currentOrg.settings?.workHoursPerDay || 8;
@@ -5026,11 +5052,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile?.email?.toLowerCase()) ||
                 (o.orgId === currentOrg?.id)
             ),
-        attendanceRecords: (isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner')
+        attendanceRecords: ((isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner')
           ? (attendanceRecords.filter((a) => a.orgId === currentOrg?.id).length > 0
               ? attendanceRecords.filter((a) => a.orgId === currentOrg?.id)
               : attendanceRecords)
-          : attendanceRecords.filter((a) => a.orgId === currentOrg?.id),
+          : attendanceRecords.filter((a) => a.orgId === currentOrg?.id)
+        ).filter((a) => {
+          if (!isRootPlatformOrg && a.employeeId === '00000000-0000-0000-0000-000000000003') {
+            return false;
+          }
+          return true;
+        }),
         tasks: tasks.filter((t) => t.orgId === currentOrg?.id),
         standups: standups.filter((s) => s.orgId === currentOrg?.id),
         payrollRecords: (isVedotrixSuperadmin || currentProfile?.role === 'hr' || currentProfile?.role === 'owner' || currentProfile?.role === 'superadmin')

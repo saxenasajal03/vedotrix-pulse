@@ -1069,16 +1069,25 @@ export default function App() {
         }
       }
 
-      // 3. Team Profiles for Org
+      // 3. Team Profiles for Org (Vedotrix Superadmin is root supercontroller, exclude from client orgs)
       if (targetOrgId) {
         const { data: profiles } = await client
           .from('profiles')
           .select('*')
           .eq('org_id', targetOrgId);
-        if (profiles) setTeamProfiles(profiles);
+        if (profiles) {
+          const filteredProfiles = profiles.filter((p) => {
+            const isRootSuperadmin =
+              p.id === '00000000-0000-0000-0000-000000000003' ||
+              p.email?.toLowerCase() === 'admin@vedotrix.com' ||
+              (p.role === 'superadmin' && targetOrgId !== '00000000-0000-0000-0000-000000000001');
+            return targetOrgId === '00000000-0000-0000-0000-000000000001' ? true : !isRootSuperadmin;
+          });
+          setTeamProfiles(filteredProfiles);
+        }
       }
 
-      // 4. Attendance Records
+      // 4. Attendance Records (exclude root superadmin from client org attendance)
       let fetchedAttendance: any[] = [];
       if (targetOrgId) {
         const { data: att } = await client
@@ -1087,8 +1096,14 @@ export default function App() {
           .eq('org_id', targetOrgId)
           .order('date', { ascending: false });
         if (att) {
-          setAttendanceRecords(att);
-          fetchedAttendance = att;
+          const filteredAtt = att.filter((a) => {
+            if (targetOrgId !== '00000000-0000-0000-0000-000000000001' && a.employee_id === '00000000-0000-0000-0000-000000000003') {
+              return false;
+            }
+            return true;
+          });
+          setAttendanceRecords(filteredAtt);
+          fetchedAttendance = filteredAtt;
         }
       }
 
@@ -1888,17 +1903,29 @@ export default function App() {
   };
 
   // Manager/HR/Superadmin Resolve Regularization
-  const handleResolveRegularization = async (id: string, status: 'approved' | 'rejected') => {
+  const handleResolveRegularization = async (id: string, status: 'approved' | 'rejected', customNote?: string) => {
     if (!supabaseClient || !userProfile) return;
 
     try {
       const approverUuid = (userProfile.id && userProfile.id.length === 36) ? userProfile.id : null;
+      const approverName = `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim() || 'HR/Manager';
+      const roleTitle = userProfile.designation || (userProfile.role ? userProfile.role.toUpperCase() : 'Authority');
+      const nowISTDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+
+      const defaultNote = status === 'approved'
+        ? `Regularized & Approved by ${approverName} (${roleTitle}) on ${nowISTDateStr}`
+        : `Regularization Rejected by ${approverName} (${roleTitle}) on ${nowISTDateStr}`;
+
+      const noteToSave = customNote?.trim() ? `${customNote.trim()} (By ${approverName} on ${nowISTDateStr})` : defaultNote;
+
       const updatePayload: any = {
         regularization_status: status,
         approval_status: status === 'approved' ? 'approved' : 'rejected',
         status: status === 'approved' ? 'present' : 'absent',
         approved_by: approverUuid,
         regularized_by: approverUuid,
+        regularization_notes: noteToSave,
+        approval_notes: noteToSave,
         total_hours: status === 'approved' ? 8 : 0
       };
 
@@ -1908,9 +1935,14 @@ export default function App() {
         .eq('id', id);
 
       if (!error) {
+        // Immediate local state update so UI updates without waiting for network re-fetch
+        setAttendanceRecords((prev) =>
+          prev.map((rec) => (rec.id === id ? { ...rec, ...updatePayload } : rec))
+        );
+
         Alert.alert(
           status === 'approved' ? 'Regularization Approved ✅' : 'Regularization Rejected ❌',
-          `Attendance marked as ${status === 'approved' ? 'PRESENT' : 'ABSENT'}.`
+          `Attendance marked as ${status === 'approved' ? 'PRESENT' : 'ABSENT'}.\n\nNote: ${noteToSave}`
         );
         refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
       } else {
@@ -1922,43 +1954,65 @@ export default function App() {
   };
 
   // Direct Regularize by HR / Superadmin (Instantly marks employee present)
-  const handleDirectRegularize = async (empId: string, dateStr: string) => {
+  const handleDirectRegularize = async (empId: string, dateStr: string, customNote?: string) => {
     if (!supabaseClient || !userProfile) return;
     try {
       const existing = attendanceRecords.find((a) => a.employee_id === empId && a.date === dateStr);
       const approverUuid = (userProfile.id && userProfile.id.length === 36) ? userProfile.id : null;
+      const approverName = `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim() || 'HR/Admin';
+      const roleTitle = userProfile.designation || (userProfile.role ? userProfile.role.toUpperCase() : 'Authority');
+      const nowISTDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+
+      const defaultNote = `Direct Regularization approved by ${approverName} (${roleTitle}) on ${nowISTDateStr}`;
+      const noteToSave = customNote?.trim() ? `${customNote.trim()} (By ${approverName} on ${nowISTDateStr})` : defaultNote;
+
       if (existing) {
+        const updatePayload = {
+          status: 'present',
+          regularization_status: 'approved',
+          approval_status: 'approved',
+          approved_by: approverUuid,
+          regularized_by: approverUuid,
+          regularization_notes: noteToSave,
+          approval_notes: noteToSave,
+          regularization_reason: existing.regularization_reason || noteToSave,
+          total_hours: 8
+        };
         const { error } = await supabaseClient
           .from('attendance')
-          .update({
-            status: 'present',
-            regularization_status: 'approved',
-            approval_status: 'approved',
-            approved_by: approverUuid,
-            regularized_by: approverUuid,
-            total_hours: 8
-          })
+          .update(updatePayload)
           .eq('id', existing.id);
         if (error) throw error;
+
+        // Immediate local state update
+        setAttendanceRecords((prev) =>
+          prev.map((rec) => (rec.id === existing.id ? { ...rec, ...updatePayload } : rec))
+        );
       } else {
+        const newRecord = {
+          id: generateUUID(),
+          org_id: currentOrg?.id || userProfile.org_id,
+          employee_id: empId,
+          date: dateStr,
+          status: 'present',
+          regularization_status: 'approved',
+          approval_status: 'approved',
+          regularization_reason: noteToSave,
+          regularization_notes: noteToSave,
+          approval_notes: noteToSave,
+          approved_by: approverUuid,
+          regularized_by: approverUuid,
+          total_hours: 8
+        };
         const { error } = await supabaseClient
           .from('attendance')
-          .insert({
-            id: generateUUID(),
-            org_id: currentOrg?.id || userProfile.org_id,
-            employee_id: empId,
-            date: dateStr,
-            status: 'present',
-            regularization_status: 'approved',
-            approval_status: 'approved',
-            regularization_reason: `Direct HR/Admin Regularization by ${userProfile.first_name || 'Admin'}`,
-            approved_by: approverUuid,
-            regularized_by: approverUuid,
-            total_hours: 8
-          });
+          .insert(newRecord);
         if (error) throw error;
+
+        // Immediate local state update
+        setAttendanceRecords((prev) => [newRecord, ...prev]);
       }
-      Alert.alert('Regularized Successfully ✅', `Attendance for ${dateStr} marked as PRESENT.`);
+      Alert.alert('Regularized Successfully ✅', `Attendance for ${dateStr} marked as PRESENT.\n\nNote: ${noteToSave}`);
       setSelectedCalendarDayData(null);
       refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
     } catch (err: any) {
@@ -3507,6 +3561,30 @@ export default function App() {
                     {todayAttendanceRecord.is_remote ? 'Remote / Field' : 'In-Office HQ'} ({todayAttendanceRecord.distance_meters || 0}m)
                   </Text>
                 </View>
+
+                {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes || todayAttendanceRecord.regularization_reason || todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') && (
+                  <View style={{ marginTop: 10, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: (todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') ? '#10b98140' : '#f59e0b40' }}>
+                    <Text style={{ fontSize: 10, color: (todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
+                      {(todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') ? '✅ REGULARIZATION APPROVED' : '⏳ REGULARIZATION PENDING'}
+                    </Text>
+                    {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
+                      <View style={{ marginTop: 4 }}>
+                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>APPROVAL NOTE:</Text>
+                        <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#0f172a', marginTop: 1, fontWeight: '600' }}>
+                          {todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes}
+                        </Text>
+                      </View>
+                    )}
+                    {todayAttendanceRecord.regularization_reason && todayAttendanceRecord.regularization_reason !== (todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
+                      <View style={{ marginTop: 4 }}>
+                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REQUEST REASON:</Text>
+                        <Text style={{ fontSize: 11, color: isDarkMode ? '#cbd5e1' : '#475569', marginTop: 1 }}>
+                          {todayAttendanceRecord.regularization_reason}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             )}
 
@@ -6934,10 +7012,27 @@ export default function App() {
                         {p?.distance_meters ? ` (${p.distance_meters}m)` : ''}
                       </Text>
                     </View>
-                    {p?.regularization_reason && (
-                      <View style={{ marginTop: 8, padding: 8, backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', borderRadius: 8 }}>
-                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REGULARIZATION NOTE:</Text>
-                        <Text style={{ fontSize: 12, color: isDarkMode ? '#fff' : '#0f172a', marginTop: 2 }}>{p.regularization_reason}</Text>
+                    {(p?.regularization_notes || p?.approval_notes || p?.regularization_reason || p?.regularization_status === 'approved' || p?.approval_status === 'approved') && (
+                      <View style={{ marginTop: 8, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: (p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '#10b98140' : '#f59e0b40' }}>
+                        <Text style={{ fontSize: 10, color: (p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
+                          {(p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '✅ REGULARIZED & APPROVED' : '⏳ REGULARIZATION PENDING'}
+                        </Text>
+                        {(p?.regularization_notes || p?.approval_notes) && (
+                          <View style={{ marginTop: 4 }}>
+                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>APPROVAL NOTE:</Text>
+                            <Text style={{ fontSize: 12, color: isDarkMode ? '#fff' : '#0f172a', marginTop: 1, fontWeight: '600' }}>
+                              {p.regularization_notes || p.approval_notes}
+                            </Text>
+                          </View>
+                        )}
+                        {p?.regularization_reason && p.regularization_reason !== (p.regularization_notes || p.approval_notes) && (
+                          <View style={{ marginTop: 4 }}>
+                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REQUEST REASON:</Text>
+                            <Text style={{ fontSize: 11, color: isDarkMode ? '#cbd5e1' : '#475569', marginTop: 1 }}>
+                              {p.regularization_reason}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     )}
                   </ScrollView>
