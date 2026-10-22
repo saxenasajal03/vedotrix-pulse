@@ -8,7 +8,7 @@ import {
   Banknote,
   TrendingUp,
   Briefcase,
-  GraduationCap,
+  ClipboardCheck,
   FileSpreadsheet,
   Settings,
   Headphones,
@@ -49,9 +49,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     leaveRequests,
     meetings,
     notices,
+    standups,
     chatMessages,
     addToast
   } = useApp();
+
+  const todayISTStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const hasSubmittedStandupToday = (standups || []).some(
+    (s) => s.employeeId === currentProfile?.id && s.date === todayISTStr
+  );
 
   const pendingRegularizations = attendanceRecords.filter((a) => a.regularizationStatus === 'pending').length;
   const pendingOffers = offerLetters.filter((o) => o.status === 'issued').length;
@@ -180,9 +186,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'standups',
-      label: 'Training & Development',
-      icon: GraduationCap,
-      badge: null
+      label: 'Daily Standup & EOD',
+      icon: ClipboardCheck,
+      badge: !hasSubmittedStandupToday ? 'LOG' : null
     },
     {
       id: 'access_requests',

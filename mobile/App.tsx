@@ -464,8 +464,11 @@ export default function App() {
   const [standupDone, setStandupDone] = useState('');
   const [standupNext, setStandupNext] = useState('');
   const [standupBlockers, setStandupBlockers] = useState('');
+  const [standupPrLink, setStandupPrLink] = useState('');
   const [standupHours, setStandupHours] = useState('8');
   const [isSavingStandup, setIsSavingStandup] = useState(false);
+  const [standupEmpFilter, setStandupEmpFilter] = useState('all');
+  const [standupDateFilter, setStandupDateFilter] = useState<'all' | 'today' | 'yesterday'>('all');
 
   // Offer Letters & Serial Verification
   const [offerLetters, setOfferLetters] = useState<any[]>([]);
@@ -1161,7 +1164,7 @@ export default function App() {
       // 9. Daily Standups
       if (targetOrgId) {
         const { data: st } = await client
-          .from('standups')
+          .from('daily_standups')
           .select('*')
           .eq('org_id', targetOrgId)
           .order('date', { ascending: false });
@@ -1265,6 +1268,14 @@ export default function App() {
           importance: Notifications.AndroidImportance.MAX,
           vibrationPattern: [0, 200, 100, 200],
           lightColor: '#38bdf8',
+          sound: 'default'
+        });
+
+        await Notifications.setNotificationChannelAsync('standup-alerts', {
+          name: 'Daily EOD Standup & Work Reports',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 300, 150, 300],
+          lightColor: '#8b5cf6',
           sound: 'default'
         });
       }
@@ -1537,11 +1548,12 @@ export default function App() {
           (a.check_in_time || a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved')
       ) || isCheckedIn;
 
+      const timeStr = getISTTimeString(now);
+      const [h, m] = timeStr.split(':').map(Number);
+      const currentTotalMins = (h || 0) * 60 + (m || 0);
+
       if (!hasMarked) {
         setAttendanceAlertActive(true);
-        const timeStr = getISTTimeString(now);
-        const [h, m] = timeStr.split(':').map(Number);
-        const currentTotalMins = (h || 0) * 60 + (m || 0);
 
         const shiftStartTime = currentOrg?.settings?.shiftStartTime || '09:30';
         const [shH, shM] = shiftStartTime.split(':').map(Number);
@@ -1558,6 +1570,26 @@ export default function App() {
         }
       } else {
         setAttendanceAlertActive(false);
+
+        // Auto EOD Standup Reminder: if employee is marked present but has not logged their EOD standup
+        const hasSubmittedStandup = standups.some(
+          (s) => s.employee_id === myId && s.date === todayStr
+        );
+        const shiftEndTime = currentOrg?.settings?.shiftEndTime || '18:30';
+        const [eh, em] = shiftEndTime.split(':').map(Number);
+        const shiftEndMins = (eh || 18) * 60 + (em || 30);
+
+        if (!hasSubmittedStandup && currentTotalMins >= shiftEndMins - 60) {
+          const lastStandupRemind = await AsyncStorage.getItem('@vdx_last_standup_remind_date');
+          if (lastStandupRemind !== todayStr) {
+            await AsyncStorage.setItem('@vdx_last_standup_remind_date', todayStr);
+            await sendDeviceNotification(
+              '🚀 EOD Standup Reminder | Wrap Up Today',
+              `Your shift ends at ${shiftEndTime} IST. Don't forget to submit your daily accomplishment log & PR deliverables!`,
+              'standup-alerts'
+            );
+          }
+        }
       }
     } catch (e) {
       console.log('Attendance reminder check note:', e);
@@ -2341,23 +2373,41 @@ export default function App() {
     setIsSavingStandup(true);
     try {
       const newId = generateUUID();
-      const { error } = await supabaseClient.from('standups').insert({
-        id: newId,
-        employee_id: userProfile.id,
-        org_id: currentOrg?.id || userProfile.org_id,
-        date: getTodayISTDate(),
-        completed_today: standupDone.trim(),
-        planned_tomorrow: standupNext.trim(),
-        blockers: standupBlockers.trim() || null,
-        hours_logged: Number(standupHours) || 8
-      });
+      const todayIST = getTodayISTDate();
+
+      let finalCompleted = standupDone.trim();
+      if (standupPrLink.trim() && !finalCompleted.includes(standupPrLink.trim())) {
+        finalCompleted += `\nPR / Deliverable: ${standupPrLink.trim()}`;
+      }
+
+      const { error } = await supabaseClient.from('daily_standups').upsert(
+        {
+          id: newId,
+          employee_id: userProfile.id,
+          org_id: currentOrg?.id || userProfile.org_id,
+          date: todayIST,
+          completed_today: finalCompleted,
+          planned_tomorrow: standupNext.trim(),
+          blockers: standupBlockers.trim() || null,
+          hours_logged: Number(standupHours) || 8
+        },
+        { onConflict: 'employee_id,date' }
+      );
 
       if (!error) {
+        // Send device notification
+        sendDeviceNotification(
+          'EOD Standup Saved 🚀',
+          `Daily accomplishment log (${standupHours}h) synced with Supabase cloud.`,
+          'standup-alerts'
+        );
+
         Alert.alert('EOD Standup Logged 🚀', 'Your daily accomplishment is saved to cloud.');
         setIsStandupModal(false);
         setStandupDone('');
         setStandupNext('');
         setStandupBlockers('');
+        setStandupPrLink('');
         refreshAllData(supabaseClient, currentOrg?.id, userProfile.id);
       } else {
         Alert.alert('Error', error.message);
@@ -5952,59 +6002,196 @@ export default function App() {
             )}
 
             {/* SUBTAB 3: EOD STANDUPS */}
-            {hubSubTab === 'standups' && (
-              <View style={{ gap: 14 }}>
-                <View style={styles.card}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={styles.cardTitle}>Daily EOD Standup</Text>
-                    <TouchableOpacity
-                      style={styles.smallAddBtn}
-                      onPress={() => setIsStandupModal(true)}
-                    >
-                      <Text style={styles.smallAddBtnText}>+ Submit Today</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.cardDesc}>Accountability & daily accomplishment logs</Text>
+            {hubSubTab === 'standups' && (() => {
+              const todayStr = getTodayISTDate();
+              const yesterdayDate = new Date();
+              yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+              const yesterdayStr = yesterdayDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
-                  <View style={{ gap: 10, marginTop: 10 }}>
-                    {standups.length === 0 ? (
-                      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-                        <Text style={{ fontSize: 24, marginBottom: 4 }}>🚀</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Standups Logged Today</Text>
-                        <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Tap "+ Submit Today" to log accomplishments.</Text>
+              // Direct reports managed by current user
+              const myDirectReports = teamProfiles.filter((p) => p.manager_id === userProfile?.id);
+              const isLeadOrManager = !isPrivileged && myDirectReports.length > 0;
+
+              // Filtered standups list
+              const filteredList = standups.filter((st) => {
+                // If individual contributor: can view all org standups
+                // Filter by employee
+                if (standupEmpFilter !== 'all' && st.employee_id !== standupEmpFilter) return false;
+                // Filter by date
+                if (standupDateFilter === 'today' && st.date !== todayStr) return false;
+                if (standupDateFilter === 'yesterday' && st.date !== yesterdayStr) return false;
+                return true;
+              });
+
+              // Metrics
+              const todayStandups = standups.filter((s) => s.date === todayStr);
+              const totalHoursToday = todayStandups.reduce((acc, s) => acc + (Number(s.hours_logged) || 8), 0);
+              const todayBlockersCount = todayStandups.filter((s) => s.blockers && s.blockers.trim()).length;
+
+              // Missing EOD Submissions (punched in today but no standup yet)
+              const checkedInEmpIds = new Set(
+                attendanceRecords.filter((a) => a.date === todayStr && a.status === 'present').map((a) => a.employee_id)
+              );
+              const submittedEmpIds = new Set(todayStandups.map((s) => s.employee_id));
+              const missingStandupEmps = teamProfiles.filter(
+                (p) => checkedInEmpIds.has(p.id) && !submittedEmpIds.has(p.id)
+              );
+
+              return (
+                <View style={{ gap: 14 }}>
+                  {/* Standup Metrics Row */}
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={[styles.pulseStatItem, { flex: 1, padding: 10 }]}>
+                      <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>TODAY'S LOGS</Text>
+                      <Text style={[styles.pulseStatValue, { fontSize: 18, marginTop: 2 }]}>
+                        {todayStandups.length}/{teamProfiles.length}
+                      </Text>
+                    </View>
+                    <View style={[styles.pulseStatItem, { flex: 1, padding: 10 }]}>
+                      <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>HOURS TODAY</Text>
+                      <Text style={[styles.pulseStatValue, { fontSize: 18, color: '#38bdf8', marginTop: 2 }]}>
+                        {totalHoursToday}h
+                      </Text>
+                    </View>
+                    <View style={[styles.pulseStatItem, { flex: 1, padding: 10 }]}>
+                      <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>BLOCKERS</Text>
+                      <Text style={[styles.pulseStatValue, { fontSize: 18, color: todayBlockersCount > 0 ? '#f59e0b' : '#94a3b8', marginTop: 2 }]}>
+                        {todayBlockersCount}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Missing Submissions Alert for Managers/HR */}
+                  {(isPrivileged || isLeadOrManager) && missingStandupEmps.length > 0 && (
+                    <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)', borderWidth: 1, borderRadius: 12, padding: 10 }}>
+                      <Text style={{ color: '#f87171', fontWeight: 'bold', fontSize: 11 }}>
+                        ⚠️ Missing EOD Standup Today ({missingStandupEmps.length}):
+                      </Text>
+                      <Text style={{ color: '#fca5a5', fontSize: 10, marginTop: 2 }}>
+                        {missingStandupEmps.map((e) => `${e.first_name} ${e.last_name}`).join(', ')}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.card}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View>
+                        <Text style={styles.cardTitle}>Daily EOD Standup</Text>
+                        <Text style={styles.cardDesc}>Accountability & PR accomplishment logs</Text>
                       </View>
-                    ) : (
-                      standups.map((st) => {
-                        const emp = teamProfiles.find((p) => p.id === st.employee_id);
-                        return (
-                          <View key={st.id} style={styles.standupFeedItem}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                              <Text style={styles.standupAuthor}>
-                                {emp ? `${emp.first_name} ${emp.last_name}` : 'Team Member'}
-                              </Text>
-                              <Text style={styles.standupDate}>{formatDisplayDate(st.date)} • {st.hours_logged}h</Text>
-                            </View>
-                            <Text style={styles.standupText}>
-                              <Text style={{ color: '#10b981', fontWeight: 'bold' }}>Done: </Text>
-                              {st.completed_today}
+                      <TouchableOpacity
+                        style={styles.smallAddBtn}
+                        onPress={() => setIsStandupModal(true)}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Submit Today</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Date Filter Pills */}
+                    <View style={{ flexDirection: 'row', gap: 6, marginTop: 12, marginBottom: 8 }}>
+                      {(['all', 'today', 'yesterday'] as const).map((filterKey) => (
+                        <TouchableOpacity
+                          key={filterKey}
+                          style={[
+                            styles.filterTab,
+                            standupDateFilter === filterKey && styles.filterTabActive,
+                            { paddingHorizontal: 10, paddingVertical: 4 }
+                          ]}
+                          onPress={() => setStandupDateFilter(filterKey)}
+                        >
+                          <Text style={[styles.filterTabText, standupDateFilter === filterKey && styles.filterTabTextActive, { fontSize: 10 }]}>
+                            {filterKey === 'all' ? 'All History' : filterKey === 'today' ? "Today's Feed" : 'Yesterday'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    {/* Employee Selector for Managers & Superadmin */}
+                    {(isPrivileged || isLeadOrManager) && (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          <TouchableOpacity
+                            style={[
+                              styles.filterTab,
+                              standupEmpFilter === 'all' && styles.filterTabActive,
+                              { paddingHorizontal: 10, paddingVertical: 4 }
+                            ]}
+                            onPress={() => setStandupEmpFilter('all')}
+                          >
+                            <Text style={[styles.filterTabText, standupEmpFilter === 'all' && styles.filterTabTextActive, { fontSize: 10 }]}>
+                              👥 All Members
                             </Text>
-                            <Text style={styles.standupText}>
-                              <Text style={{ color: '#38bdf8', fontWeight: 'bold' }}>Next: </Text>
-                              {st.planned_tomorrow}
-                            </Text>
-                            {st.blockers ? (
-                              <Text style={[styles.standupText, { color: '#f59e0b' }]}>
-                                ⚠️ Blocker: {st.blockers}
+                          </TouchableOpacity>
+                          {teamProfiles.map((member) => (
+                            <TouchableOpacity
+                              key={member.id}
+                              style={[
+                                styles.filterTab,
+                                standupEmpFilter === member.id && styles.filterTabActive,
+                                { paddingHorizontal: 10, paddingVertical: 4 }
+                              ]}
+                              onPress={() => setStandupEmpFilter(member.id)}
+                            >
+                              <Text style={[styles.filterTabText, standupEmpFilter === member.id && styles.filterTabTextActive, { fontSize: 10 }]}>
+                                {member.first_name} {member.last_name?.[0]}.
                               </Text>
-                            ) : null}
-                          </View>
-                        );
-                      })
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </ScrollView>
                     )}
+
+                    <View style={{ gap: 10, marginTop: 4 }}>
+                      {filteredList.length === 0 ? (
+                        <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                          <Text style={{ fontSize: 24, marginBottom: 4 }}>🚀</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Standups Found</Text>
+                          <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Tap "+ Submit Today" to log accomplishments.</Text>
+                        </View>
+                      ) : (
+                        filteredList.map((st) => {
+                          const emp = teamProfiles.find((p) => p.id === st.employee_id);
+                          const isGithubPR = st.completed_today?.includes('github.com') && st.completed_today?.includes('/pull/');
+                          return (
+                            <View key={st.id} style={styles.standupFeedItem}>
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <View>
+                                  <Text style={styles.standupAuthor}>
+                                    {emp ? `${emp.first_name} ${emp.last_name}` : 'Team Member'}
+                                  </Text>
+                                  <Text style={{ color: '#64748b', fontSize: 9 }}>
+                                    {emp?.designation || 'Specialist'} • {emp?.department || 'Operations'}
+                                  </Text>
+                                </View>
+                                <Text style={styles.standupDate}>{formatDisplayDate(st.date)} • {st.hours_logged}h</Text>
+                              </View>
+                              <Text style={styles.standupText}>
+                                <Text style={{ color: '#10b981', fontWeight: 'bold' }}>Done: </Text>
+                                {st.completed_today}
+                              </Text>
+                              <Text style={styles.standupText}>
+                                <Text style={{ color: '#38bdf8', fontWeight: 'bold' }}>Next: </Text>
+                                {st.planned_tomorrow}
+                              </Text>
+                              {st.blockers ? (
+                                <Text style={[styles.standupText, { color: '#f59e0b' }]}>
+                                  ⚠️ Blocker: {st.blockers}
+                                </Text>
+                              ) : null}
+                              {isGithubPR && (
+                                <View style={{ marginTop: 4, alignSelf: 'flex-start', backgroundColor: 'rgba(168, 85, 247, 0.15)', borderColor: 'rgba(168, 85, 247, 0.3)', borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                  <Text style={{ color: '#c084fc', fontSize: 9, fontWeight: 'bold' }}>🔗 PR Deliverable Attached</Text>
+                                </View>
+                              )}
+                            </View>
+                          );
+                        })
+                      )}
+                    </View>
                   </View>
                 </View>
-              </View>
-            )}
+              );
+            })()}
 
             {/* SUBTAB 4: OFFERS & PAYROLL */}
             {hubSubTab === 'offers' && (
@@ -6420,6 +6607,26 @@ export default function App() {
               value={standupBlockers}
               onChangeText={setStandupBlockers}
               placeholder="Optional: Any blockers..."
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>4. PR / Deliverable Link (GitHub, Figma, Docs)</Text>
+            <TextInput
+              style={styles.textInput}
+              value={standupPrLink}
+              onChangeText={setStandupPrLink}
+              placeholder="Optional: https://github.com/.../pull/12"
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.inputLabel}>5. Hours Logged</Text>
+            <TextInput
+              style={[styles.textInput, { width: 80 }]}
+              value={standupHours}
+              onChangeText={setStandupHours}
+              keyboardType="numeric"
+              placeholder="8"
               placeholderTextColor="#64748b"
             />
 

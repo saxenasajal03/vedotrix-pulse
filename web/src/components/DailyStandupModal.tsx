@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Clock, X, Send, Sparkles, CheckSquare, HelpCircle } from 'lucide-react';
+import { Clock, X, Send, Sparkles, CheckSquare, HelpCircle, GitPullRequest } from 'lucide-react';
+import { getTodayISTDateString } from '../lib/serialUtils';
 
 interface DailyStandupModalProps {
   isOpen: boolean;
@@ -8,20 +9,39 @@ interface DailyStandupModalProps {
 }
 
 export const DailyStandupModal: React.FC<DailyStandupModalProps> = ({ isOpen, onClose }) => {
-  const { currentOrg, submitStandup, tasks, currentProfile } = useApp();
+  const { currentOrg, submitStandup, tasks, currentProfile, standups } = useApp();
+
+  const todayStr = getTodayISTDateString();
+  const existingTodayStandup = standups.find(
+    (s) => s.employeeId === currentProfile?.id && s.date === todayStr
+  );
 
   // Pre-fill completed tasks if any
   const myCompletedTasks = tasks
-    .filter((t) => t.assignedTo === currentProfile.id && t.status === 'done')
+    .filter((t) => t.assignedTo === currentProfile?.id && t.status === 'done')
     .map((t) => t.title)
     .join(', ');
 
-  const [completedToday, setCompletedToday] = useState(
-    myCompletedTasks ? `Completed: ${myCompletedTasks}` : ''
-  );
+  const [completedToday, setCompletedToday] = useState('');
   const [plannedTomorrow, setPlannedTomorrow] = useState('');
   const [blockers, setBlockers] = useState('');
+  const [prLink, setPrLink] = useState('');
   const [hoursLogged, setHoursLogged] = useState(8);
+
+  useEffect(() => {
+    if (existingTodayStandup) {
+      setCompletedToday(existingTodayStandup.completedToday || '');
+      setPlannedTomorrow(existingTodayStandup.plannedTomorrow || '');
+      setBlockers(existingTodayStandup.blockers || '');
+      setHoursLogged(existingTodayStandup.hoursLogged || 8);
+    } else {
+      setCompletedToday(myCompletedTasks ? `Completed: ${myCompletedTasks}` : '');
+      setPlannedTomorrow('');
+      setBlockers('');
+      setPrLink('');
+      setHoursLogged(8);
+    }
+  }, [existingTodayStandup, myCompletedTasks, isOpen]);
 
   if (!isOpen) return null;
 
@@ -29,7 +49,12 @@ export const DailyStandupModal: React.FC<DailyStandupModalProps> = ({ isOpen, on
     e.preventDefault();
     if (!completedToday.trim() || !plannedTomorrow.trim()) return;
 
-    submitStandup(completedToday.trim(), plannedTomorrow.trim(), blockers.trim(), hoursLogged);
+    let finalCompleted = completedToday.trim();
+    if (prLink.trim() && !finalCompleted.includes(prLink.trim())) {
+      finalCompleted += `\nPR / Deliverable: ${prLink.trim()}`;
+    }
+
+    submitStandup(finalCompleted, plannedTomorrow.trim(), blockers.trim(), hoursLogged);
     onClose();
   };
 
@@ -43,9 +68,11 @@ export const DailyStandupModal: React.FC<DailyStandupModalProps> = ({ isOpen, on
               <Clock className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white">Daily EOD Standup Submission</h3>
+              <h3 className="text-sm font-bold text-white">
+                {existingTodayStandup ? "Update Today's EOD Standup" : 'Daily EOD Standup Submission'}
+              </h3>
               <p className="text-[11px] text-slate-400">
-                Synced with punch-out & team daily dashboard ({currentOrg.industry} Mode)
+                Synced with reporting manager, Supabase cloud & team dashboard ({currentOrg.industry} Mode)
               </p>
             </div>
           </div>
@@ -69,7 +96,7 @@ export const DailyStandupModal: React.FC<DailyStandupModalProps> = ({ isOpen, on
               placeholder={
                 currentOrg.industry === 'Tech'
                   ? 'e.g. Fixed Redis connection pool leak and pushed branch feature/auth-cache for code review.'
-                  : 'e.g. Launched 3 Advantage+ ad campaigns with 4.2x ROAS target for Zenith Apparel.'
+                  : 'e.g. Launched 3 Advantage+ ad campaigns with 4.2x ROAS target for client.'
               }
               className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
@@ -108,7 +135,21 @@ export const DailyStandupModal: React.FC<DailyStandupModalProps> = ({ isOpen, on
             />
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center">
+              <GitPullRequest className="w-3.5 h-3.5 mr-1 text-purple-400" />
+              4. PR / Deliverable Link (GitHub, Figma, Google Drive, etc.) (Optional)
+            </label>
+            <input
+              type="url"
+              value={prLink}
+              onChange={(e) => setPrLink(e.target.value)}
+              placeholder="https://github.com/org/repo/pull/42 or design link"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-purple-300 placeholder-slate-600 focus:outline-none focus:border-purple-500"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
             <div className="flex items-center space-x-2">
               <label className="text-xs text-slate-400">Total Hours Logged:</label>
               <input
@@ -128,14 +169,14 @@ export const DailyStandupModal: React.FC<DailyStandupModalProps> = ({ isOpen, on
                 onClick={onClose}
                 className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
               >
-                Skip
+                Cancel
               </button>
               <button
                 type="submit"
                 className="inline-flex items-center justify-center space-x-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-indigo-600/30"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Submit Standup Log</span>
+                <span>{existingTodayStandup ? "Update Standup" : "Submit Standup Log"}</span>
               </button>
             </div>
           </div>

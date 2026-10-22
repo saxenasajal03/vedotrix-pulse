@@ -1354,6 +1354,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'daily_standups' },
+        (payload: any) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const s = payload.new;
+            const newStandup: DailyStandup = {
+              id: s.id,
+              orgId: s.org_id,
+              employeeId: s.employee_id,
+              date: s.date,
+              completedToday: s.completed_today || '',
+              plannedTomorrow: s.planned_tomorrow || '',
+              blockers: s.blockers || undefined,
+              hoursLogged: Number(s.hours_logged) || 8,
+              createdAt: s.created_at || new Date().toISOString()
+            };
+            setStandups((prev) => [
+              newStandup,
+              ...prev.filter((x) => x.id !== newStandup.id && !(x.employeeId === newStandup.employeeId && x.date === newStandup.date))
+            ]);
+          } else if (payload.eventType === 'DELETE') {
+            setStandups((prev) => prev.filter((x) => x.id !== payload.old.id));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'tasks', filter: `org_id=eq.${currentOrgId}` },
         (payload: any) => {
           if (!isMounted) return;
@@ -1589,7 +1616,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           { data: cloudNotices },
           { data: cloudAtt },
           { data: cloudTasks },
-          { data: cloudLeaves }
+          { data: cloudLeaves },
+          { data: cloudStandups }
         ] = await Promise.all([
           client.from('chat_channels').select('*').eq('org_id', currentOrgId),
           client.from('chat_messages').select('*').eq('org_id', currentOrgId).order('created_at', { ascending: true }),
@@ -1597,7 +1625,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           client.from('notices').select('*').eq('org_id', currentOrgId).order('date', { ascending: false }),
           client.from('attendance').select('*').order('date', { ascending: false }),
           client.from('tasks').select('*').eq('org_id', currentOrgId),
-          client.from('leave_requests').select('*').eq('org_id', currentOrgId)
+          client.from('leave_requests').select('*').eq('org_id', currentOrgId),
+          client.from('daily_standups').select('*').order('date', { ascending: false })
         ]);
 
         if (cloudChannels && isMounted) {
@@ -1789,6 +1818,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             try { localStorage.setItem('vdx_leave_requests', JSON.stringify(combined)); } catch {}
             return combined;
           });
+        }
+
+        if (cloudStandups && isMounted) {
+          const mappedStandups: DailyStandup[] = cloudStandups.map((s: any) => ({
+            id: s.id,
+            orgId: s.org_id,
+            employeeId: s.employee_id,
+            date: s.date,
+            completedToday: s.completed_today || '',
+            plannedTomorrow: s.planned_tomorrow || '',
+            blockers: s.blockers || undefined,
+            hoursLogged: Number(s.hours_logged) || 8,
+            createdAt: s.created_at || new Date().toISOString()
+          }));
+          setStandups(mappedStandups);
+          try { localStorage.setItem('vdx_standups', JSON.stringify(mappedStandups)); } catch {}
         }
       } catch (err) {}
     };
@@ -3825,8 +3870,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Task Status Updated', `Task moved to ${status.replace('_', ' ').toUpperCase()}`, 'info');
   };
 
-  const submitStandup = (completedToday: string, plannedTomorrow: string, blockers?: string, hours: number = 8) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+  const submitStandup = async (completedToday: string, plannedTomorrow: string, blockers?: string, hours: number = 8) => {
+    const todayStr = getTodayISTDateString();
     const newId = generateUUID();
     const newStandup: DailyStandup = {
       id: newId,
@@ -3843,25 +3888,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      client.from('daily_standups').insert({
-        id: newId,
-        org_id: currentOrg.id,
-        employee_id: currentProfile.id,
-        date: todayStr,
-        completed_today: completedToday,
-        planned_tomorrow: plannedTomorrow,
-        blockers: blockers || null,
-        hours_logged: hours
-      }).then(({ error }) => {
-        if (error) console.error('Supabase standup insert error:', error);
-        else console.log('Daily standup saved to Supabase!');
-      });
+      const { error } = await client.from('daily_standups').upsert(
+        {
+          id: newId,
+          org_id: currentOrg.id,
+          employee_id: currentProfile.id,
+          date: todayStr,
+          completed_today: completedToday,
+          planned_tomorrow: plannedTomorrow,
+          blockers: blockers || null,
+          hours_logged: hours
+        },
+        { onConflict: 'employee_id,date' }
+      );
+      if (error) console.error('Supabase standup upsert error:', error);
+      else console.log('Daily standup synced to Supabase successfully!');
     } catch (e) {
       console.error('Standup insert error:', e);
     }
 
-    addToast('EOD Standup Submitted', 'Daily work log synced with attendance and team dashboard.', 'success');
-    addNotification('Daily Standup Logged', 'EOD work log submitted successfully.', 'task', 'standups');
+    addToast('EOD Standup Submitted 🚀', 'Daily work log synced with attendance and team dashboard.', 'success');
+    addNotification('Daily Standup Logged', `${currentProfile.firstName} submitted EOD standup (${hours}h logged).`, 'task', 'standups');
+
+    // Notify Reporting Manager if assigned
+    if (currentProfile.managerId) {
+      addNotification(
+        'EOD Standup Received 📝',
+        `${currentProfile.firstName} ${currentProfile.lastName} submitted their daily EOD report.`,
+        'task',
+        'standups',
+        { recipientId: currentProfile.managerId, orgId: currentOrg.id }
+      );
+    }
   };
 
   // --- LEAVE MANAGEMENT ---
