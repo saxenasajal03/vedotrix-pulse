@@ -398,7 +398,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   // DAILY ROSTER VIEW STATE (FOR MANAGERS & LEADERSHIP)
   // -------------------------------------------------------------
   const [selectedRosterDate, setSelectedRosterDate] = useState<string>(todayIST);
-  const [rosterFilterTab, setRosterFilterTab] = useState<'all' | 'present' | 'not_marked' | 'on_leave'>('all');
+  const [rosterFilterTab, setRosterFilterTab] = useState<'all' | 'present' | 'pending' | 'on_leave' | 'week_off_holiday' | 'absent'>('all');
   const [rosterSearch, setRosterSearch] = useState('');
   const [rosterDept, setRosterDept] = useState('all');
 
@@ -414,8 +414,30 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     return [currentProfile];
   }, [isHrOrSuperadmin, isManager, orgProfiles, currentProfile]);
 
+  // Holiday and Week-off information for selected roster date
+  const holidayOnDate = useMemo(() => {
+    return orgHolidays.find((h) => h.date === selectedRosterDate);
+  }, [orgHolidays, selectedRosterDate]);
+
+  const weekOffOnDate = useMemo(() => {
+    const [rYear, rMonth, rDay] = selectedRosterDate.split('-').map(Number);
+    const dayOfWeek = new Date(rYear, rMonth - 1, rDay).getDay();
+    const isWeekOff = (currentOrg.settings?.weekOffDays || [0]).includes(dayOfWeek);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return { isWeekOff, dayName: dayNames[dayOfWeek] };
+  }, [selectedRosterDate, currentOrg.settings?.weekOffDays]);
+
   const rosterEmployeeData = useMemo(() => {
+    const [shiftEndH, shiftEndM] = (currentOrg.settings?.shiftEndTime || '18:30').split(':').map(Number);
+    const shiftEndMins = (shiftEndH || 18) * 60 + (shiftEndM || 30);
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
+    const isPast = selectedRosterDate < todayIST;
+    const isToday = selectedRosterDate === todayIST;
+
     return managedTeam.map((emp) => {
+      const isBeforeJoining = Boolean(emp.joiningDate && selectedRosterDate < emp.joiningDate);
+
       const empRecords = attendanceRecords.filter((a) => {
         if (a.employeeId === emp.id) return true;
         if (emp.email) {
@@ -444,15 +466,11 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
           l.endDate >= selectedRosterDate
       );
 
-      const [shiftEndH, shiftEndM] = (currentOrg.settings?.shiftEndTime || '18:30').split(':').map(Number);
-      const shiftEndMins = (shiftEndH || 18) * 60 + (shiftEndM || 30);
-      const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-      const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
-      const isPast = selectedRosterDate < todayIST;
-      const isToday = selectedRosterDate === todayIST;
+      let status: 'present' | 'pending_approval' | 'on_leave' | 'holiday' | 'week_off' | 'pre_joining' | 'absent' | 'not_marked' = 'not_marked';
 
-      let status: 'present' | 'pending_approval' | 'on_leave' | 'absent' | 'not_marked' = 'not_marked';
-      if (record) {
+      if (isBeforeJoining) {
+        status = 'pre_joining';
+      } else if (record) {
         if (record.approvalStatus === 'pending_manager_approval' || record.regularizationStatus === 'pending') {
           status = 'pending_approval';
         } else if (
@@ -464,23 +482,50 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         ) {
           status = 'present';
         } else if (record.approvalStatus === 'rejected' || record.status === 'absent') {
-          status = 'absent';
+          if (holidayOnDate) status = 'holiday';
+          else if (weekOffOnDate.isWeekOff) status = 'week_off';
+          else status = 'absent';
         }
       } else if (leave) {
         status = 'on_leave';
+      } else if (holidayOnDate) {
+        status = 'holiday';
+      } else if (weekOffOnDate.isWeekOff) {
+        status = 'week_off';
       } else if (isPast || (isToday && currentTotalMins >= shiftEndMins)) {
         status = 'absent';
       }
 
-      return { employee: emp, record, leave, status };
+      return {
+        employee: emp,
+        record,
+        leave,
+        holiday: holidayOnDate,
+        isWeekOff: weekOffOnDate.isWeekOff,
+        isBeforeJoining,
+        status
+      };
     });
-  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings, orgProfiles]);
+  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings, orgProfiles, holidayOnDate, weekOffOnDate]);
+
+  const rosterStats = useMemo(() => {
+    const total = rosterEmployeeData.length;
+    const present = rosterEmployeeData.filter((d) => d.status === 'present').length;
+    const pending = rosterEmployeeData.filter((d) => d.status === 'pending_approval').length;
+    const onLeave = rosterEmployeeData.filter((d) => d.status === 'on_leave').length;
+    const weekOffHoliday = rosterEmployeeData.filter((d) => d.status === 'week_off' || d.status === 'holiday').length;
+    const absent = rosterEmployeeData.filter((d) => d.status === 'absent').length;
+    const notMarked = rosterEmployeeData.filter((d) => d.status === 'not_marked').length;
+    return { total, present, pending, onLeave, weekOffHoliday, absent, notMarked };
+  }, [rosterEmployeeData]);
 
   const filteredRosterData = useMemo(() => {
     return rosterEmployeeData.filter(({ employee, status }) => {
       if (rosterFilterTab === 'present' && status !== 'present') return false;
+      if (rosterFilterTab === 'pending' && status !== 'pending_approval') return false;
       if (rosterFilterTab === 'on_leave' && status !== 'on_leave') return false;
-      if (rosterFilterTab === 'not_marked' && status !== 'not_marked' && status !== 'absent' && status !== 'pending_approval') return false;
+      if (rosterFilterTab === 'week_off_holiday' && status !== 'week_off' && status !== 'holiday') return false;
+      if (rosterFilterTab === 'absent' && status !== 'absent' && status !== 'not_marked') return false;
       if (rosterDept !== 'all' && employee.department !== rosterDept) return false;
       if (rosterSearch.trim()) {
         const q = rosterSearch.toLowerCase();
@@ -1194,6 +1239,83 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
             </div>
           </div>
 
+          {/* Dynamic Holiday / Week-Off Banner */}
+          {holidayOnDate && (
+            <div className="p-3 mx-4 mt-4 rounded-xl bg-purple-500/10 border border-purple-500/25 flex items-center justify-between text-xs text-purple-300">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+                <span>
+                  <strong>Official Corporate Holiday: {holidayOnDate.name}</strong> • Mandatory paid holiday for all employees.
+                </span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                Paid Corporate Holiday
+              </span>
+            </div>
+          )}
+
+          {weekOffOnDate.isWeekOff && !holidayOnDate && (
+            <div className="p-3 mx-4 mt-4 rounded-xl bg-indigo-500/10 border border-indigo-500/25 flex items-center justify-between text-xs text-indigo-300">
+              <div className="flex items-center space-x-2">
+                <Coffee className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span>
+                  <strong>Scheduled Organization Week-Off ({weekOffOnDate.dayName})</strong> • Regular rest day according to shift policy.
+                </span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                Weekly Off
+              </span>
+            </div>
+          )}
+
+          {/* Quick Filter Status Tabs */}
+          <div className="px-4 py-2.5 bg-[var(--bg-card)] border-b border-[var(--border-color)] flex flex-wrap items-center gap-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setRosterFilterTab('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition ${rosterFilterTab === 'all' ? 'bg-blue-600 text-white shadow-xs' : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+            >
+              All ({rosterStats.total})
+            </button>
+            <button
+              type="button"
+              onClick={() => setRosterFilterTab('present')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition ${rosterFilterTab === 'present' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+            >
+              ✓ Present ({rosterStats.present})
+            </button>
+            {rosterStats.pending > 0 && (
+              <button
+                type="button"
+                onClick={() => setRosterFilterTab('pending')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${rosterFilterTab === 'pending' ? 'bg-amber-600 text-white shadow-xs' : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'}`}
+              >
+                ⏳ Pending ({rosterStats.pending})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setRosterFilterTab('on_leave')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition ${rosterFilterTab === 'on_leave' ? 'bg-blue-600 text-white shadow-xs' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'}`}
+            >
+              ✈ Leave ({rosterStats.onLeave})
+            </button>
+            <button
+              type="button"
+              onClick={() => setRosterFilterTab('week_off_holiday')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition ${rosterFilterTab === 'week_off_holiday' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20'}`}
+            >
+              ☕ Week Off / Holiday ({rosterStats.weekOffHoliday})
+            </button>
+            <button
+              type="button"
+              onClick={() => setRosterFilterTab('absent')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition ${rosterFilterTab === 'absent' ? 'bg-rose-600 text-white shadow-xs' : 'bg-rose-500/10 text-rose-400 hover:bg-rose-500/20'}`}
+            >
+              ✗ Absent ({rosterStats.absent})
+            </button>
+          </div>
+
           {/* Roster Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -1215,7 +1337,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredRosterData.map(({ employee, record, leave, status }) => (
+                  filteredRosterData.map(({ employee, record, leave, holiday, isWeekOff, isBeforeJoining, status }) => (
                     <tr key={employee.id} className="hover:bg-[var(--bg-card-subtle)]/60 transition">
                       <td className="py-3 px-4 font-bold text-[var(--text-primary)]">
                         {employee.firstName} {employee.lastName}
@@ -1238,6 +1360,20 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/20 text-blue-400 border border-blue-500/30">
                             ✈️ Leave ({leave?.leaveType})
                           </span>
+                        ) : status === 'holiday' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1 w-fit">
+                            <Sparkles className="w-3 h-3" />
+                            Holiday ({holiday?.name || 'Corporate'})
+                          </span>
+                        ) : status === 'week_off' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 w-fit">
+                            <Coffee className="w-3 h-3" />
+                            Week Off
+                          </span>
+                        ) : status === 'pre_joining' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-500/20 text-slate-400 border border-slate-500/30">
+                            ⏳ Pre-Joining
+                          </span>
                         ) : status === 'absent' ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30">
                             ✗ Absent
@@ -1252,7 +1388,13 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                         {record?.checkInTime ? formatISTTime(record.checkInTime) : '—'}
                       </td>
                       <td className="py-3 px-4 truncate max-w-xs text-[var(--text-muted)]">
-                        {record?.officeAddress || (record?.isRemote ? `Remote (${record.distanceMeters ? `${Math.round(record.distanceMeters)}m` : 'WFH'})` : '—')}
+                        {status === 'holiday'
+                          ? `Official Corporate Holiday: ${holiday?.name || 'Holiday'}`
+                          : status === 'week_off'
+                          ? 'Scheduled Weekly Rest Day'
+                          : status === 'pre_joining'
+                          ? `Joined on ${formatISTDate(employee.joiningDate)}`
+                          : (record?.officeAddress || (record?.isRemote ? `Remote (${record.distanceMeters ? `${Math.round(record.distanceMeters)}m` : 'WFH'})` : '—'))}
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-1.5 justify-end">
