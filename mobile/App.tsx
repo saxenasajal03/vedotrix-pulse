@@ -1076,21 +1076,24 @@ export default function App() {
           .select('*')
           .eq('org_id', targetOrgId);
         if (profiles) {
-          const isVedotrixOrg = targetOrgId === '00000000-0000-0000-0000-000000000001';
           const filteredProfiles = profiles.filter((p) => {
             const email = p.email?.toLowerCase();
-            const isSajalRootSuperadmin =
-              p.id === '00000000-0000-0000-0000-000000000003' ||
-              p.id === '00000000-0000-0000-0000-000000000004' ||
+            const id = p.id;
+            const first = (p.first_name || p.firstName || '').toLowerCase();
+            const last = (p.last_name || p.lastName || '').toLowerCase();
+            // Vedotrix Supercontroller is the root controller of the entire platform, NOT an employee of any organization tenant (BNK Digital, Vedotrix Global, etc.)
+            const isVedotrixRootSupercontroller =
+              id === '00000000-0000-0000-0000-000000000003' ||
+              id === '00000000-0000-0000-0000-000000000004' ||
               email === 'admin@vedotrix.com' ||
-              email === 'sajalsaxenagola@gmail.com';
+              email === 'sajalsaxenagola@gmail.com' ||
+              (first === 'vedotrix' && last.includes('superadmin'));
 
-            // In Vedotrix organization ONLY: Do NOT count Sajal who is superadmin / root platform controller
-            if (isVedotrixOrg && isSajalRootSuperadmin) {
+            if (isVedotrixRootSupercontroller) {
               return false;
             }
 
-            // In ALL OTHER organizations: ANY superadmin (even named Sajal) belonging to that organization IS SHOWN & COUNTED!
+            // In ALL organizations: ANY real superadmin belonging to that organization (e.g. Sajal Saxena chiefhead.interndesire@gmail.com, Kshitiz Narayan) IS SHOWN & COUNTED!
             return true;
           });
           setTeamProfiles(filteredProfiles);
@@ -1106,10 +1109,9 @@ export default function App() {
           .eq('org_id', targetOrgId)
           .order('date', { ascending: false });
         if (att) {
-          const isVedotrixOrg = targetOrgId === '00000000-0000-0000-0000-000000000001';
           const filteredAtt = att.filter((a) => {
-            // In Vedotrix organization ONLY: do not count root superadmin attendance
-            if (isVedotrixOrg && (a.employee_id === '00000000-0000-0000-0000-000000000003' || a.employee_id === '00000000-0000-0000-0000-000000000004')) {
+            // Exclude root supercontroller attendance from tenant attendance counts
+            if (a.employee_id === '00000000-0000-0000-0000-000000000003' || a.employee_id === '00000000-0000-0000-0000-000000000004') {
               return false;
             }
             return true;

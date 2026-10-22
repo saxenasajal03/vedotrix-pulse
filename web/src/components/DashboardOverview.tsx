@@ -137,9 +137,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const absentCount = Math.max(0, totalEmployees - (presentCount + halfDayCount + onLeaveCount));
   const attendanceRate = totalEmployees > 0 ? Math.round(((presentCount + halfDayCount * 0.5) / totalEmployees) * 100) : 0;
   const onLeaveRate = totalEmployees > 0 ? Math.round((onLeaveCount / totalEmployees) * 100) : 0;
+  const isPendingAttendance = (a: any) =>
+    (a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval') &&
+    a.approvalStatus !== 'approved' &&
+    a.regularizationStatus !== 'approved';
+
   const pendingApprovalsCount =
     leaveRequests.filter((l) => l.status === 'pending').length +
-    attendanceRecords.filter((a) => a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval').length +
+    attendanceRecords.filter(isPendingAttendance).length +
     accessRequests.filter((r) => r.status === 'pending').length;
 
   // 2. Manager Metrics (Strictly scoped to employees managed by them)
@@ -153,7 +158,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const managerAttendanceRate = managedTeam.length > 0 ? Math.round((managerPresentCount / managedTeam.length) * 100) : 0;
   const managerPendingApprovals =
     leaveRequests.filter((l) => l.status === 'pending' && (l.assignedApproverId === currentProfile?.id || managedTeamIds.has(l.employeeId))).length +
-    attendanceRecords.filter((a) => a.regularizationStatus === 'pending' && managedTeamIds.has(a.employeeId)).length;
+    attendanceRecords.filter((a) => isPendingAttendance(a) && managedTeamIds.has(a.employeeId)).length;
 
   // 3. Individual Employee Metrics (Strictly personal)
   const myTodayPunch = todayPunches.find((a) => a.employeeId === currentProfile?.id);
@@ -165,7 +170,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   ).length;
   const myPendingRequestsCount =
     leaveRequests.filter((l) => l.employeeId === currentProfile?.id && l.status === 'pending').length +
-    attendanceRecords.filter((a) => a.employeeId === currentProfile?.id && a.regularizationStatus === 'pending').length;
+    attendanceRecords.filter((a) => a.employeeId === currentProfile?.id && isPendingAttendance(a)).length;
   const myLeaveBal = getLeaveBalance(currentProfile?.id);
   const myAvailableDays = myLeaveBal.casual.remaining + myLeaveBal.sick.remaining + myLeaveBal.privilege.remaining;
 

@@ -1281,7 +1281,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'attendance', filter: `org_id=eq.${currentOrgId}` },
+        { event: '*', schema: 'public', table: 'attendance' },
         (payload: any) => {
           if (!isMounted) return;
           if (payload.eventType === 'INSERT') {
@@ -1595,7 +1595,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           client.from('chat_messages').select('*').eq('org_id', currentOrgId).order('created_at', { ascending: true }),
           client.from('meetings').select('*').eq('org_id', currentOrgId).order('date', { ascending: false }),
           client.from('notices').select('*').eq('org_id', currentOrgId).order('date', { ascending: false }),
-          client.from('attendance').select('*').eq('org_id', currentOrgId),
+          client.from('attendance').select('*').order('date', { ascending: false }),
           client.from('tasks').select('*').eq('org_id', currentOrgId),
           client.from('leave_requests').select('*').eq('org_id', currentOrgId)
         ]);
@@ -1730,12 +1730,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             regularizationNotes: a.regularization_notes || a.approval_notes,
             totalHours: a.total_hours ? Number(a.total_hours) : 0
           }));
-          setAttendanceRecords((prev) => {
-            const otherOrgs = prev.filter((a) => a.orgId !== currentOrgId);
-            const combined = [...otherOrgs, ...mappedAtt];
-            try { localStorage.setItem('vdx_attendance', JSON.stringify(combined)); } catch {}
-            return combined;
-          });
+          setAttendanceRecords(mappedAtt);
+          try { localStorage.setItem('vdx_attendance', JSON.stringify(mappedAtt)); } catch {}
         }
 
         if (cloudTasks && isMounted) {
@@ -2245,15 +2241,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const isVedotrixOrg = currentOrg?.id === '00000000-0000-0000-0000-000000000001';
 
-  // Helper: In Vedotrix organization ONLY, Sajal who is superadmin / root platform supercontroller is excluded from employee headcount.
-  // In ALL OTHER organizations, ANY superadmin (even named Sajal) belonging to that organization IS FULLY SHOWN & COUNTED on their HRMS!
-  const isSajalRootSuperadmin = (p: { id?: string; email?: string; role?: string }) => {
+  // Root platform supercontroller (admin@vedotrix.com / sajalsaxenagola@gmail.com / Vedotrix Superadmin)
+  // He is the platform controller, NOT an employee of any tenant organization (BNK Digital, Vedotrix Global, etc.)
+  const isVedotrixRootSupercontroller = (p: { id?: string; email?: string; firstName?: string; lastName?: string }) => {
     const email = p.email?.toLowerCase();
+    const id = p.id;
+    const first = (p.firstName || (p as any).first_name || '').toLowerCase();
+    const last = (p.lastName || (p as any).last_name || '').toLowerCase();
     return (
-      p.id === '00000000-0000-0000-0000-000000000003' ||
-      p.id === '00000000-0000-0000-0000-000000000004' ||
+      id === '00000000-0000-0000-0000-000000000003' ||
+      id === '00000000-0000-0000-0000-000000000004' ||
       email === 'admin@vedotrix.com' ||
-      email === 'sajalsaxenagola@gmail.com'
+      email === 'sajalsaxenagola@gmail.com' ||
+      (first === 'vedotrix' && last.includes('superadmin'))
     );
   };
 
@@ -2262,11 +2262,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const candidateProfiles = tenantProfiles.length > 0 ? tenantProfiles : profiles.filter((p) => p.orgId === currentOrg?.id);
 
   const orgProfiles = candidateProfiles.filter((p) => {
-    // 1. In Vedotrix organization ONLY: Do NOT count Sajal who is superadmin / platform supercontroller
-    if (isVedotrixOrg && isSajalRootSuperadmin(p)) {
+    // 1. Never count root platform supercontroller in employee directory / headcount of ANY org
+    if (isVedotrixRootSupercontroller(p)) {
       return false;
     }
-    // 2. In ALL other organizations: Any employee or superadmin belonging to that organization MUST be shown!
+    // 2. In ALL organizations: ANY real superadmin belonging to that organization (like Sajal Saxena chiefhead.interndesire@gmail.com, Kshitiz Narayan) IS FULLY SHOWN & COUNTED!
     return true;
   });
   
@@ -5057,14 +5057,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 (o.candidateEmail && currentProfile?.email && o.candidateEmail.toLowerCase() === currentProfile?.email?.toLowerCase()) ||
                 (o.orgId === currentOrg?.id)
             ),
-        attendanceRecords: ((isVedotrixSuperadmin || currentProfile?.role === 'superadmin' || currentProfile?.role === 'owner')
-          ? (attendanceRecords.filter((a) => a.orgId === currentOrg?.id).length > 0
-              ? attendanceRecords.filter((a) => a.orgId === currentOrg?.id)
-              : attendanceRecords)
-          : attendanceRecords.filter((a) => a.orgId === currentOrg?.id)
-        ).filter((a) => {
-          // In Vedotrix organization ONLY: exclude root superadmin attendance
-          if (isVedotrixOrg && (a.employeeId === '00000000-0000-0000-0000-000000000003' || a.employeeId === '00000000-0000-0000-0000-000000000004')) {
+        attendanceRecords: attendanceRecords.filter((a) => {
+          if (currentOrg?.id && a.orgId && a.orgId !== currentOrg.id) return false;
+          if (a.employeeId === '00000000-0000-0000-0000-000000000003' || a.employeeId === '00000000-0000-0000-0000-000000000004') {
             return false;
           }
           return true;
