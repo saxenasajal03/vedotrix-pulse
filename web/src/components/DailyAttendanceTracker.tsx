@@ -125,8 +125,8 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   // Shift & Organization Calendar Configuration Modal (Superadmin / HR only)
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [shiftModalTab, setShiftModalTab] = useState<'shift' | 'emp_weekoffs' | 'holidays'>('shift');
-  const [shiftStart, setShiftStart] = useState(currentOrg.settings?.shiftStartTime || '09:30');
-  const [shiftEnd, setShiftEnd] = useState(currentOrg.settings?.shiftEndTime || '18:30');
+  const [shiftStart, setShiftStart] = useState(currentOrg.settings?.shiftStartTime || currentOrg.settings?.shiftStart || '09:30');
+  const [shiftEnd, setShiftEnd] = useState(currentOrg.settings?.shiftEndTime || currentOrg.settings?.shiftEnd || '18:30');
   const [graceMins, setGraceMins] = useState(currentOrg.settings?.gracePeriodMins || 15);
   const [halfDayHours, setHalfDayHours] = useState(currentOrg.settings?.halfDayThresholdHours || 4.5);
   const [weekOffs, setWeekOffs] = useState<number[]>(currentOrg.settings?.weekOffDays || [0]);
@@ -135,6 +135,27 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   // Employee-Specific Week-Off customization state
   const [selectedEmpForWeekOff, setSelectedEmpForWeekOff] = useState<string>('');
   const [empWeekOffDays, setEmpWeekOffDays] = useState<number[]>([0]);
+
+  // Synchronize state with current organization settings from Supabase
+  useEffect(() => {
+    if (currentOrg.settings) {
+      setShiftStart(currentOrg.settings.shiftStartTime || currentOrg.settings.shiftStart || '09:30');
+      setShiftEnd(currentOrg.settings.shiftEndTime || currentOrg.settings.shiftEnd || '18:30');
+      setGraceMins(currentOrg.settings.gracePeriodMins || 15);
+      setHalfDayHours(currentOrg.settings.halfDayThresholdHours || 4.5);
+      setWeekOffs(currentOrg.settings.weekOffDays || [0]);
+    }
+  }, [currentOrg]);
+
+  // Synchronize selected employee week-off state
+  useEffect(() => {
+    const targetEmpId = selectedEmpForWeekOff || (orgProfiles[0]?.id || '');
+    if (targetEmpId) {
+      if (!selectedEmpForWeekOff) setSelectedEmpForWeekOff(targetEmpId);
+      const cur = currentOrg.settings?.employeeWeekOffs?.[targetEmpId] || currentOrg.settings?.weekOffDays || [0];
+      setEmpWeekOffDays(cur);
+    }
+  }, [selectedEmpForWeekOff, currentOrg.settings, orgProfiles]);
 
   // Holiday management state
   const [newHolidayName, setNewHolidayName] = useState('');
@@ -161,41 +182,67 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       await updateOrganization(currentOrg.id, {
         settings: {
           ...currentOrg.settings,
+          shiftStart: shiftStart,
           shiftStartTime: shiftStart,
+          shiftEnd: shiftEnd,
           shiftEndTime: shiftEnd,
           gracePeriodMins: Number(graceMins) || 15,
           halfDayThresholdHours: Number(halfDayHours) || 4.5,
           weekOffDays: weekOffs
         }
       });
-      addToast('Shift & Week-Offs Saved ⚙️', 'Configured shift timing & weekly holidays applied dynamically across the team.', 'success');
+      addToast('Shift & Week-Offs Saved ⚙️', 'Configured shift timing & weekly holidays synced to Supabase.', 'success');
       setIsShiftModalOpen(false);
-    } catch (err) {
-      addToast('Error', 'Could not update shift timing.', 'error');
+    } catch (err: any) {
+      addToast('Error', err?.message || 'Could not update shift timing.', 'error');
     } finally {
       setIsSavingShift(false);
     }
   };
 
   const handleSaveEmployeeWeekOff = async () => {
-    if (!selectedEmpForWeekOff) {
+    const targetEmpId = selectedEmpForWeekOff || (orgProfiles[0]?.id || '');
+    if (!targetEmpId) {
       addToast('Select Employee', 'Please select a team member to set custom weekly off days.', 'warning');
       return;
     }
     setIsSavingShift(true);
     try {
       const curEmpWeekOffs = { ...(currentOrg.settings?.employeeWeekOffs || {}) };
-      curEmpWeekOffs[selectedEmpForWeekOff] = empWeekOffDays;
+      curEmpWeekOffs[targetEmpId] = empWeekOffDays;
       await updateOrganization(currentOrg.id, {
         settings: {
           ...currentOrg.settings,
           employeeWeekOffs: curEmpWeekOffs
         }
       });
-      const empObj = orgProfiles.find((p) => p.id === selectedEmpForWeekOff);
-      addToast('Employee Week-Off Saved ☕', `Custom weekly off days configured for ${empObj ? empObj.firstName : 'Employee'}.`, 'success');
-    } catch (err) {
-      addToast('Error', 'Could not update employee week-off.', 'error');
+      const empObj = orgProfiles.find((p) => p.id === targetEmpId);
+      addToast('Employee Week-Off Saved ☕', `Custom weekly off days configured for ${empObj ? empObj.firstName : 'Employee'} and synced to Supabase.`, 'success');
+    } catch (err: any) {
+      addToast('Error', err?.message || 'Could not update employee week-off.', 'error');
+    } finally {
+      setIsSavingShift(false);
+    }
+  };
+
+  const handleResetEmployeeWeekOff = async () => {
+    const targetEmpId = selectedEmpForWeekOff || (orgProfiles[0]?.id || '');
+    if (!targetEmpId) return;
+    setIsSavingShift(true);
+    try {
+      const curEmpWeekOffs = { ...(currentOrg.settings?.employeeWeekOffs || {}) };
+      delete curEmpWeekOffs[targetEmpId];
+      await updateOrganization(currentOrg.id, {
+        settings: {
+          ...currentOrg.settings,
+          employeeWeekOffs: curEmpWeekOffs
+        }
+      });
+      setEmpWeekOffDays(currentOrg.settings?.weekOffDays || [0]);
+      const empObj = orgProfiles.find((p) => p.id === targetEmpId);
+      addToast('Reset to Org Default', `Reset ${empObj ? empObj.firstName : 'Employee'} to standard organization week-offs.`, 'info');
+    } catch (err: any) {
+      addToast('Error', err?.message || 'Failed to reset employee week-off.', 'error');
     } finally {
       setIsSavingShift(false);
     }
@@ -213,9 +260,9 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       });
       setNewHolidayName('');
       setNewHolidayDate('');
-      addToast('Holiday Added 🎊', 'Holiday added to organization calendar.', 'success');
-    } catch (err) {
-      addToast('Error', 'Failed to add holiday.', 'error');
+      addToast('Holiday Added 🎊', 'Holiday added to organization calendar in Supabase.', 'success');
+    } catch (err: any) {
+      addToast('Error', err?.message || 'Failed to add holiday.', 'error');
     } finally {
       setIsSavingHoliday(false);
     }
@@ -223,15 +270,27 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
 
   const handleToggleDayWeekOff = async (dateStr: string, empId: string) => {
     const key = `${dateStr}_${empId}`;
+    const reverseKey = `${empId}_${dateStr}`;
     const curOverrides = { ...(currentOrg.settings?.customDayOverrides || {}) };
-    const currentType = curOverrides[key]?.type;
+    const currentType = curOverrides[key]?.type || curOverrides[reverseKey]?.type || curOverrides[dateStr]?.type;
     
+    let newType: 'working' | 'week_off';
     if (currentType === 'week_off') {
+      newType = 'working';
       curOverrides[key] = { type: 'working', employeeId: empId };
-      addToast('Day Marked as Working 💼', `Marked ${dateStr} as an active working day for this employee.`, 'info');
+      addToast('Day Marked as Working 💼', `Marked ${dateStr} as active working day for this employee.`, 'info');
     } else {
+      newType = 'week_off';
       curOverrides[key] = { type: 'week_off', employeeId: empId };
       addToast('Day Marked as Week-Off ☕', `Marked ${dateStr} as scheduled week-off for this employee.`, 'success');
+    }
+
+    if (selectedCalendarDay && selectedCalendarDay.dateStr === dateStr) {
+      setSelectedCalendarDay({
+        ...selectedCalendarDay,
+        isWeekOff: newType === 'week_off',
+        status: newType === 'week_off' ? 'week_off' : (selectedCalendarDay.isPast ? 'absent' : 'future')
+      });
     }
 
     await updateOrganization(currentOrg.id, {
@@ -2523,19 +2582,54 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                   <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1">
                     <p className="font-bold flex items-center space-x-1.5">
                       <Users className="w-3.5 h-3.5 text-blue-400" />
-                      <span>Custom Employee Weekly Rosters</span>
+                      <span>Custom Employee Weekly Rosters (Synced with Live Supabase)</span>
                     </p>
                     <p className="text-[11px] text-blue-300/80 leading-relaxed">
-                      Configure custom weekly off days for individual team members (e.g. support engineers or interns working Sunday with mid-week off).
+                      Configure custom weekly off days for individual team members. These settings override organization defaults and synchronize directly to mobile and database.
                     </p>
                   </div>
+
+                  {/* Summary of active custom configurations */}
+                  {Object.keys(currentOrg.settings?.employeeWeekOffs || {}).length > 0 && (
+                    <div className="p-3 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] block">
+                        Team Members with Custom Schedules ({Object.keys(currentOrg.settings?.employeeWeekOffs || {}).length}):
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(currentOrg.settings?.employeeWeekOffs || {}).map(([id, days]) => {
+                          const emp = orgProfiles.find((p) => p.id === id);
+                          if (!emp || !Array.isArray(days) || days.length === 0) return null;
+                          const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                          const isCurrentlySelected = selectedEmpForWeekOff === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedEmpForWeekOff(id);
+                                setEmpWeekOffDays(days);
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 border cursor-pointer ${
+                                isCurrentlySelected
+                                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs'
+                                  : 'bg-[var(--bg-card)] text-[var(--text-primary)] border-[var(--border-color)] hover:border-indigo-400'
+                              }`}
+                            >
+                              <span>{emp.firstName}:</span>
+                              <span className="text-indigo-200">{days.map((d) => dayNames[d]).join(', ')}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
                       Select Team Member *
                     </label>
                     <select
-                      value={selectedEmpForWeekOff}
+                      value={selectedEmpForWeekOff || (orgProfiles[0]?.id || '')}
                       onChange={(e) => {
                         const empId = e.target.value;
                         setSelectedEmpForWeekOff(empId);
@@ -2544,19 +2638,22 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                       }}
                       className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-xs font-bold text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                     >
-                      {orgProfiles.map((p) => (
-                        <option key={p.id} value={p.id} className="bg-[var(--bg-card)] text-[var(--text-primary)]">
-                          {p.firstName} {p.lastName} ({p.role.toUpperCase()} • {p.department})
-                        </option>
-                      ))}
+                      {orgProfiles.map((p) => {
+                        const hasCustom = Boolean(currentOrg.settings?.employeeWeekOffs?.[p.id]);
+                        return (
+                          <option key={p.id} value={p.id} className="bg-[var(--bg-card)] text-[var(--text-primary)]">
+                            {p.firstName} {p.lastName} ({p.role.toUpperCase()} • {p.department}){hasCustom ? ' ★ [Custom Schedule]' : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
-                  {selectedEmpForWeekOff && (
-                    <div className="space-y-2 pt-2 border-t border-[var(--border-color)]">
-                      <div className="flex items-center justify-between">
+                  {(selectedEmpForWeekOff || orgProfiles[0]?.id) && (
+                    <div className="space-y-3 pt-2 border-t border-[var(--border-color)]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                          Weekly Off Days for {orgProfiles.find((p) => p.id === selectedEmpForWeekOff)?.firstName}
+                          Weekly Off Days for {orgProfiles.find((p) => p.id === (selectedEmpForWeekOff || orgProfiles[0]?.id))?.firstName || 'Employee'}:
                         </label>
                         <div className="flex items-center space-x-2">
                           <button
@@ -2619,15 +2716,27 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                         })}
                       </div>
 
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSaveEmployeeWeekOff}
-                          disabled={isSavingShift}
-                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition shadow-sm cursor-pointer"
-                        >
-                          {isSavingShift ? 'Saving...' : 'Save Employee Week-Off'}
-                        </button>
+                      <div className="pt-2 flex items-center justify-between">
+                        {currentOrg.settings?.employeeWeekOffs?.[selectedEmpForWeekOff || orgProfiles[0]?.id] && (
+                          <button
+                            type="button"
+                            onClick={handleResetEmployeeWeekOff}
+                            disabled={isSavingShift}
+                            className="px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl transition cursor-pointer"
+                          >
+                            Reset to Org Default
+                          </button>
+                        )}
+                        <div className="ml-auto">
+                          <button
+                            type="button"
+                            onClick={handleSaveEmployeeWeekOff}
+                            disabled={isSavingShift}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition shadow-sm cursor-pointer flex items-center space-x-1.5"
+                          >
+                            <span>{isSavingShift ? 'Saving to Cloud...' : 'Save Employee Week-Off ✓'}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

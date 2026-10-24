@@ -35,7 +35,11 @@ export interface Organization {
     halfDayThresholdHours: number;
     shiftStartTime?: string; // e.g. '09:30' (IST)
     shiftEndTime?: string; // e.g. '18:30' (IST)
+    shiftStart?: string;
+    shiftEnd?: string;
     weekOffDays?: number[]; // e.g. [0] for Sunday (0=Sun, 1=Mon, ..., 6=Sat)
+    employeeWeekOffs?: Record<string, number[]>; // e.g. { 'empId': [0, 6] }
+    customDayOverrides?: Record<string, { type: 'working' | 'week_off' | 'holiday'; name?: string; employeeId?: string }>;
     holidays?: Holiday[];
     employeeStatutory?: Record<string, { bankName?: string; accountNumber?: string; ifscCode?: string; pfNumber?: string }>;
     leavePolicy?: {

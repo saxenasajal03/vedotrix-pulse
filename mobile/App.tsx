@@ -757,6 +757,28 @@ export default function App() {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'organizations',
+          filter: `id=eq.${currentOrg.id}`
+        },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            const updatedOrg = payload.new;
+            setCurrentOrg((prev: any) => ({
+              ...prev,
+              ...updatedOrg,
+              settings: updatedOrg.settings || prev?.settings
+            }));
+            if (updatedOrg.settings?.holidays && Array.isArray(updatedOrg.settings.holidays)) {
+              setHolidays(updatedOrg.settings.holidays);
+            }
+          }
+        }
+      )
       .subscribe();
 
     return () => {
@@ -2122,32 +2144,44 @@ export default function App() {
   };
 
   // Toggle Custom Day Week-off Override (HR / Superadmin)
-  const handleToggleCustomDayWeekOff = async (dateStr: string) => {
+  const handleToggleCustomDayWeekOff = async (dateStr: string, empId?: string) => {
     if (!supabaseClient || !currentOrg) return;
     try {
-      const curSettings = currentOrg.settings || {};
-      const curOverrides = curSettings.customDayOverrides || {};
-      const newOverrides = { ...curOverrides };
+      // Fetch fresh organization settings from live Supabase to avoid overwriting concurrent changes
+      const { data: liveOrg } = await supabaseClient
+        .from('organizations')
+        .select('settings')
+        .eq('id', currentOrg.id)
+        .maybeSingle();
 
-      if (newOverrides[dateStr]?.type === 'week_off') {
-        delete newOverrides[dateStr];
+      const curSettings = liveOrg?.settings || currentOrg.settings || {};
+      const curOverrides = { ...(curSettings.customDayOverrides || {}) };
+
+      const key = empId ? `${dateStr}_${empId}` : dateStr;
+      const reverseKey = empId ? `${empId}_${dateStr}` : dateStr;
+      const currentType = curOverrides[key]?.type || curOverrides[reverseKey]?.type || curOverrides[dateStr]?.type;
+
+      if (currentType === 'week_off') {
+        curOverrides[key] = { type: 'working', employeeId: empId };
       } else {
-        newOverrides[dateStr] = { type: 'week_off' };
+        curOverrides[key] = { type: 'week_off', employeeId: empId };
       }
 
-      const updatedSettings = { ...curSettings, customDayOverrides: newOverrides };
-      const { error } = await supabaseClient
+      const updatedSettings = { ...curSettings, customDayOverrides: curOverrides };
+      const { data: updatedOrg, error } = await supabaseClient
         .from('organizations')
         .update({ settings: updatedSettings })
-        .eq('id', currentOrg.id);
+        .eq('id', currentOrg.id)
+        .select()
+        .single();
 
-      if (!error) {
-        setCurrentOrg({ ...currentOrg, settings: updatedSettings });
-        Alert.alert('Calendar Updated ✓', `Custom week-off policy updated for ${dateStr}.`);
+      if (!error && updatedOrg) {
+        setCurrentOrg(updatedOrg);
+        Alert.alert('Calendar Updated ✓', `Custom week-off policy saved to cloud for ${dateStr}.`);
         setSelectedCalendarDayData(null);
         refreshAllData(supabaseClient, currentOrg.id, userProfile?.id);
       } else {
-        Alert.alert('Database Error', error.message);
+        Alert.alert('Database Error', error?.message || 'Could not update calendar policy.');
       }
     } catch (e: any) {
       Alert.alert('Error', e?.message);
@@ -5779,6 +5813,7 @@ ${letter.content}
                         // 1. Check Holiday
                         const isHol = holidays.some((h) => h.date === dStr);
                         const customOverride = currentOrg?.settings?.customDayOverrides?.[dStr]
+                          || currentOrg?.settings?.customDayOverrides?.[`${dStr}_${targetEmpId}`]
                           || currentOrg?.settings?.customDayOverrides?.[`${targetEmpId}_${dStr}`];
                         const isOverrideWorking = customOverride?.type === 'working';
                         const isOverrideWeekOff = customOverride?.type === 'week_off';
@@ -5854,6 +5889,7 @@ ${letter.content}
                           const matchingHoliday = holidays.find((h) => h.date === dStr);
 
                           const customOverride = currentOrg?.settings?.customDayOverrides?.[dStr]
+                            || currentOrg?.settings?.customDayOverrides?.[`${dStr}_${targetEmpId}`]
                             || currentOrg?.settings?.customDayOverrides?.[`${targetEmpId}_${dStr}`];
                           const isOverrideWorking = customOverride?.type === 'working';
                           const isOverrideWeekOff = customOverride?.type === 'week_off';
@@ -6063,6 +6099,7 @@ ${letter.content}
 
                         const matchingHoliday = holidays.find((h) => h.date === rosterDate);
                         const customOverride = currentOrg?.settings?.customDayOverrides?.[rosterDate]
+                          || currentOrg?.settings?.customDayOverrides?.[`${rosterDate}_${emp.id}`]
                           || currentOrg?.settings?.customDayOverrides?.[`${emp.id}_${rosterDate}`];
 
                         const isOverrideWorking = customOverride?.type === 'working';
@@ -7788,7 +7825,13 @@ ${letter.content}
                   if (!supabaseClient || !currentOrg) return;
                   setIsSavingCalPolicies(true);
                   try {
-                    const curSettings = currentOrg.settings || {};
+                    const { data: liveOrg } = await supabaseClient
+                      .from('organizations')
+                      .select('settings')
+                      .eq('id', currentOrg.id)
+                      .maybeSingle();
+
+                    const curSettings = liveOrg?.settings || currentOrg.settings || {};
                     const newSettings = {
                       ...curSettings,
                       shiftStart: orgShiftStart.trim() || '09:30',
@@ -7800,18 +7843,20 @@ ${letter.content}
                       employeeWeekOffs: calPolicyEmpWeekOffs
                     };
 
-                    const { error } = await supabaseClient
+                    const { data: updatedOrg, error } = await supabaseClient
                       .from('organizations')
                       .update({ settings: newSettings })
-                      .eq('id', currentOrg.id);
+                      .eq('id', currentOrg.id)
+                      .select()
+                      .single();
 
-                    if (!error) {
-                      setCurrentOrg({ ...currentOrg, settings: newSettings });
+                    if (!error && updatedOrg) {
+                      setCurrentOrg(updatedOrg);
                       Alert.alert('Calendar Policies Saved ✓', 'Shift hours, default week-offs and employee schedules synchronized to cloud.');
                       setIsCalendarPoliciesModal(false);
                       refreshAllData(supabaseClient, currentOrg.id, userProfile?.id);
                     } else {
-                      Alert.alert('Database Error', error.message);
+                      Alert.alert('Database Error', error?.message || 'Failed to save calendar policies to cloud.');
                     }
                   } catch (e: any) {
                     Alert.alert('Error', e?.message);
@@ -9001,10 +9046,16 @@ ${letter.content}
                         <View style={{ flexDirection: 'row', gap: 6 }}>
                           <TouchableOpacity
                             style={[styles.smallAddBtn, { flex: 1, backgroundColor: '#0284c7' }]}
-                            onPress={() => handleToggleCustomDayWeekOff(d.dStr)}
+                            onPress={() => handleToggleCustomDayWeekOff(d.dStr, d.inspectedCalendarEmp?.id)}
                           >
                             <Text style={[styles.smallAddBtnText, { textAlign: 'center' }]}>
-                              {currentOrg?.settings?.customDayOverrides?.[d.dStr]?.type === 'week_off' ? 'Mark Working Day' : 'Mark Week-Off'}
+                              {(() => {
+                                const targetEmp = d.inspectedCalendarEmp?.id;
+                                const cur = currentOrg?.settings?.customDayOverrides?.[d.dStr]
+                                  || (targetEmp ? currentOrg?.settings?.customDayOverrides?.[`${d.dStr}_${targetEmp}`] : null)
+                                  || (targetEmp ? currentOrg?.settings?.customDayOverrides?.[`${targetEmp}_${d.dStr}`] : null);
+                                return cur?.type === 'week_off' ? 'Mark Working Day' : 'Mark Week-Off';
+                              })()}
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity

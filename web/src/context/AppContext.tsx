@@ -1628,7 +1628,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           { data: cloudAtt },
           { data: cloudTasks },
           { data: cloudLeaves },
-          { data: cloudStandups }
+          { data: cloudStandups },
+          { data: cloudOrgsPolled }
         ] = await Promise.all([
           client.from('chat_channels').select('*').eq('org_id', currentOrgId),
           client.from('chat_messages').select('*').eq('org_id', currentOrgId).order('created_at', { ascending: true }),
@@ -1637,7 +1638,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           client.from('attendance').select('*').order('date', { ascending: false }),
           client.from('tasks').select('*').eq('org_id', currentOrgId),
           client.from('leave_requests').select('*').eq('org_id', currentOrgId),
-          client.from('daily_standups').select('*').order('date', { ascending: false })
+          client.from('daily_standups').select('*').order('date', { ascending: false }),
+          client.from('organizations').select('*')
         ]);
 
         if (cloudChannels && isMounted) {
@@ -1833,6 +1835,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           setStandups(mappedStandups);
           try { localStorage.setItem('vdx_standups', JSON.stringify(mappedStandups)); } catch {}
+        }
+
+        if (cloudOrgsPolled && cloudOrgsPolled.length > 0 && isMounted) {
+          setOrganizations((prev) => {
+            const updated = prev.map((localOrg) => {
+              const matchedCloud = cloudOrgsPolled.find((co: any) => co.id === localOrg.id);
+              if (!matchedCloud) return localOrg;
+              return {
+                ...localOrg,
+                name: matchedCloud.name,
+                slug: matchedCloud.slug,
+                orgCode: matchedCloud.org_code,
+                industry: matchedCloud.industry || localOrg.industry,
+                website: matchedCloud.website || localOrg.website,
+                address: matchedCloud.address || localOrg.address,
+                phone: matchedCloud.phone || localOrg.phone,
+                logoUrl: matchedCloud.logo_url || localOrg.logoUrl,
+                settings: matchedCloud.settings || localOrg.settings
+              };
+            });
+            try { localStorage.setItem('vdx_organizations', JSON.stringify(updated)); } catch {}
+            return updated;
+          });
+
+          // Check if any org holidays updated
+          const allPolledHolidays: Holiday[] = [];
+          cloudOrgsPolled.forEach((co: any) => {
+            if (co.settings?.holidays && Array.isArray(co.settings.holidays)) {
+              allPolledHolidays.push(...co.settings.holidays);
+            }
+          });
+          if (allPolledHolidays.length > 0) {
+            setHolidays((prev) => {
+              const sorted = allPolledHolidays.sort((a, b) => a.date.localeCompare(b.date));
+              try { localStorage.setItem('vdx_holidays', JSON.stringify(sorted)); } catch {}
+              return sorted;
+            });
+          }
         }
       } catch (err) {}
     };
@@ -3129,20 +3169,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateOrganization = async (orgId: string, updates: Partial<Organization>): Promise<void> => {
-    setOrganizations((prev) => {
-      const updated = prev.map((o) => (o.id === orgId ? { ...o, ...updates } : o));
-      try {
-        localStorage.setItem('vdx_organizations', JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-
-    if (updates.address !== undefined) {
-      setOfficeLocationsList((prev) =>
-        prev.map((off) => (off.orgId === orgId ? { ...off, address: updates.address! } : off))
-      );
-    }
-
     try {
       const client = getSupabaseClient();
       const supabaseUpdates: any = {};
@@ -3154,20 +3180,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (updates.address !== undefined) supabaseUpdates.address = updates.address;
       if (updates.phone !== undefined) supabaseUpdates.phone = updates.phone;
       if (updates.logoUrl !== undefined) supabaseUpdates.logo_url = updates.logoUrl;
-      if (updates.settings !== undefined) supabaseUpdates.settings = updates.settings;
 
-      const { error } = await client.from('organizations').update(supabaseUpdates).eq('id', orgId);
-      if (error) console.error('Supabase organization update error:', error);
-      else console.log('Organization updated in Supabase');
+      if (updates.settings !== undefined) {
+        // Fetch current organization settings directly from live Supabase to ensure safe deep merge
+        const { data: curDbOrg } = await client
+          .from('organizations')
+          .select('settings')
+          .eq('id', orgId)
+          .maybeSingle();
+
+        const baseSettings = curDbOrg?.settings || organizations.find((o) => o.id === orgId)?.settings || {};
+        supabaseUpdates.settings = {
+          ...baseSettings,
+          ...updates.settings
+        };
+      }
+
+      const { data: updatedOrgData, error } = await client
+        .from('organizations')
+        .update(supabaseUpdates)
+        .eq('id', orgId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase organization update error:', error);
+        addToast('Update Failed', error.message || 'Failed to update organization in Supabase.', 'error');
+        throw error;
+      }
+
+      if (updatedOrgData) {
+        const liveSettings = updatedOrgData.settings || {};
+        setOrganizations((prev) => {
+          const updated = prev.map((o) =>
+            o.id === orgId
+              ? {
+                  ...o,
+                  name: updatedOrgData.name,
+                  slug: updatedOrgData.slug,
+                  orgCode: updatedOrgData.org_code,
+                  industry: updatedOrgData.industry || o.industry,
+                  website: updatedOrgData.website || o.website,
+                  address: updatedOrgData.address || o.address,
+                  phone: updatedOrgData.phone || o.phone,
+                  logoUrl: updatedOrgData.logo_url || o.logoUrl,
+                  settings: liveSettings
+                }
+              : o
+          );
+          try {
+            localStorage.setItem('vdx_organizations', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+
+        // Live Supabase Sync: Sync holidays if settings updated
+        if (liveSettings.holidays && Array.isArray(liveSettings.holidays)) {
+          setHolidays((prev) => {
+            const otherOrgs = prev.filter((h) => h.orgId !== orgId);
+            const combined = [...otherOrgs, ...liveSettings.holidays].sort((a, b) => a.date.localeCompare(b.date));
+            try { localStorage.setItem('vdx_holidays', JSON.stringify(combined)); } catch {}
+            return combined;
+          });
+        }
+      }
 
       if (updates.address !== undefined) {
         client.from('office_locations').update({ address: updates.address }).eq('org_id', orgId).then();
+        setOfficeLocationsList((prev) =>
+          prev.map((off) => (off.orgId === orgId ? { ...off, address: updates.address! } : off))
+        );
       }
-    } catch (e) {
-      console.warn('Organization Supabase update failed:', e);
-    }
 
-    addToast('Organization Updated', 'Organization configuration and policies saved.', 'success');
+      addToast('Saved to Supabase ✓', 'Organization configuration and calendar policies synchronized.', 'success');
+    } catch (e: any) {
+      console.error('Organization Supabase update failed:', e);
+      // Fallback local update if network failed
+      setOrganizations((prev) => {
+        const updated = prev.map((o) => (o.id === orgId ? { ...o, ...updates } : o));
+        try {
+          localStorage.setItem('vdx_organizations', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+      throw e;
+    }
   };
 
   const toggleOrganizationStatus = (orgId: string) => {
