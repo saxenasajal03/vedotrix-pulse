@@ -353,7 +353,15 @@ export default function App() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
 
   // Subtabs within views
-  const [calSubTab, setCalSubTab] = useState<'attendance' | 'holidays'>('attendance');
+  const [calSubTab, setCalSubTab] = useState<'attendance' | 'roster' | 'holidays'>('attendance');
+  const [rosterDate, setRosterDate] = useState<string>(getTodayISTDate());
+  const [rosterSearch, setRosterSearch] = useState<string>('');
+  const [isCalendarPoliciesModal, setIsCalendarPoliciesModal] = useState<boolean>(false);
+  const [calPolicyTab, setCalPolicyTab] = useState<'shift' | 'emp_weekoffs' | 'holidays'>('shift');
+  const [calPolicySelectedEmp, setCalPolicySelectedEmp] = useState<string>('');
+  const [calPolicyOrgWeekOffs, setCalPolicyOrgWeekOffs] = useState<number[]>([0]);
+  const [calPolicyEmpWeekOffs, setCalPolicyEmpWeekOffs] = useState<{ [empId: string]: number[] }>({});
+  const [isSavingCalPolicies, setIsSavingCalPolicies] = useState<boolean>(false);
   const [noticesSubTab, setNoticesSubTab] = useState<'notices' | 'meetings'>('notices');
   const [hubSubTab, setHubSubTab] = useState<'profile' | 'team' | 'standups' | 'offers'>('profile');
   const [approvalsTab, setApprovalsTab] = useState<'regularization' | 'leaves' | 'access'>('regularization');
@@ -5069,23 +5077,56 @@ export default function App() {
         {activeTab === 'calendar' && (
           <View style={{ gap: 14 }}>
             <View style={styles.card}>
-              {/* Subtab Toggle: Attendance vs Holiday Calendar */}
+              {/* Header Bar with Title & Policies Button */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <View style={{ flex: 1, paddingRight: 6 }}>
+                  <Text style={styles.cardTitle}>Organization Calendar</Text>
+                  <Text style={styles.cardDesc}>Shifts, rosters & company week-off policies for {currentOrg?.name}</Text>
+                </View>
+                {isPrivileged && (
+                  <TouchableOpacity
+                    style={[styles.smallAddBtn, { backgroundColor: '#4f46e5' }]}
+                    onPress={() => {
+                      setCalPolicyOrgWeekOffs(currentOrg?.settings?.weekOffDays || [0]);
+                      setCalPolicyEmpWeekOffs(currentOrg?.settings?.employeeWeekOffs || {});
+                      setCalPolicySelectedEmp(teamProfiles[0]?.id || '');
+                      setOrgShiftStart(currentOrg?.settings?.shiftStart || currentOrg?.settings?.shiftStartTime || '09:30');
+                      setOrgShiftEnd(currentOrg?.settings?.shiftEnd || currentOrg?.settings?.shiftEndTime || '18:30');
+                      setOrgGracePeriod(String(currentOrg?.settings?.gracePeriodMins || 15));
+                      setIsCalendarPoliciesModal(true);
+                    }}
+                  >
+                    <Text style={styles.smallAddBtnText}>⚙️ Policies</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Subtab Toggle: Monthly Tracker vs Team Roster vs Holiday Calendar */}
               <View style={styles.filterRow}>
                 <TouchableOpacity
-                  style={[styles.filterTab, calSubTab === 'attendance' && styles.filterTabActive]}
+                  style={[styles.filterTab, calSubTab === 'attendance' && styles.filterTabActive, { flex: 1 }]}
                   onPress={() => setCalSubTab('attendance')}
                 >
-                  <Text style={[styles.filterTabText, calSubTab === 'attendance' && styles.filterTabTextActive]}>
-                    📅 My Attendance
+                  <Text style={[styles.filterTabText, calSubTab === 'attendance' && styles.filterTabTextActive, { textAlign: 'center' }]}>
+                    📅 Monthly
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.filterTab, calSubTab === 'holidays' && styles.filterTabActive]}
+                  style={[styles.filterTab, calSubTab === 'roster' && styles.filterTabActive, { flex: 1 }]}
+                  onPress={() => setCalSubTab('roster')}
+                >
+                  <Text style={[styles.filterTabText, calSubTab === 'roster' && styles.filterTabTextActive, { textAlign: 'center' }]}>
+                    👥 Daily Roster
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterTab, calSubTab === 'holidays' && styles.filterTabActive, { flex: 1 }]}
                   onPress={() => setCalSubTab('holidays')}
                 >
-                  <Text style={[styles.filterTabText, calSubTab === 'holidays' && styles.filterTabTextActive]}>
-                    🌴 Holiday Calendar ({holidays.length})
+                  <Text style={[styles.filterTabText, calSubTab === 'holidays' && styles.filterTabTextActive, { textAlign: 'center' }]}>
+                    🌴 Holidays ({holidays.length})
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -5219,21 +5260,35 @@ export default function App() {
                       let present = 0;
                       let regularized = 0;
                       let absent = 0;
-                      let holidayCount = 0;
 
                       for (let d = 1; d <= daysInMonth; d++) {
                         const dStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
                         if (dStr > todayStr) continue;
                         if (dStr < joiningDateStr) continue;
 
+                        const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
+
+                        // 1. Check Holiday
                         const isHol = holidays.some((h) => h.date === dStr);
-                        if (isHol) {
-                          holidayCount++;
-                          continue;
+                        const customOverride = currentOrg?.settings?.customDayOverrides?.[dStr]
+                          || currentOrg?.settings?.customDayOverrides?.[`${targetEmpId}_${dStr}`];
+                        const isOverrideWorking = customOverride?.type === 'working';
+                        const isOverrideWeekOff = customOverride?.type === 'week_off';
+                        const isOverrideHol = customOverride?.type === 'holiday';
+
+                        if ((isHol || isOverrideHol) && !isOverrideWorking) {
+                          continue; // Holiday (not counted as working/absent)
                         }
 
-                        const dayOfWeek = new Date(selectedCalYear, selectedCalMonth - 1, d).getDay();
-                        if (dayOfWeek === 0) continue; // Sunday
+                        // 2. Check Employee-Specific & Org Default Week-Offs
+                        const empWeekOffs: number[] = currentOrg?.settings?.employeeWeekOffs?.[targetEmpId]
+                          || currentOrg?.settings?.weekOffDays
+                          || [0]; // default Sunday
+                        const isEmpWeekOff = empWeekOffs.includes(dayOfWeek);
+
+                        if ((isEmpWeekOff || isOverrideWeekOff) && !isOverrideWorking) {
+                          continue; // Week-Off
+                        }
 
                         const punch = attendanceRecords.find(
                           (a) => a.employee_id === targetEmpId && a.date === dStr
@@ -5285,11 +5340,24 @@ export default function App() {
                           const dateObj = new Date(selectedCalYear, selectedCalMonth - 1, d);
                           const dayOfWeek = dateObj.getDay();
                           const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
-                          const isSunday = dayOfWeek === 0;
                           const isFuture = dStr > todayStr;
                           const isToday = dStr === todayStr;
                           const isBeforeJoining = dStr < joiningDateStr;
                           const matchingHoliday = holidays.find((h) => h.date === dStr);
+
+                          const customOverride = currentOrg?.settings?.customDayOverrides?.[dStr]
+                            || currentOrg?.settings?.customDayOverrides?.[`${targetEmpId}_${dStr}`];
+                          const isOverrideWorking = customOverride?.type === 'working';
+                          const isOverrideWeekOff = customOverride?.type === 'week_off';
+                          const isOverrideHol = customOverride?.type === 'holiday';
+
+                          const empWeekOffs: number[] = currentOrg?.settings?.employeeWeekOffs?.[targetEmpId]
+                            || currentOrg?.settings?.weekOffDays
+                            || [0]; // default Sunday
+                          const isWeeklyOff = empWeekOffs.includes(dayOfWeek);
+
+                          const isEffectiveWeekOff = (isWeeklyOff || isOverrideWeekOff) && !isOverrideWorking;
+                          const isEffectiveHoliday = (matchingHoliday || isOverrideHol) && !isOverrideWorking;
 
                           const punch = attendanceRecords.find(
                             (a) => a.employee_id === targetEmpId && a.date === dStr
@@ -5303,14 +5371,15 @@ export default function App() {
                             status = 'before_joining';
                             statusLabel = 'Before Joining';
                             statusColor = '#475569';
-                          } else if (matchingHoliday) {
+                          } else if (isEffectiveHoliday) {
                             status = 'holiday';
-                            statusLabel = `🌴 Holiday: ${matchingHoliday.name}`;
+                            const holName = matchingHoliday?.name || customOverride?.name || 'Declared Holiday';
+                            statusLabel = `🎉 Holiday: ${holName}`;
                             statusColor = '#fbbf24';
-                          } else if (isSunday) {
+                          } else if (isEffectiveWeekOff) {
                             status = 'week_off';
-                            statusLabel = 'Week Off';
-                            statusColor = '#475569';
+                            statusLabel = customOverride?.name ? `🌴 Week Off (${customOverride.name})` : '🌴 Week Off';
+                            statusColor = '#64748b';
                           } else if (punch?.status === 'present' || punch?.check_in_time) {
                             status = 'present';
                             const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
@@ -5341,7 +5410,8 @@ export default function App() {
                             matchingHoliday,
                             isToday,
                             isFuture,
-                            isSunday,
+                            isSunday: dayOfWeek === 0,
+                            isEffectiveWeekOff,
                             isBeforeJoining,
                             inspectedCalendarEmp
                           };
@@ -5354,12 +5424,13 @@ export default function App() {
                               style={[
                                 styles.calDayRow,
                                 isToday && styles.calDayRowToday,
-                                matchingHoliday && { borderColor: '#f59e0b' },
+                                (matchingHoliday || isOverrideHol) && { borderColor: '#f59e0b' },
+                                isEffectiveWeekOff && { borderColor: '#475569' },
                                 isBeforeJoining && { opacity: 0.5 }
                               ]}
                             >
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : matchingHoliday ? '#78350f' : '#1e293b' }]}>
+                                <View style={[styles.calDayBadge, { backgroundColor: isToday ? '#0284c7' : (matchingHoliday || isOverrideHol) ? '#78350f' : isEffectiveWeekOff ? '#334155' : '#1e293b' }]}>
                                   <Text style={styles.calDayNum}>{d}</Text>
                                   <Text style={styles.calDayName}>{dayName}</Text>
                                 </View>
@@ -5402,7 +5473,192 @@ export default function App() {
                 );
               })()}
 
-              {/* VIEW B: COMPANY HOLIDAY SCHEDULE */}
+              {/* VIEW B: TEAM DAILY ROSTER (NEW - AS PER WEB) */}
+              {calSubTab === 'roster' && (() => {
+                const selectedDateObj = new Date(rosterDate);
+                const dayOfWeek = selectedDateObj.getDay();
+                const dayName = selectedDateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+                const isSelectedToday = rosterDate === todayStr;
+
+                const filteredRosterEmps = teamProfiles.filter((p) => {
+                  if (!rosterSearch.trim()) return true;
+                  const q = rosterSearch.toLowerCase();
+                  return (
+                    p.first_name?.toLowerCase().includes(q) ||
+                    p.last_name?.toLowerCase().includes(q) ||
+                    p.designation?.toLowerCase().includes(q) ||
+                    p.department?.toLowerCase().includes(q)
+                  );
+                });
+
+                return (
+                  <View style={{ marginTop: 12 }}>
+                    {/* Date Switcher Bar */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', padding: 8, borderRadius: 10, marginBottom: 10 }}>
+                      <TouchableOpacity
+                        style={styles.calNavBtn}
+                        onPress={() => {
+                          const prev = new Date(rosterDate);
+                          prev.setDate(prev.getDate() - 1);
+                          setRosterDate(prev.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+                        }}
+                      >
+                        <Text style={styles.calNavBtnText}>◀</Text>
+                      </TouchableOpacity>
+
+                      <View style={{ alignItems: 'center' }}>
+                        <Text style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                          {formatDisplayDate(rosterDate)} ({dayName}) {isSelectedToday ? '• TODAY' : ''}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#38bdf8' }}>
+                          Shift: {currentOrg?.settings?.shiftStart || '09:30'} - {currentOrg?.settings?.shiftEnd || '18:30'} IST
+                        </Text>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                        {!isSelectedToday && (
+                          <TouchableOpacity
+                            style={{ backgroundColor: '#0284c7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+                            onPress={() => setRosterDate(todayStr)}
+                          >
+                            <Text style={{ fontSize: 10, color: '#fff', fontWeight: 'bold' }}>Today</Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                          style={styles.calNavBtn}
+                          onPress={() => {
+                            const next = new Date(rosterDate);
+                            next.setDate(next.getDate() + 1);
+                            setRosterDate(next.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+                          }}
+                        >
+                          <Text style={styles.calNavBtnText}>▶</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Roster Search Bar */}
+                    <TextInput
+                      style={[styles.textInput, { marginBottom: 10 }]}
+                      value={rosterSearch}
+                      onChangeText={setRosterSearch}
+                      placeholder="Filter roster by employee or department..."
+                      placeholderTextColor="#64748b"
+                    />
+
+                    {/* Roster Employee Cards */}
+                    <View style={{ gap: 8 }}>
+                      {filteredRosterEmps.map((emp) => {
+                        const punch = attendanceRecords.find(
+                          (a) => a.employee_id === emp.id && a.date === rosterDate
+                        );
+
+                        const matchingHoliday = holidays.find((h) => h.date === rosterDate);
+                        const customOverride = currentOrg?.settings?.customDayOverrides?.[rosterDate]
+                          || currentOrg?.settings?.customDayOverrides?.[`${emp.id}_${rosterDate}`];
+
+                        const isOverrideWorking = customOverride?.type === 'working';
+                        const isOverrideWeekOff = customOverride?.type === 'week_off';
+                        const isOverrideHol = customOverride?.type === 'holiday';
+
+                        const empWeekOffs: number[] = currentOrg?.settings?.employeeWeekOffs?.[emp.id]
+                          || currentOrg?.settings?.weekOffDays
+                          || [0];
+                        const isWeeklyOff = empWeekOffs.includes(dayOfWeek);
+
+                        const isEffectiveWeekOff = (isWeeklyOff || isOverrideWeekOff) && !isOverrideWorking;
+                        const isEffectiveHoliday = (matchingHoliday || isOverrideHol) && !isOverrideWorking;
+
+                        const isBeforeJoining = emp.joining_date && rosterDate < emp.joining_date;
+                        const isFuture = rosterDate > todayStr;
+
+                        let rStatus = 'future';
+                        let rLabel = 'Upcoming';
+                        let rColor = '#64748b';
+
+                        if (isBeforeJoining) {
+                          rStatus = 'before_joining';
+                          rLabel = 'Before Joining';
+                          rColor = '#475569';
+                        } else if (isEffectiveHoliday) {
+                          rStatus = 'holiday';
+                          rLabel = `🎉 Holiday: ${matchingHoliday?.name || customOverride?.name || 'Declared Holiday'}`;
+                          rColor = '#fbbf24';
+                        } else if (isEffectiveWeekOff) {
+                          rStatus = 'week_off';
+                          rLabel = customOverride?.name ? `🌴 Week Off (${customOverride.name})` : '🌴 Week Off';
+                          rColor = '#64748b';
+                        } else if (punch?.status === 'present' || punch?.check_in_time) {
+                          rStatus = 'present';
+                          const cin = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
+                          rLabel = `✓ Present (${cin})`;
+                          rColor = '#10b981';
+                        } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                          rStatus = 'regularized';
+                          rLabel = '★ Regularized';
+                          rColor = '#06b6d4';
+                        } else if (punch?.regularization_status === 'pending') {
+                          rStatus = 'pending';
+                          rLabel = '⏳ Reg. Pending';
+                          rColor = '#f59e0b';
+                        } else if (!isFuture) {
+                          rStatus = 'absent';
+                          rLabel = '✗ Absent';
+                          rColor = '#f43f5e';
+                        }
+
+                        const approverUuid = punch?.approved_by || punch?.regularized_by;
+                        const approverProfile = approverUuid ? teamProfiles.find((x) => x.id === approverUuid) : null;
+
+                        return (
+                          <View
+                            key={emp.id}
+                            style={[
+                              styles.teamCard,
+                              { padding: 10 },
+                              rStatus === 'present' && { borderColor: '#10b98140' },
+                              rStatus === 'absent' && { borderColor: '#f43f5e40' }
+                            ]}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <View style={{ flex: 1, paddingRight: 8 }}>
+                                <Text style={styles.teamName}>
+                                  {emp.first_name} {emp.last_name}
+                                </Text>
+                                <Text style={styles.teamDesig}>
+                                  {emp.designation || 'Staff'} • {emp.department || 'Operations'}
+                                </Text>
+                                {approverProfile && (
+                                  <Text style={{ fontSize: 9.5, color: '#38bdf8', fontWeight: 'bold', marginTop: 2 }}>
+                                    ✓ Approved By: {approverProfile.first_name} {approverProfile.last_name}
+                                  </Text>
+                                )}
+                              </View>
+
+                              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                                <View style={[styles.statusBadge, { backgroundColor: rColor + '20', borderColor: rColor, paddingHorizontal: 8, paddingVertical: 3 }]}>
+                                  <Text style={{ color: rColor, fontSize: 10, fontWeight: 'bold' }}>{rLabel}</Text>
+                                </View>
+
+                                {rStatus === 'absent' && canApprove && !isBeforeJoining && (
+                                  <TouchableOpacity
+                                    style={{ backgroundColor: '#0284c7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 2 }}
+                                    onPress={() => handleDirectRegularize(emp.id, rosterDate)}
+                                  >
+                                    <Text style={{ fontSize: 9.5, color: '#fff', fontWeight: 'bold' }}>⚡ Mark Present</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* VIEW C: COMPANY HOLIDAY SCHEDULE */}
               {calSubTab === 'holidays' && (
                 <View style={{ marginTop: 12 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -6600,6 +6856,308 @@ export default function App() {
           <Text style={[styles.navLabel, activeTab === 'hub' && styles.navLabelActive]}>Hub/Profile</Text>
         </TouchableOpacity>
       </View>
+
+      {/* ========================================================================= */}
+      {/* MODAL 0: CALENDAR POLICIES & CUSTOMIZATION (HR / SUPERADMIN) */}
+      {/* ========================================================================= */}
+      <Modal visible={isCalendarPoliciesModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '90%', paddingBottom: 14 }]}>
+            {/* Pinned Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 6 }}>
+              <View style={{ flex: 1, paddingRight: 6 }}>
+                <Text style={styles.modalTitle}>Calendar & Shift Policies</Text>
+                <Text style={styles.modalSub}>{currentOrg?.name} &bull; Supabase Live Sync</Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsCalendarPoliciesModal(false)} style={{ padding: 4 }}>
+                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Sub-tab navigation */}
+            <View style={{ flexDirection: 'row', gap: 6, marginVertical: 6, width: '100%' }}>
+              <TouchableOpacity
+                style={[styles.filterTab, calPolicyTab === 'shift' && styles.filterTabActive, { flex: 1 }]}
+                onPress={() => setCalPolicyTab('shift')}
+              >
+                <Text style={[styles.filterTabText, calPolicyTab === 'shift' && styles.filterTabTextActive, { textAlign: 'center', fontSize: 10 }]}>
+                  ⏰ Shift & Offs
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterTab, calPolicyTab === 'emp_weekoffs' && styles.filterTabActive, { flex: 1 }]}
+                onPress={() => setCalPolicyTab('emp_weekoffs')}
+              >
+                <Text style={[styles.filterTabText, calPolicyTab === 'emp_weekoffs' && styles.filterTabTextActive, { textAlign: 'center', fontSize: 10 }]}>
+                  👤 Employee Offs
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterTab, calPolicyTab === 'holidays' && styles.filterTabActive, { flex: 1 }]}
+                onPress={() => setCalPolicyTab('holidays')}
+              >
+                <Text style={[styles.filterTabText, calPolicyTab === 'holidays' && styles.filterTabTextActive, { textAlign: 'center', fontSize: 10 }]}>
+                  🌴 Holidays
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Body */}
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', flex: 1, marginVertical: 4 }}>
+              {/* TAB 1: SHIFT & GLOBAL WEEK-OFFS */}
+              {calPolicyTab === 'shift' && (
+                <View style={{ gap: 8 }}>
+                  <Text style={styles.inputLabel}>Shift Start Time (HH:MM IST)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={orgShiftStart}
+                    onChangeText={setOrgShiftStart}
+                    placeholder="09:30"
+                    placeholderTextColor="#64748b"
+                  />
+
+                  <Text style={styles.inputLabel}>Shift End Time (HH:MM IST)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={orgShiftEnd}
+                    onChangeText={setOrgShiftEnd}
+                    placeholder="18:30"
+                    placeholderTextColor="#64748b"
+                  />
+
+                  <Text style={styles.inputLabel}>Late Grace Period (Minutes)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={orgGracePeriod}
+                    onChangeText={setOrgGracePeriod}
+                    placeholder="15"
+                    placeholderTextColor="#64748b"
+                    keyboardType="numeric"
+                  />
+
+                  <Text style={[styles.inputLabel, { marginTop: 6 }]}>Default Organization Week-Off Days:</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {[
+                      { num: 0, label: 'Sun' },
+                      { num: 1, label: 'Mon' },
+                      { num: 2, label: 'Tue' },
+                      { num: 3, label: 'Wed' },
+                      { num: 4, label: 'Thu' },
+                      { num: 5, label: 'Fri' },
+                      { num: 6, label: 'Sat' }
+                    ].map((d) => {
+                      const isChecked = calPolicyOrgWeekOffs.includes(d.num);
+                      return (
+                        <TouchableOpacity
+                          key={d.num}
+                          style={[
+                            styles.filterTab,
+                            isChecked && styles.filterTabActive,
+                            { paddingHorizontal: 12, paddingVertical: 6 }
+                          ]}
+                          onPress={() => {
+                            setCalPolicyOrgWeekOffs((prev) =>
+                              isChecked ? prev.filter((x) => x !== d.num) : [...prev, d.num]
+                            );
+                          }}
+                        >
+                          <Text style={[styles.filterTabText, isChecked && styles.filterTabTextActive]}>
+                            {isChecked ? '✓ ' : ''}{d.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* TAB 2: EMPLOYEE-SPECIFIC WEEK-OFFS */}
+              {calPolicyTab === 'emp_weekoffs' && (
+                <View style={{ gap: 8 }}>
+                  <Text style={styles.inputLabel}>Select Employee to Configure:</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 4 }}>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {teamProfiles.map((emp) => {
+                        const isSelected = calPolicySelectedEmp === emp.id;
+                        return (
+                          <TouchableOpacity
+                            key={emp.id}
+                            style={[styles.calEmpPill, isSelected && styles.calEmpPillActive]}
+                            onPress={() => setCalPolicySelectedEmp(emp.id)}
+                          >
+                            <Text style={[styles.calEmpPillText, isSelected && styles.calEmpPillTextActive]}>
+                              {emp.first_name} {emp.last_name?.[0]}.
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+
+                  {calPolicySelectedEmp ? (() => {
+                    const activeEmp = teamProfiles.find((p) => p.id === calPolicySelectedEmp);
+                    const currentEmpOffs: number[] = calPolicyEmpWeekOffs[calPolicySelectedEmp] || [0];
+
+                    return (
+                      <View style={{ marginTop: 8, padding: 12, backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: isDarkMode ? '#334155' : '#e2e8f0' }}>
+                        <Text style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#0f172a' }}>
+                          Custom Weekly Off Days for {activeEmp?.first_name} {activeEmp?.last_name}:
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#94a3b8', marginVertical: 4 }}>
+                          Set custom rest days for this employee (overrides organization defaults).
+                        </Text>
+
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                          {[
+                            { num: 0, label: 'Sun' },
+                            { num: 1, label: 'Mon' },
+                            { num: 2, label: 'Tue' },
+                            { num: 3, label: 'Wed' },
+                            { num: 4, label: 'Thu' },
+                            { num: 5, label: 'Fri' },
+                            { num: 6, label: 'Sat' }
+                          ].map((d) => {
+                            const isChecked = currentEmpOffs.includes(d.num);
+                            return (
+                              <TouchableOpacity
+                                key={d.num}
+                                style={[
+                                  styles.filterTab,
+                                  isChecked && styles.filterTabActive,
+                                  { paddingHorizontal: 12, paddingVertical: 6 }
+                                ]}
+                                onPress={() => {
+                                  const updatedOffs = isChecked
+                                    ? currentEmpOffs.filter((x) => x !== d.num)
+                                    : [...currentEmpOffs, d.num];
+                                  setCalPolicyEmpWeekOffs((prev) => ({
+                                    ...prev,
+                                    [calPolicySelectedEmp]: updatedOffs
+                                  }));
+                                }}
+                              >
+                                <Text style={[styles.filterTabText, isChecked && styles.filterTabTextActive]}>
+                                  {isChecked ? '✓ ' : ''}{d.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    );
+                  })() : (
+                    <Text style={{ color: '#94a3b8', fontSize: 11, textAlign: 'center', marginVertical: 12 }}>
+                      Select an employee above to set their personal weekly rest schedule.
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {/* TAB 3: CORPORATE HOLIDAYS */}
+              {calPolicyTab === 'holidays' && (
+                <View style={{ gap: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                      Declared Holidays ({holidays.length})
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.smallAddBtn, { backgroundColor: '#7c3aed' }]}
+                      onPress={() => setIsHolidayModal(true)}
+                    >
+                      <Text style={styles.smallAddBtnText}>+ Declare Holiday</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ gap: 6, marginTop: 6 }}>
+                    {holidays.map((hol) => (
+                      <View
+                        key={hol.id}
+                        style={{
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: 10,
+                          backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: isDarkMode ? '#334155' : '#e2e8f0'
+                        }}
+                      >
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#0f172a' }}>
+                            {hol.name}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: '#38bdf8' }}>
+                            {hol.date} &bull; {hol.type?.toUpperCase()}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: 'rgba(239, 68, 68, 0.15)', borderRadius: 6 }}
+                          onPress={() => handleDeleteHoliday(hol.id)}
+                        >
+                          <Text style={{ fontSize: 10, color: '#f87171', fontWeight: 'bold' }}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Pinned Sticky Footer */}
+            <View style={{ flexDirection: 'row', gap: 10, width: '100%', paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#334155' : '#e2e8f0' }}>
+              <TouchableOpacity
+                style={[styles.modalCloseBtn, { flex: 1, marginTop: 0 }]}
+                onPress={() => setIsCalendarPoliciesModal(false)}
+              >
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.loginBtn, { flex: 2, marginTop: 0, backgroundColor: '#4f46e5' }]}
+                disabled={isSavingCalPolicies}
+                onPress={async () => {
+                  if (!supabaseClient || !currentOrg) return;
+                  setIsSavingCalPolicies(true);
+                  try {
+                    const curSettings = currentOrg.settings || {};
+                    const newSettings = {
+                      ...curSettings,
+                      shiftStart: orgShiftStart.trim() || '09:30',
+                      shiftStartTime: orgShiftStart.trim() || '09:30',
+                      shiftEnd: orgShiftEnd.trim() || '18:30',
+                      shiftEndTime: orgShiftEnd.trim() || '18:30',
+                      gracePeriodMins: parseInt(orgGracePeriod) || 15,
+                      weekOffDays: calPolicyOrgWeekOffs,
+                      employeeWeekOffs: calPolicyEmpWeekOffs
+                    };
+
+                    const { error } = await supabaseClient
+                      .from('organizations')
+                      .update({ settings: newSettings })
+                      .eq('id', currentOrg.id);
+
+                    if (!error) {
+                      setCurrentOrg({ ...currentOrg, settings: newSettings });
+                      Alert.alert('Calendar Policies Saved ✓', 'Shift hours, default week-offs and employee schedules synchronized to cloud.');
+                      setIsCalendarPoliciesModal(false);
+                      refreshAllData(supabaseClient, currentOrg.id, userProfile?.id);
+                    } else {
+                      Alert.alert('Database Error', error.message);
+                    }
+                  } catch (e: any) {
+                    Alert.alert('Error', e?.message);
+                  } finally {
+                    setIsSavingCalPolicies(false);
+                  }
+                }}
+              >
+                <Text style={styles.loginBtnText}>{isSavingCalPolicies ? 'Saving...' : 'Save Policies ✓'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ========================================================================= */}
       {/* MODAL 1: ADD ORGANIZATION HOLIDAY (HR / SUPERADMIN) */}
