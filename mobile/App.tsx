@@ -362,7 +362,7 @@ export default function App() {
   const [calPolicyOrgWeekOffs, setCalPolicyOrgWeekOffs] = useState<number[]>([0]);
   const [calPolicyEmpWeekOffs, setCalPolicyEmpWeekOffs] = useState<{ [empId: string]: number[] }>({});
   const [isSavingCalPolicies, setIsSavingCalPolicies] = useState<boolean>(false);
-  const [noticesSubTab, setNoticesSubTab] = useState<'notices' | 'meetings'>('notices');
+  const [noticesSubTab, setNoticesSubTab] = useState<'notices' | 'letters' | 'meetings'>('notices');
   const [hubSubTab, setHubSubTab] = useState<'profile' | 'team' | 'standups' | 'offers'>('profile');
   const [approvalsTab, setApprovalsTab] = useState<'regularization' | 'leaves' | 'access'>('regularization');
 
@@ -470,6 +470,21 @@ export default function App() {
   const [newNoticePriority, setNewNoticePriority] = useState('high');
   const [newNoticeCategory, setNewNoticeCategory] = useState('announcement');
   const [isSubmittingNotice, setIsSubmittingNotice] = useState(false);
+
+  // Official Notification Letters State (Mobile)
+  const [isCreateLetterModal, setIsCreateLetterModal] = useState<boolean>(false);
+  const [letterType, setLetterType] = useState<'warning' | 'appreciation' | 'experience' | 'directive' | 'notice'>('warning');
+  const [letterRecipientType, setLetterRecipientType] = useState<'all' | 'individual'>('individual');
+  const [letterRecipientId, setLetterRecipientId] = useState<string>('');
+  const [letterRefNumber, setLetterRefNumber] = useState<string>('');
+  const [letterSubject, setLetterSubject] = useState<string>('');
+  const [letterContent, setLetterContent] = useState<string>('');
+  const [letterSignatoryName, setLetterSignatoryName] = useState<string>('');
+  const [letterSignatoryRole, setLetterSignatoryRole] = useState<string>('');
+  const [letterIsDigitallyStamped, setLetterIsDigitallyStamped] = useState<boolean>(true);
+  const [isSubmittingLetter, setIsSubmittingLetter] = useState<boolean>(false);
+  const [isExportingLetterPdf, setIsExportingLetterPdf] = useState<boolean>(false);
+  const [letterTypeFilter, setLetterTypeFilter] = useState<string>('all');
 
   // Profile Edit Modal State
   const [isEditProfileModal, setIsEditProfileModal] = useState(false);
@@ -3133,6 +3148,499 @@ export default function App() {
      userProfile?.email?.toLowerCase() === 'sajal@vedotrix.com' ||
      userProfile?.email?.toLowerCase() === 'sajalsaxenagola@gmail.com')
   );
+
+  // Authority check for issuing formal Notification Letters
+  const canCreateLetterMobile = isPrivileged || isManager || (teamProfiles && teamProfiles.some((p) => p.manager_id === userProfile?.id));
+
+  // Helper to parse letter metadata from Supabase attachment_url JSON string
+  const parseLetterMeta = (n: any) => {
+    if (!n) return null;
+    if (n.attachment_url && typeof n.attachment_url === 'string' && n.attachment_url.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(n.attachment_url);
+        if (parsed && typeof parsed === 'object' && (parsed.isLetter || parsed.refNumber)) {
+          return parsed;
+        }
+      } catch {}
+    }
+    return null;
+  };
+
+  // Split notices into Broadcast Circulars vs Formal Notification Letters
+  const { circularNotices, letterNotices } = useMemo(() => {
+    const circulars: any[] = [];
+    const letters: any[] = [];
+
+    notices.forEach((n: any) => {
+      const meta = parseLetterMeta(n);
+      if (meta) {
+        const isTargetedToMe =
+          meta.recipientType === 'all' ||
+          meta.recipientId === userProfile?.id ||
+          isPrivileged ||
+          isManager ||
+          n.author_id === userProfile?.id ||
+          (teamProfiles && teamProfiles.some((p) => p.manager_id === userProfile?.id && p.id === meta.recipientId));
+
+        if (isTargetedToMe) {
+          letters.push({ ...n, letterMeta: meta });
+        }
+      } else {
+        circulars.push(n);
+      }
+    });
+
+    return { circularNotices: circulars, letterNotices: letters };
+  }, [notices, userProfile?.id, isPrivileged, isManager, teamProfiles]);
+
+  const filteredLetterNotices = useMemo(() => {
+    return letterNotices.filter((l) => {
+      if (letterTypeFilter === 'all') return true;
+      const meta = l.letterMeta || parseLetterMeta(l) || {};
+      return meta.letterType === letterTypeFilter || l.category === letterTypeFilter;
+    });
+  }, [letterNotices, letterTypeFilter]);
+
+  // Standard corporate letter templates (Mobile)
+  const getStandardLetterTemplate = (type: string, emp?: any) => {
+    const orgName = currentOrg?.name || 'Vedotrix Technologies';
+    const targetName = emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() : '[Employee Name]';
+    const targetDesig = emp?.designation || '[Designation]';
+    const targetDept = emp?.department || '[Department]';
+    const todayStr = formatDisplayDate(getTodayISTDate());
+
+    if (type === 'warning') {
+      return {
+        subject: `Formal Notice Regarding Attendance & Work Adherence - ${targetName}`,
+        body: `Dear ${targetName},\n\nThis official notification letter is being issued to draw your immediate attention to repeated irregularities observed regarding attendance, scheduled shift adherence, or workplace guidelines over the recent period.\n\nAs an organization, ${orgName} holds high standards of punctuality, professionalism, and accountability. Repeated unplanned absences or unregularized check-ins cause substantial disruptions to team delivery milestones.\n\nYou are hereby advised to submit a formal clarification regarding the observed irregularities to the HR / Reporting Manager within 48 hours of receipt of this communication. Please treat this communication as a formal warning.\n\nContinued failure to meet the required work standards may lead to further administrative action in accordance with company policy. We trust that you will take this communication constructively and realign your workplace performance immediately.`
+      };
+    } else if (type === 'appreciation') {
+      return {
+        subject: `Letter of Commendation & Recognition - ${targetName}`,
+        body: `Dear ${targetName},\n\nOn behalf of the leadership and management team at ${orgName}, it gives us immense pleasure to present this official Letter of Appreciation in recognition of your exceptional performance, dedication, and exemplary contributions to our organization.\n\nYour work ethic, problem-solving mindset, and dedication during recent deliverables have set a benchmark of excellence for the entire team. Your initiative has played a key role in driving high-impact results for the organization.\n\nWe deeply value your commitment, creativity, and enthusiasm. Thank you for your continued dedication, and we look forward to achieving many more milestones together in the future.\n\nKeep up the outstanding work!`
+      };
+    } else if (type === 'experience') {
+      return {
+        subject: `Experience Certificate & Relieving Order - ${targetName}`,
+        body: `TO WHOMSOEVER IT MAY CONCERN\n\nThis is to certify that ${targetName} was employed with ${orgName} as a ${targetDesig} in the ${targetDept} department from ${emp?.joining_date ? formatDisplayDate(emp.joining_date) : '[Joining Date]'} to ${todayStr}.\n\nDuring their tenure with us, ${targetName} was found to be hardworking, disciplined, and dedicated to assigned responsibilities. They consistently demonstrated strong professional ethics and teamwork.\n\nAll organizational assets, documentation, and operational responsibilities have been duly handed over in accordance with company clearance protocols. ${targetName} is relieved from their duties with effect from the close of business hours on ${todayStr}.\n\nWe thank them for their valuable contributions to ${orgName} and wish them the very best in all their future personal and professional endeavors.`
+      };
+    } else if (type === 'directive') {
+      return {
+        subject: `Executive Policy Directive & Compliance Order`,
+        body: `Dear Team Members,\n\nThis executive notification letter sets forth official operational directives and statutory compliance protocols effective immediately across all departments at ${orgName}.\n\n1. Attendance & Shift Regularity: All team members are required to log their daily check-in through the official HRMS portal within the designated grace period.\n2. Leave Application Protocol: Planned leaves must be applied at least 48 hours in advance and approved by the respective Reporting Manager.\n3. Confidentiality & Intellectual Property: All proprietary codebase, customer information, and trade secrets remain strictly confidential in accordance with non-disclosure obligations.\n\nAll Department Heads and Team Managers are instructed to ensure strict compliance with this directive across their teams.`
+      };
+    } else {
+      return {
+        subject: `Official Corporate Notice & Executive Order`,
+        body: `Dear All Employees / Team Members,\n\nThis official notification is issued to communicate important organizational announcements and operational updates regarding company operations at ${orgName}.\n\nPlease review the attached guidelines thoroughly and contact HR or your Department Lead for any necessary clarifications.\n\nWe appreciate your ongoing dedication and cooperation.`
+      };
+    }
+  };
+
+  const handleOpenCreateLetterMobile = () => {
+    const nextRef = `REF: ${currentOrg?.orgCode || 'ORG'}/NL/${new Date().getFullYear()}/${String(letterNotices.length + 1).padStart(3, '0')}`;
+    setLetterRefNumber(nextRef);
+    setLetterType('warning');
+    setLetterRecipientType('individual');
+    const firstEmp = teamProfiles[0];
+    setLetterRecipientId(firstEmp?.id || '');
+
+    const tpl = getStandardLetterTemplate('warning', firstEmp);
+    setLetterSubject(tpl.subject);
+    setLetterContent(tpl.body);
+
+    setLetterSignatoryName(`${userProfile?.first_name || ''} ${userProfile?.last_name || ''}`.trim());
+    setLetterSignatoryRole(userProfile?.designation || userProfile?.role?.toUpperCase() || 'Authorized Signatory');
+    setLetterIsDigitallyStamped(true);
+    setIsCreateLetterModal(true);
+  };
+
+  const handleCreateLetterMobile = async () => {
+    if (!letterSubject.trim() || !letterContent.trim() || !letterRefNumber.trim()) {
+      Alert.alert('Required', 'Please fill in Reference Number, Subject, and Letter Content.');
+      return;
+    }
+    if (!supabaseClient || !currentOrg) return;
+
+    setIsSubmittingLetter(true);
+    try {
+      const newId = generateUUID();
+      const targetEmp = letterRecipientType === 'individual' ? teamProfiles.find((p) => p.id === letterRecipientId) : null;
+      const recipientName = targetEmp ? `${targetEmp.first_name || ''} ${targetEmp.last_name || ''}`.trim() : 'All Employees';
+      const recipientDesig = targetEmp?.designation || '';
+      const recipientDept = targetEmp?.department || '';
+      const recipientEmail = targetEmp?.email || '';
+
+      const authorName = `${userProfile?.first_name || ''} ${userProfile?.last_name || ''}`.trim() || 'HR';
+      const signName = letterSignatoryName.trim() || authorName;
+      const signRole = letterSignatoryRole.trim() || userProfile?.role?.toUpperCase() || 'Authorized Signatory';
+
+      const letterPayload = {
+        isLetter: true,
+        letterType,
+        refNumber: letterRefNumber.trim(),
+        recipientType: letterRecipientType,
+        recipientId: targetEmp ? targetEmp.id : 'all',
+        recipientName,
+        recipientDesig,
+        recipientDept,
+        recipientEmail,
+        signatoryName: signName,
+        signatoryRole: signRole,
+        isDigitallyStamped: letterIsDigitallyStamped,
+        stampDate: new Date().toISOString()
+      };
+
+      const { error } = await supabaseClient.from('notices').insert({
+        id: newId,
+        org_id: currentOrg.id,
+        title: letterSubject.trim(),
+        content: letterContent.trim(),
+        priority: letterType === 'warning' ? 'high' : 'medium',
+        category: letterType === 'directive' ? 'directive' : letterType === 'warning' ? 'warning' : letterType === 'appreciation' ? 'appreciation' : letterType === 'experience' ? 'experience' : 'notice',
+        author_id: userProfile?.id,
+        author_name: authorName,
+        author_role: userProfile?.role || 'hr',
+        date: getTodayISTDate(),
+        attachment_url: JSON.stringify(letterPayload),
+        is_pinned: false
+      });
+
+      if (!error) {
+        Alert.alert('Letter Issued & Stamped 📜', `Official letter ${letterRefNumber} published with digital seal.`);
+        setIsCreateLetterModal(false);
+        setLetterSubject('');
+        setLetterContent('');
+        refreshAllData(supabaseClient, currentOrg.id);
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setIsSubmittingLetter(false);
+    }
+  };
+
+  const handleExportLetterPDFMobile = async (letter: any) => {
+    if (!letter) return;
+    setIsExportingLetterPdf(true);
+    try {
+      const meta = letter.letterMeta || parseLetterMeta(letter) || {};
+      const orgName = currentOrg?.name || 'Vedotrix Pulse HRMS';
+      const orgCode = currentOrg?.orgCode || 'VDX';
+      const orgAddress = currentOrg?.address || '';
+      const orgPhone = currentOrg?.phone || '';
+      const orgWebsite = currentOrg?.website || '';
+
+      const refNum = meta.refNumber || letter.ref_number || `REF: ${orgCode}/NL/2026/001`;
+      const issueDate = formatDisplayDate(letter.date || letter.created_at);
+      const recipientName = meta.recipientName || (meta.recipientType === 'all' ? 'All Staff Members & Employees' : 'Employee');
+      const recipientDesig = meta.recipientDesig ? `${meta.recipientDesig}${meta.recipientDept ? ` &bull; ${meta.recipientDept}` : ''}` : '';
+      const recipientEmail = meta.recipientEmail || '';
+      const signName = meta.signatoryName || letter.author_name || `${userProfile?.first_name || ''} ${userProfile?.last_name || ''}`.trim() || 'HR Department';
+      const signRole = meta.signatoryRole || letter.author_role?.toUpperCase() || 'Authorized Signatory';
+
+      let stampColor = '#1d4ed8'; // blue
+      if (meta.letterType === 'warning') stampColor = '#b91c1c'; // red
+      else if (meta.letterType === 'appreciation') stampColor = '#047857'; // emerald
+      else if (meta.letterType === 'experience') stampColor = '#6d28d9'; // violet
+
+      const isStamped = meta.isDigitallyStamped !== false;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${letter.title}</title>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 18mm;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              color: #0f172a;
+              margin: 0;
+              padding: 20px;
+              line-height: 1.6;
+              font-size: 13px;
+              background: #fff;
+            }
+            .header-bar {
+              height: 6px;
+              background: #1e293b;
+              margin: -20px -20px 18px -20px;
+            }
+            .sub-bar {
+              height: 3px;
+              background: #2563eb;
+              margin: -18px -20px 18px -20px;
+            }
+            .top-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 2px solid #0f172a;
+              padding-bottom: 14px;
+              margin-bottom: 14px;
+            }
+            .company-name {
+              font-size: 20px;
+              font-weight: 900;
+              color: #0f172a;
+              letter-spacing: -0.5px;
+            }
+            .company-sub {
+              font-size: 11px;
+              color: #64748b;
+              margin-top: 2px;
+            }
+            .company-contact {
+              text-align: right;
+              font-size: 10px;
+              color: #475569;
+              line-height: 1.4;
+            }
+            .ref-strip {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              background: #f8fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 8px 12px;
+              margin: 14px 0;
+              font-size: 11px;
+            }
+            .ref-num {
+              font-weight: 800;
+              font-family: monospace;
+              color: #1e293b;
+            }
+            .ref-date {
+              color: #64748b;
+              font-weight: 600;
+            }
+            .to-block {
+              margin: 16px 0;
+              font-size: 12px;
+            }
+            .to-label {
+              font-size: 10px;
+              font-weight: 800;
+              color: #64748b;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              margin-bottom: 4px;
+            }
+            .to-name {
+              font-size: 14px;
+              font-weight: 800;
+              color: #0f172a;
+            }
+            .to-desig {
+              color: #475569;
+              font-size: 11.5px;
+            }
+            .subject-box {
+              background: #f1f5f9;
+              border-left: 4px solid #4f46e5;
+              padding: 10px 14px;
+              border-radius: 4px;
+              margin: 16px 0;
+              font-weight: 800;
+              font-size: 12.5px;
+              color: #0f172a;
+              text-transform: uppercase;
+            }
+            .letter-content {
+              font-size: 12px;
+              color: #334155;
+              line-height: 1.7;
+              white-space: pre-wrap;
+              margin: 18px 0 30px 0;
+            }
+            .closing-row {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-end;
+              margin-top: 35px;
+              padding-top: 18px;
+              border-top: 1px solid #f1f5f9;
+              page-break-inside: avoid;
+            }
+            .sign-label {
+              font-size: 11px;
+              color: #64748b;
+              margin-bottom: 6px;
+            }
+            .signature-font {
+              font-family: 'Georgia', serif;
+              font-style: italic;
+              font-size: 18px;
+              font-weight: bold;
+              color: #1e3a8a;
+              margin-bottom: 4px;
+            }
+            .sign-name {
+              font-size: 13px;
+              font-weight: 800;
+              color: #0f172a;
+            }
+            .sign-role {
+              font-size: 11px;
+              color: #475569;
+            }
+            .stamp-seal {
+              width: 100px;
+              height: 100px;
+              border-radius: 50%;
+              border: 2px solid ${stampColor};
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              text-align: center;
+              transform: rotate(-5deg);
+              background: rgba(239, 246, 255, 0.3);
+              color: ${stampColor};
+              box-sizing: border-box;
+              padding: 4px;
+            }
+            .stamp-inner {
+              width: 88px;
+              height: 88px;
+              border-radius: 50%;
+              border: 1px dashed ${stampColor};
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              box-sizing: border-box;
+              padding: 2px;
+            }
+            .stamp-org {
+              font-size: 6px;
+              font-weight: 900;
+              text-transform: uppercase;
+              letter-spacing: 0.3px;
+            }
+            .stamp-verified {
+              font-size: 7px;
+              font-weight: 900;
+              margin: 2px 0;
+              letter-spacing: 0.5px;
+            }
+            .stamp-ref {
+              font-size: 5.5px;
+              font-family: monospace;
+              font-weight: bold;
+            }
+            .footer-legal {
+              margin-top: 35px;
+              padding-top: 8px;
+              border-top: 1px solid #e2e8f0;
+              display: flex;
+              justify-content: space-between;
+              font-size: 8.5px;
+              color: #94a3b8;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header-bar"></div>
+          <div class="sub-bar"></div>
+
+          <div class="top-header">
+            <div>
+              <div class="company-name">${orgName.toUpperCase()}</div>
+              <div class="company-sub">Org Code: <b>${orgCode}</b> &bull; Corporate Enterprise</div>
+            </div>
+            <div class="company-contact">
+              ${orgWebsite ? `<div>${orgWebsite}</div>` : ''}
+              ${orgPhone ? `<div>Tel: ${orgPhone}</div>` : ''}
+              ${orgAddress ? `<div>${orgAddress}</div>` : ''}
+            </div>
+          </div>
+
+          <div class="ref-strip">
+            <div class="ref-num">REF NO: ${refNum}</div>
+            <div class="ref-date">DATE: ${issueDate}</div>
+          </div>
+
+          <div class="to-block">
+            <div class="to-label">To:</div>
+            <div class="to-name">${recipientName}</div>
+            ${recipientDesig ? `<div class="to-desig">${recipientDesig}</div>` : ''}
+            ${recipientEmail ? `<div class="to-desig">${recipientEmail}</div>` : ''}
+            <div class="to-desig">${orgName}</div>
+          </div>
+
+          <div class="subject-box">
+            SUBJECT: ${letter.title}
+          </div>
+
+          <div class="letter-content">
+${letter.content}
+          </div>
+
+          <div class="closing-row">
+            <div>
+              <div class="sign-label">Yours faithfully / Sincerely,</div>
+              <div class="signature-font">${signName}</div>
+              <div class="sign-name">${signName}</div>
+              <div class="sign-role">${signRole} &bull; ${orgName}</div>
+            </div>
+
+            ${isStamped ? `
+              <div class="stamp-seal">
+                <div class="stamp-inner">
+                  <div class="stamp-org">&starf; ${orgCode} SEAL &starf;</div>
+                  <div class="stamp-verified">DIGITALLY VERIFIED</div>
+                  <div class="stamp-ref">${refNum.slice(-6)}</div>
+                  <div style="font-size: 5px; opacity: 0.8; margin-top: 1px;">PULSE HRMS</div>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="footer-legal">
+            <div>Electronically authenticated official document. Cryptographically logged on Vedotrix Pulse HRMS Cloud.</div>
+            <div>Page 1 of 1</div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      if (SafePrint && SafePrint.printToFileAsync) {
+        const file = await SafePrint.printToFileAsync({ html });
+        if (SafeSharing && SafeSharing.shareAsync) {
+          await SafeSharing.shareAsync(file.uri, {
+            UTI: '.pdf',
+            mimeType: 'application/pdf',
+            dialogTitle: `${refNum} - ${letter.title}`
+          });
+        } else {
+          await Share.share({
+            title: `${refNum} - ${letter.title}`,
+            message: `Official Letter ${refNum}: ${letter.title} (${orgName}).`
+          });
+        }
+      } else {
+        await Share.share({
+          title: `${refNum} - ${letter.title}`,
+          message: `Official Corporate Letter\nRef: ${refNum}\nSubject: ${letter.title}\n\n${letter.content}\n\nSigned by ${signName} (${signRole})`
+        });
+      }
+    } catch (e: any) {
+      console.log('Letter PDF generation error:', e);
+      Alert.alert('PDF Export Error', e?.message || 'Could not generate letterhead PDF.');
+    } finally {
+      setIsExportingLetterPdf(false);
+    }
+  };
 
   // Filter pending approvals (both manual regularizations & remote out-of-office punches)
   const pendingRegularizations = useMemo(() => {
@@ -6017,7 +6525,16 @@ export default function App() {
                   onPress={() => setNoticesSubTab('notices')}
                 >
                   <Text style={[styles.filterTabText, noticesSubTab === 'notices' && styles.filterTabTextActive]}>
-                    📢 Notice Board ({notices.length})
+                    📢 Notices ({circularNotices.length})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterTab, noticesSubTab === 'letters' && styles.filterTabActive]}
+                  onPress={() => setNoticesSubTab('letters')}
+                >
+                  <Text style={[styles.filterTabText, noticesSubTab === 'letters' && styles.filterTabTextActive]}>
+                    📜 Letters ({letterNotices.length})
                   </Text>
                 </TouchableOpacity>
 
@@ -6048,13 +6565,13 @@ export default function App() {
                   <Text style={styles.cardDesc}>Official company policies, announcements & alerts</Text>
 
                   <View style={{ gap: 10, marginTop: 10 }}>
-                    {notices.length === 0 ? (
+                    {circularNotices.length === 0 ? (
                       <View style={{ paddingVertical: 20, alignItems: 'center' }}>
                         <Text style={{ fontSize: 24, marginBottom: 4 }}>📢</Text>
                         <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Notices Published</Text>
                       </View>
                     ) : (
-                      notices.map((n) => (
+                      circularNotices.map((n) => (
                         <TouchableOpacity
                           key={n.id}
                           activeOpacity={0.7}
@@ -6086,7 +6603,158 @@ export default function App() {
                 </View>
               )}
 
-              {/* VIEW B: MEETINGS */}
+              {/* VIEW B: OFFICIAL NOTIFICATION LETTERS */}
+              {noticesSubTab === 'letters' && (
+                <View style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                      <Text style={styles.cardTitle}>Official Notification Letters</Text>
+                      <Text style={styles.cardDesc}>Corporate letterheads with digital seal & vector PDF</Text>
+                    </View>
+                    {canCreateLetterMobile && (
+                      <TouchableOpacity
+                        style={[styles.smallAddBtn, { backgroundColor: '#4f46e5' }]}
+                        onPress={handleOpenCreateLetterMobile}
+                      >
+                        <Text style={styles.smallAddBtnText}>+ Create Letter</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Filter Pills */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {[
+                        { id: 'all', label: 'All Letters' },
+                        { id: 'warning', label: '⚠️ Warning' },
+                        { id: 'appreciation', label: '🌟 Appreciation' },
+                        { id: 'experience', label: '🎓 Relieving' },
+                        { id: 'directive', label: '📑 Directive' },
+                        { id: 'notice', label: '📢 Order' }
+                      ].map((item) => (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={[
+                            styles.filterTab,
+                            letterTypeFilter === item.id && styles.filterTabActive,
+                            { paddingHorizontal: 10, paddingVertical: 4 }
+                          ]}
+                          onPress={() => setLetterTypeFilter(item.id)}
+                        >
+                          <Text style={[styles.filterTabText, letterTypeFilter === item.id && styles.filterTabTextActive, { fontSize: 10 }]}>
+                            {item.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </ScrollView>
+
+                  {/* Letters Feed */}
+                  <View style={{ gap: 10, marginTop: 4 }}>
+                    {filteredLetterNotices.length === 0 ? (
+                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 26, marginBottom: 4 }}>📜</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: 'bold' }}>No Notification Letters Found</Text>
+                        <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>
+                          {canCreateLetterMobile ? 'Tap "+ Create Letter" to issue formal notices.' : 'No letters issued under this filter.'}
+                        </Text>
+                      </View>
+                    ) : (
+                      filteredLetterNotices.map((letter) => {
+                        const meta = letter.letterMeta || parseLetterMeta(letter) || {};
+                        const refNum = meta.refNumber || `REF: ${currentOrg?.orgCode || 'VDX'}/NL/2026/001`;
+                        const isWarning = meta.letterType === 'warning';
+                        const isAppreciation = meta.letterType === 'appreciation';
+                        const isRelieving = meta.letterType === 'experience';
+
+                        const badgeBorderColor = isWarning ? '#ef4444' : isAppreciation ? '#10b981' : isRelieving ? '#a855f7' : '#3b82f6';
+                        const badgeBg = isWarning ? 'rgba(239, 68, 68, 0.12)' : isAppreciation ? 'rgba(16, 185, 129, 0.12)' : isRelieving ? 'rgba(168, 85, 247, 0.12)' : 'rgba(59, 130, 246, 0.12)';
+                        const badgeText = isWarning ? 'WARNING' : isAppreciation ? 'APPRECIATION' : isRelieving ? 'RELIEVING' : 'DIRECTIVE';
+
+                        const recipientTitle = meta.recipientType === 'all'
+                          ? 'All Employees (Broadcast)'
+                          : meta.recipientName ? `${meta.recipientName} (${meta.recipientDesig || 'Staff'})` : 'Employee';
+
+                        return (
+                          <View
+                            key={letter.id}
+                            style={[
+                              styles.noticeCard,
+                              { borderColor: isDarkMode ? '#334155' : '#cbd5e1', padding: 12 }
+                            ]}
+                          >
+                            {/* Header: Ref No & Badge */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                              <View style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                                <Text style={{ color: '#818cf8', fontSize: 10, fontFamily: 'monospace', fontWeight: 'bold' }}>
+                                  {refNum}
+                                </Text>
+                              </View>
+                              <View style={{ backgroundColor: badgeBg, borderColor: badgeBorderColor, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 }}>
+                                <Text style={{ color: badgeBorderColor, fontSize: 9, fontWeight: 'bold' }}>
+                                  {badgeText}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Recipient */}
+                            <Text style={{ fontSize: 11, color: isDarkMode ? '#94a3b8' : '#475569', marginBottom: 4 }}>
+                              To: <Text style={{ fontWeight: 'bold', color: isDarkMode ? '#f1f5f9' : '#0f172a' }}>{recipientTitle}</Text>
+                            </Text>
+
+                            {/* Title & Preview */}
+                            <Text style={[styles.noticeTitle, { fontSize: 13, marginBottom: 4 }]}>
+                              {letter.title}
+                            </Text>
+                            <Text style={[styles.noticeBody, { fontSize: 11, lineHeight: 16 }]} numberOfLines={2}>
+                              {letter.content}
+                            </Text>
+
+                            {/* Stamping Indicator */}
+                            {meta.isDigitallyStamped !== false && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)', borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start' }}>
+                                <Text style={{ color: '#10b981', fontSize: 9, fontWeight: 'bold' }}>
+                                  ★ Digitally Stamped & Verified
+                                </Text>
+                              </View>
+                            )}
+
+                            {/* Actions Footer */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: isDarkMode ? '#334155' : '#f1f5f9' }}>
+                              <Text style={{ fontSize: 9.5, color: '#94a3b8' }}>
+                                📅 {formatDisplayDate(letter.date || letter.created_at)}
+                              </Text>
+
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                <TouchableOpacity
+                                  style={{ backgroundColor: isDarkMode ? '#334155' : '#e2e8f0', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+                                  onPress={() => setSelectedNoticeForView(letter)}
+                                >
+                                  <Text style={{ fontSize: 10.5, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#334155' }}>
+                                    👁️ View
+                                  </Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  style={{ backgroundColor: '#4f46e5', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }}
+                                  disabled={isExportingLetterPdf}
+                                  onPress={() => handleExportLetterPDFMobile(letter)}
+                                >
+                                  <Text style={{ fontSize: 10.5, fontWeight: 'bold', color: '#fff' }}>
+                                    📄 PDF Export
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })
+                    )}
+                  </View>
+                </View>
+              )}
+
+              {/* VIEW C: MEETINGS */}
               {noticesSubTab === 'meetings' && (
                 <View style={{ marginTop: 12 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -7402,6 +8070,230 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
+      {/* MODAL 4B: CREATE NOTIFICATION LETTER (HR / SUPERADMIN / MANAGER) */}
+      {/* ========================================================================= */}
+      <Modal visible={isCreateLetterModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '90%', paddingBottom: 14 }]}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Issue Notification Letter</Text>
+                <Text style={styles.modalSub}>{currentOrg?.name} &bull; Digital Stamping & PDF</Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsCreateLetterModal(false)} style={{ padding: 4 }}>
+                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', marginVertical: 4 }}>
+              {/* 1. Letter Type Pills */}
+              <Text style={styles.inputLabel}>Letter Category *</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 }}>
+                {[
+                  { id: 'warning', label: '⚠️ Warning' },
+                  { id: 'appreciation', label: '🌟 Appreciation' },
+                  { id: 'experience', label: '🎓 Relieving' },
+                  { id: 'directive', label: '📑 Directive' },
+                  { id: 'notice', label: '📢 Order' }
+                ].map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.indPill, letterType === item.id && styles.indPillActive]}
+                    onPress={() => {
+                      setLetterType(item.id as any);
+                      const emp = letterRecipientType === 'individual' ? teamProfiles.find((p) => p.id === letterRecipientId) : undefined;
+                      const tpl = getStandardLetterTemplate(item.id, emp);
+                      setLetterSubject(tpl.subject);
+                      setLetterContent(tpl.body);
+                    }}
+                  >
+                    <Text style={[styles.indPillText, letterType === item.id && styles.indPillTextActive]}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* 2. Official Ref Number */}
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Official Reference Number *</Text>
+              <TextInput
+                style={[styles.textInput, { fontFamily: 'monospace', fontWeight: 'bold' }]}
+                value={letterRefNumber}
+                onChangeText={setLetterRefNumber}
+                placeholder="REF: VDX/NL/2026/001"
+                placeholderTextColor="#64748b"
+              />
+
+              {/* 3. Recipient Scope */}
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Recipient Scope *</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginVertical: 4 }}>
+                <TouchableOpacity
+                  style={[styles.indPill, letterRecipientType === 'individual' && styles.indPillActive, { flex: 1 }]}
+                  onPress={() => {
+                    setLetterRecipientType('individual');
+                    const emp = teamProfiles.find((p) => p.id === letterRecipientId) || teamProfiles[0];
+                    if (emp) setLetterRecipientId(emp.id);
+                    const tpl = getStandardLetterTemplate(letterType, emp);
+                    setLetterSubject(tpl.subject);
+                    setLetterContent(tpl.body);
+                  }}
+                >
+                  <Text style={[styles.indPillText, letterRecipientType === 'individual' && styles.indPillTextActive, { textAlign: 'center' }]}>
+                    👤 Specific Employee
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.indPill, letterRecipientType === 'all' && styles.indPillActive, { flex: 1 }]}
+                  onPress={() => {
+                    setLetterRecipientType('all');
+                    const tpl = getStandardLetterTemplate(letterType, undefined);
+                    setLetterSubject(tpl.subject);
+                    setLetterContent(tpl.body);
+                  }}
+                >
+                  <Text style={[styles.indPillText, letterRecipientType === 'all' && styles.indPillTextActive, { textAlign: 'center' }]}>
+                    👥 All Staff (Broadcast)
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* If individual employee */}
+              {letterRecipientType === 'individual' && (
+                <View style={{ marginVertical: 6 }}>
+                  <Text style={styles.inputLabel}>Select Employee Recipient:</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 4 }}>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {teamProfiles.map((emp) => {
+                        const isSelected = letterRecipientId === emp.id;
+                        return (
+                          <TouchableOpacity
+                            key={emp.id}
+                            style={[
+                              styles.filterTab,
+                              isSelected && styles.filterTabActive,
+                              { paddingHorizontal: 10, paddingVertical: 5 }
+                            ]}
+                            onPress={() => {
+                              setLetterRecipientId(emp.id);
+                              const tpl = getStandardLetterTemplate(letterType, emp);
+                              setLetterSubject(tpl.subject);
+                              setLetterContent(tpl.body);
+                            }}
+                          >
+                            <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive, { fontSize: 11 }]}>
+                              {emp.first_name} {emp.last_name} ({emp.designation || 'Staff'})
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* 4. Subject */}
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Letter Subject *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={letterSubject}
+                onChangeText={setLetterSubject}
+                placeholder="e.g. Formal Notice Regarding Attendance Adherence"
+                placeholderTextColor="#64748b"
+              />
+
+              {/* 5. Content */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                <Text style={styles.inputLabel}>Letter Content *</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    const emp = letterRecipientType === 'individual' ? teamProfiles.find((p) => p.id === letterRecipientId) : undefined;
+                    const tpl = getStandardLetterTemplate(letterType, emp);
+                    setLetterSubject(tpl.subject);
+                    setLetterContent(tpl.body);
+                  }}
+                >
+                  <Text style={{ color: '#38bdf8', fontSize: 10, fontWeight: 'bold' }}>⚡ Reset to Template</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={[styles.textInput, { height: 140, textAlignVertical: 'top', fontSize: 12, lineHeight: 18 }]}
+                value={letterContent}
+                onChangeText={setLetterContent}
+                placeholder="Official letter body..."
+                placeholderTextColor="#64748b"
+                multiline
+              />
+
+              {/* 6. Signatory Details */}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Signatory Name</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={letterSignatoryName}
+                    onChangeText={setLetterSignatoryName}
+                    placeholder="Sajal Kumar"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Signatory Role</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={letterSignatoryRole}
+                    onChangeText={setLetterSignatoryRole}
+                    placeholder="Director / HR"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
+
+              {/* 7. Digital Stamp Toggle */}
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  backgroundColor: letterIsDigitallyStamped ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                  borderColor: letterIsDigitallyStamped ? '#10b981' : '#334155',
+                  borderWidth: 1,
+                  borderRadius: 10,
+                  padding: 10,
+                  marginTop: 10
+                }}
+                onPress={() => setLetterIsDigitallyStamped(!letterIsDigitallyStamped)}
+              >
+                <Text style={{ fontSize: 16 }}>{letterIsDigitallyStamped ? '☑️' : '◻️'}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: 'bold', color: letterIsDigitallyStamped ? '#10b981' : '#94a3b8' }}>
+                    Apply Cryptographic Digital Seal & Stamp
+                  </Text>
+                  <Text style={{ fontSize: 9.5, color: '#64748b' }}>
+                    Embeds official corporate seal verification on PDF exports
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {/* Actions */}
+            <TouchableOpacity
+              style={[styles.loginBtn, { marginTop: 10, backgroundColor: '#4f46e5' }]}
+              onPress={handleCreateLetterMobile}
+              disabled={isSubmittingLetter}
+            >
+              <Text style={styles.loginBtnText}>{isSubmittingLetter ? 'Issuing Letter...' : 'Issue & Publish Letter'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsCreateLetterModal(false)}>
+              <Text style={styles.modalCloseBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
       {/* MODAL 5: SUBMIT EOD STANDUP */}
       {/* ========================================================================= */}
       <Modal visible={isStandupModal} animationType="slide" transparent>
@@ -8546,83 +9438,192 @@ export default function App() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL 16: READ FULL OFFICIAL NOTICE */}
+      {/* MODAL 16: READ FULL OFFICIAL NOTICE & EXECUTIVE LETTERHEAD */}
       {/* ========================================================================= */}
       <Modal visible={selectedNoticeForView !== null} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxHeight: '85%' }]}>
-            {selectedNoticeForView && (
-              <>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 8 }}>
-                  <View style={[
-                    styles.noticePriorityBadge,
-                    selectedNoticeForView.priority === 'urgent' || selectedNoticeForView.priority === 'critical' ? styles.priorityUrgent :
-                    selectedNoticeForView.priority === 'high' ? styles.priorityHigh : styles.priorityNormal
-                  ]}>
-                    <Text style={styles.noticePriorityText}>{(selectedNoticeForView.priority || 'NORMAL').toUpperCase()}</Text>
-                  </View>
-                  <Text style={styles.noticeCategoryText}>{selectedNoticeForView.category?.toUpperCase() || 'GENERAL'}</Text>
-                </View>
+          <View style={[styles.modalCard, { maxHeight: '90%', paddingBottom: 12 }]}>
+            {selectedNoticeForView && (() => {
+              const letterMeta = selectedNoticeForView.letterMeta || parseLetterMeta(selectedNoticeForView);
+              const isLetterDoc = Boolean(letterMeta);
 
-                <Text style={[styles.modalTitle, { textAlign: 'left', width: '100%', fontSize: 18, marginBottom: 4 }]}>
-                  {selectedNoticeForView.title}
-                </Text>
+              if (isLetterDoc) {
+                const refNum = letterMeta.refNumber || `REF: ${currentOrg?.orgCode || 'VDX'}/NL/2026/001`;
+                const recipientText = letterMeta.recipientType === 'all'
+                  ? 'ALL EMPLOYEES & STAFF'
+                  : letterMeta.recipientName || 'Employee';
+                const signName = letterMeta.signatoryName || selectedNoticeForView.author_name || 'Management';
+                const signRole = letterMeta.signatoryRole || selectedNoticeForView.author_role?.toUpperCase() || 'Authorized Signatory';
 
-                <Text style={{ fontSize: 11, color: '#94a3b8', width: '100%', marginBottom: 12 }}>
-                  📅 Published {formatNoticeDate(selectedNoticeForView)} • By {selectedNoticeForView.author_name || 'HR Management'} ({selectedNoticeForView.author_role?.toUpperCase() || 'ADMIN'})
-                </Text>
+                return (
+                  <>
+                    {/* Letterhead Top Banner */}
+                    <View style={{ width: '100%', borderBottomWidth: 2, borderBottomColor: isDarkMode ? '#38bdf8' : '#1e293b', paddingBottom: 8, marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1, paddingRight: 6 }}>
+                          <Text style={{ fontSize: 16, fontWeight: '900', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                            {currentOrg?.name?.toUpperCase() || 'VEDOTRIX TECHNOLOGIES'}
+                          </Text>
+                          <Text style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 1 }}>
+                            Org Code: <Text style={{ fontWeight: 'bold', color: isDarkMode ? '#38bdf8' : '#0284c7' }}>{currentOrg?.orgCode}</Text> &bull; Official Letterhead
+                          </Text>
+                        </View>
+                        <TouchableOpacity onPress={() => setSelectedNoticeForView(null)} style={{ padding: 4 }}>
+                          <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
 
-                <ScrollView style={{ width: '100%', maxHeight: 320, marginVertical: 6 }} showsVerticalScrollIndicator={false}>
-                  <Text style={[styles.noticeFullContent, { fontSize: 13, lineHeight: 22, color: isDarkMode ? '#e2e8f0' : '#1e293b' }]}>
-                    {selectedNoticeForView.content}
-                  </Text>
-                </ScrollView>
+                    {/* Reference & Date Strip */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', backgroundColor: isDarkMode ? 'rgba(30, 41, 59, 0.6)' : '#f8fafc', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginVertical: 4 }}>
+                      <Text style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 'bold', color: isDarkMode ? '#818cf8' : '#4338ca' }}>
+                        {refNum}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: '600' }}>
+                        {formatDisplayDate(selectedNoticeForView.date || selectedNoticeForView.created_at)}
+                      </Text>
+                    </View>
 
-                {(() => {
-                  const urlMatch = selectedNoticeForView.content?.match(/https?:\/\/[^\s]+/);
-                  const targetUrl = selectedNoticeForView.action_url || (urlMatch ? urlMatch[0] : null);
-                  const isApk = targetUrl && (targetUrl.includes('.apk') || targetUrl.includes('expo.dev/artifacts'));
-                  if (!targetUrl) return null;
-                  return (
+                    {/* Scrollable Letter Body */}
+                    <ScrollView style={{ width: '100%', maxHeight: 340, marginVertical: 6 }} showsVerticalScrollIndicator={false}>
+                      {/* Recipient */}
+                      <View style={{ marginVertical: 6 }}>
+                        <Text style={{ fontSize: 9.5, color: '#94a3b8', fontWeight: 'bold', textTransform: 'uppercase' }}>TO:</Text>
+                        <Text style={{ fontSize: 12.5, fontWeight: '800', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>{recipientText}</Text>
+                        {letterMeta.recipientDesig ? (
+                          <Text style={{ fontSize: 10.5, color: '#94a3b8' }}>
+                            {letterMeta.recipientDesig} {letterMeta.recipientDept ? `&bull; ${letterMeta.recipientDept}` : ''}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      {/* Subject */}
+                      <View style={{ backgroundColor: isDarkMode ? 'rgba(79, 70, 229, 0.15)' : '#f1f5f9', borderLeftWidth: 3, borderLeftColor: '#4f46e5', padding: 8, borderRadius: 4, marginVertical: 6 }}>
+                        <Text style={{ fontSize: 11.5, fontWeight: 'bold', color: isDarkMode ? '#c7d2fe' : '#1e1b4b', textTransform: 'uppercase' }}>
+                          SUBJECT: {selectedNoticeForView.title}
+                        </Text>
+                      </View>
+
+                      {/* Content */}
+                      <Text style={{ fontSize: 12, lineHeight: 20, color: isDarkMode ? '#e2e8f0' : '#334155', marginVertical: 6 }}>
+                        {selectedNoticeForView.content}
+                      </Text>
+
+                      {/* Closing & Digital Stamp */}
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#334155' : '#f1f5f9' }}>
+                        <View>
+                          <Text style={{ fontSize: 10, color: '#94a3b8' }}>Yours faithfully,</Text>
+                          <Text style={{ fontSize: 14, fontFamily: 'serif', fontStyle: 'italic', fontWeight: 'bold', color: isDarkMode ? '#38bdf8' : '#1e40af', marginVertical: 2 }}>
+                            {signName}
+                          </Text>
+                          <Text style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>{signName}</Text>
+                          <Text style={{ fontSize: 9.5, color: '#94a3b8' }}>{signRole} &bull; {currentOrg?.name}</Text>
+                        </View>
+
+                        {/* Digital Stamp Seal Graphic */}
+                        {letterMeta.isDigitallyStamped !== false && (
+                          <View style={{ width: 78, height: 78, borderRadius: 39, borderWidth: 2, borderColor: '#10b981', padding: 2, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-6deg' }], backgroundColor: 'rgba(16, 185, 129, 0.08)' }}>
+                            <View style={{ width: 70, height: 70, borderRadius: 35, borderWidth: 1, borderColor: '#10b981', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', padding: 2 }}>
+                              <Text style={{ fontSize: 5, fontWeight: '900', color: '#10b981', textTransform: 'uppercase' }}>★ {currentOrg?.orgCode || 'VDX'} SEAL ★</Text>
+                              <Text style={{ fontSize: 6, fontWeight: '900', color: '#10b981', marginVertical: 1 }}>DIGITALLY VERIFIED</Text>
+                              <Text style={{ fontSize: 5, fontFamily: 'monospace', fontWeight: 'bold', color: '#10b981' }}>{refNum.slice(-6)}</Text>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    </ScrollView>
+
+                    {/* PDF Export Button */}
                     <TouchableOpacity
-                      style={{
-                        backgroundColor: isApk ? '#f59e0b' : '#3b82f6',
-                        paddingVertical: 12,
-                        paddingHorizontal: 16,
-                        borderRadius: 12,
-                        marginTop: 10,
-                        width: '100%',
-                        alignItems: 'center',
-                        flexDirection: 'row',
-                        justifyContent: 'center',
-                        gap: 8,
-                        shadowColor: isApk ? '#f59e0b' : '#3b82f6',
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowOpacity: 0.3,
-                        shadowRadius: 8,
-                        elevation: 4
-                      }}
-                      onPress={() => {
-                        Linking.openURL(targetUrl).catch(() => {
-                          Alert.alert('Unable to open link', targetUrl);
-                        });
-                      }}
+                      style={[styles.loginBtn, { marginTop: 8, backgroundColor: '#4f46e5' }]}
+                      disabled={isExportingLetterPdf}
+                      onPress={() => handleExportLetterPDFMobile(selectedNoticeForView)}
                     >
-                      <Text style={{ color: '#0f172a', fontWeight: 'bold', fontSize: 13 }}>
-                        {isApk ? '🏹 Download & Install Festive Edition APK' : '🔗 Open Link'}
+                      <Text style={styles.loginBtnText}>
+                        {isExportingLetterPdf ? 'Generating PDF...' : '📄 Export / Share Official PDF'}
                       </Text>
                     </TouchableOpacity>
-                  );
-                })()}
 
-                <TouchableOpacity
-                  style={[styles.loginBtn, { marginTop: 10 }]}
-                  onPress={() => setSelectedNoticeForView(null)}
-                >
-                  <Text style={styles.loginBtnText}>Close Notice</Text>
-                </TouchableOpacity>
-              </>
-            )}
+                    <TouchableOpacity style={[styles.modalCloseBtn, { marginTop: 6 }]} onPress={() => setSelectedNoticeForView(null)}>
+                      <Text style={styles.modalCloseBtnText}>Close Letterhead</Text>
+                    </TouchableOpacity>
+                  </>
+                );
+              }
+
+              return (
+                <>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 8 }}>
+                    <View style={[
+                      styles.noticePriorityBadge,
+                      selectedNoticeForView.priority === 'urgent' || selectedNoticeForView.priority === 'critical' ? styles.priorityUrgent :
+                      selectedNoticeForView.priority === 'high' ? styles.priorityHigh : styles.priorityNormal
+                    ]}>
+                      <Text style={styles.noticePriorityText}>{(selectedNoticeForView.priority || 'NORMAL').toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.noticeCategoryText}>{selectedNoticeForView.category?.toUpperCase() || 'GENERAL'}</Text>
+                  </View>
+
+                  <Text style={[styles.modalTitle, { textAlign: 'left', width: '100%', fontSize: 18, marginBottom: 4 }]}>
+                    {selectedNoticeForView.title}
+                  </Text>
+
+                  <Text style={{ fontSize: 11, color: '#94a3b8', width: '100%', marginBottom: 12 }}>
+                    📅 Published {formatNoticeDate(selectedNoticeForView)} • By {selectedNoticeForView.author_name || 'HR Management'} ({selectedNoticeForView.author_role?.toUpperCase() || 'ADMIN'})
+                  </Text>
+
+                  <ScrollView style={{ width: '100%', maxHeight: 320, marginVertical: 6 }} showsVerticalScrollIndicator={false}>
+                    <Text style={[styles.noticeFullContent, { fontSize: 13, lineHeight: 22, color: isDarkMode ? '#e2e8f0' : '#1e293b' }]}>
+                      {selectedNoticeForView.content}
+                    </Text>
+                  </ScrollView>
+
+                  {(() => {
+                    const urlMatch = selectedNoticeForView.content?.match(/https?:\/\/[^\s]+/);
+                    const targetUrl = selectedNoticeForView.action_url || (urlMatch ? urlMatch[0] : null);
+                    const isApk = targetUrl && (targetUrl.includes('.apk') || targetUrl.includes('expo.dev/artifacts'));
+                    if (!targetUrl) return null;
+                    return (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: isApk ? '#f59e0b' : '#3b82f6',
+                          paddingVertical: 12,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          marginTop: 10,
+                          width: '100%',
+                          alignItems: 'center',
+                          flexDirection: 'row',
+                          justifyContent: 'center',
+                          gap: 8,
+                          shadowColor: isApk ? '#f59e0b' : '#3b82f6',
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.3,
+                          shadowRadius: 8,
+                          elevation: 4
+                        }}
+                        onPress={() => {
+                          Linking.openURL(targetUrl).catch(() => {
+                            Alert.alert('Unable to open link', targetUrl);
+                          });
+                        }}
+                      >
+                        <Text style={{ color: '#0f172a', fontWeight: 'bold', fontSize: 13 }}>
+                          {isApk ? '🏹 Download & Install Festive Edition APK' : '🔗 Open Link'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
+
+                  <TouchableOpacity
+                    style={[styles.loginBtn, { marginTop: 10 }]}
+                    onPress={() => setSelectedNoticeForView(null)}
+                  >
+                    <Text style={styles.loginBtnText}>Close Notice</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
           </View>
         </View>
       </Modal>

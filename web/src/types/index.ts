@@ -332,7 +332,16 @@ export interface MeetingEvent {
   createdAt: string;
 }
 
-export type NoticeCategory = 'announcement' | 'policy' | 'holiday' | 'urgent' | 'event';
+export type NoticeCategory =
+  | 'announcement'
+  | 'policy'
+  | 'holiday'
+  | 'urgent'
+  | 'event'
+  | 'warning'
+  | 'appreciation'
+  | 'experience'
+  | 'directive';
 export type NoticePriority = 'critical' | 'high' | 'medium' | 'low';
 
 export interface NoticeItem {
@@ -349,6 +358,21 @@ export interface NoticeItem {
   attachmentUrl?: string;
   isPinned?: boolean;
   createdAt: string;
+
+  // Notification Letter Extensions
+  isLetter?: boolean;
+  letterType?: 'notice' | 'warning' | 'appreciation' | 'experience' | 'directive';
+  refNumber?: string;
+  recipientType?: 'all' | 'individual';
+  recipientId?: string;
+  recipientName?: string;
+  recipientDesig?: string;
+  recipientDept?: string;
+  recipientEmail?: string;
+  signatoryName?: string;
+  signatoryRole?: string;
+  isDigitallyStamped?: boolean;
+  stampDate?: string;
 }
 
 export interface ChatAttachment {

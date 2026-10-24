@@ -577,6 +577,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('vdx_current_profile_id', currentProfileId);
   }, [currentProfileId]);
 
+  // Helper to unpack notice row with optional Letter metadata serialized in attachment_url
+  const unpackNoticeRow = (n: any): NoticeItem => {
+    let letterMeta: any = {};
+    let rawAttachmentUrl: string | undefined = n.attachment_url || undefined;
+    if (n.attachment_url && typeof n.attachment_url === 'string' && n.attachment_url.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(n.attachment_url);
+        if (parsed && typeof parsed === 'object') {
+          letterMeta = parsed;
+          rawAttachmentUrl = parsed.rawAttachmentUrl || undefined;
+        }
+      } catch {}
+    }
+
+    return {
+      id: n.id,
+      orgId: n.org_id,
+      title: n.title,
+      content: n.content,
+      category: n.category || 'announcement',
+      priority: n.priority || 'medium',
+      authorId: n.author_id,
+      authorName: n.author_name,
+      authorRole: n.author_role,
+      date: n.date,
+      attachmentUrl: rawAttachmentUrl,
+      isPinned: n.is_pinned ?? false,
+      createdAt: n.created_at,
+      isLetter: letterMeta.isLetter ?? (letterMeta.refNumber ? true : false),
+      letterType: letterMeta.letterType,
+      refNumber: letterMeta.refNumber,
+      recipientType: letterMeta.recipientType,
+      recipientId: letterMeta.recipientId,
+      recipientName: letterMeta.recipientName,
+      recipientDesig: letterMeta.recipientDesig,
+      recipientDept: letterMeta.recipientDept,
+      recipientEmail: letterMeta.recipientEmail,
+      signatoryName: letterMeta.signatoryName,
+      signatoryRole: letterMeta.signatoryRole,
+      isDigitallyStamped: letterMeta.isDigitallyStamped,
+      stampDate: letterMeta.stampDate
+    };
+  };
+
   // LIVE SUPABASE CLOUD SYNC ON MOUNT - Loads directly from connected Supabase PostgreSQL
   useEffect(() => {
     async function syncFromLiveSupabase() {
@@ -979,21 +1023,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         if (!errNotices && cloudNotices) {
-          const mappedNotices: NoticeItem[] = cloudNotices.map((n: any) => ({
-            id: n.id,
-            orgId: n.org_id,
-            title: n.title,
-            content: n.content,
-            category: n.category || 'announcement',
-            priority: n.priority || 'medium',
-            authorId: n.author_id,
-            authorName: n.author_name,
-            authorRole: n.author_role,
-            date: n.date,
-            attachmentUrl: n.attachment_url || undefined,
-            isPinned: n.is_pinned ?? false,
-            createdAt: n.created_at
-          }));
+          const mappedNotices: NoticeItem[] = cloudNotices.map(unpackNoticeRow);
           setNotices(mappedNotices);
           try {
             localStorage.setItem('vdx_notices', JSON.stringify(mappedNotices));
@@ -1180,22 +1210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (payload: any) => {
           if (!isMounted) return;
           if (payload.eventType === 'INSERT') {
-            const n = payload.new;
-            const newNotice: NoticeItem = {
-              id: n.id,
-              orgId: n.org_id,
-              title: n.title,
-              content: n.content,
-              category: n.category || 'announcement',
-              priority: n.priority || 'medium',
-              authorId: n.author_id,
-              authorName: n.author_name,
-              authorRole: n.author_role,
-              date: n.date,
-              attachmentUrl: n.attachment_url || undefined,
-              isPinned: n.is_pinned ?? false,
-              createdAt: n.created_at
-            };
+            const newNotice: NoticeItem = unpackNoticeRow(payload.new);
             setNotices((prev) => {
               if (prev.some((x) => x.id === newNotice.id)) return prev;
               const updated = [newNotice, ...prev];
@@ -1203,20 +1218,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               return updated;
             });
           } else if (payload.eventType === 'UPDATE') {
-            const n = payload.new;
+            const updatedNotice: NoticeItem = unpackNoticeRow(payload.new);
             setNotices((prev) => {
               const updated = prev.map((notice) =>
-                notice.id === n.id
-                  ? {
-                      ...notice,
-                      title: n.title,
-                      content: n.content,
-                      category: n.category || 'announcement',
-                      priority: n.priority || 'medium',
-                      isPinned: n.is_pinned ?? false,
-                      attachmentUrl: n.attachment_url || undefined
-                    }
-                  : notice
+                notice.id === updatedNotice.id ? updatedNotice : notice
               );
               try { localStorage.setItem('vdx_notices', JSON.stringify(updated)); } catch {}
               return updated;
@@ -1717,21 +1722,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         if (cloudNotices && isMounted) {
-          const mappedNotices: NoticeItem[] = cloudNotices.map((n: any) => ({
-            id: n.id,
-            orgId: n.org_id,
-            title: n.title,
-            content: n.content,
-            category: n.category || 'announcement',
-            priority: n.priority || 'medium',
-            authorId: n.author_id,
-            authorName: n.author_name,
-            authorRole: n.author_role,
-            date: n.date,
-            attachmentUrl: n.attachment_url || undefined,
-            isPinned: n.is_pinned ?? false,
-            createdAt: n.created_at
-          }));
+          const mappedNotices: NoticeItem[] = cloudNotices.map(unpackNoticeRow);
           setNotices((prev) => {
             const otherOrgs = prev.filter((not) => not.orgId !== currentOrgId);
             const combined = [...otherOrgs, ...mappedNotices].sort(
@@ -4490,6 +4481,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
+      let attachmentPayload = newNotice.attachmentUrl || null;
+      if (newNotice.isLetter || newNotice.refNumber) {
+        attachmentPayload = JSON.stringify({
+          isLetter: true,
+          letterType: newNotice.letterType || 'notice',
+          refNumber: newNotice.refNumber,
+          recipientType: newNotice.recipientType || 'all',
+          recipientId: newNotice.recipientId || null,
+          recipientName: newNotice.recipientName || '',
+          recipientDesig: newNotice.recipientDesig || '',
+          recipientDept: newNotice.recipientDept || '',
+          recipientEmail: newNotice.recipientEmail || '',
+          signatoryName: newNotice.signatoryName || newNotice.authorName,
+          signatoryRole: newNotice.signatoryRole || newNotice.authorRole,
+          isDigitallyStamped: newNotice.isDigitallyStamped ?? true,
+          stampDate: newNotice.stampDate || new Date().toISOString(),
+          rawAttachmentUrl: newNotice.attachmentUrl || null
+        });
+      }
+
       await client.from('notices').insert([{
         id: newNotice.id,
         org_id: newNotice.orgId,
@@ -4501,7 +4512,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         author_name: newNotice.authorName,
         author_role: newNotice.authorRole,
         date: newNotice.date || newNotice.createdAt,
-        attachment_url: newNotice.attachmentUrl || null,
+        attachment_url: attachmentPayload,
         is_pinned: newNotice.isPinned ?? false,
         created_at: newNotice.createdAt
       }]);
@@ -4510,14 +4521,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     addNotification(
-      `Notice: ${data.title}`,
-      `Published by ${data.authorName} (${data.category.toUpperCase()}).`,
+      newNotice.isLetter ? `Official Letter: ${data.title}` : `Notice: ${data.title}`,
+      newNotice.isLetter
+        ? `Issued by ${data.authorName} (${data.refNumber || 'Ref #'}).`
+        : `Published by ${data.authorName} (${data.category.toUpperCase()}).`,
       'announcement',
       'notices',
-      { orgId: currentOrg.id }
+      { orgId: currentOrg.id, recipientId: newNotice.recipientId || undefined }
     );
 
-    addToast('Notice Published', `"${data.title}" posted to the Notice Board.`, 'success');
+    addToast(
+      newNotice.isLetter ? 'Notification Letter Created' : 'Notice Published',
+      newNotice.isLetter ? `"${data.title}" issued and saved.` : `"${data.title}" posted to the Notice Board.`,
+      'success'
+    );
     return newNotice;
   };
 
