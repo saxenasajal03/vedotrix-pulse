@@ -3366,6 +3366,7 @@ export default function App() {
       const orgAddress = currentOrg?.address || '';
       const orgPhone = currentOrg?.phone || '';
       const orgWebsite = currentOrg?.website || '';
+      const orgLogoUrl = currentOrg?.logoUrl || currentOrg?.logo_url || '';
 
       const refNum = meta.refNumber || letter.ref_number || `REF: ${orgCode}/NL/2026/001`;
       const issueDate = formatDisplayDate(letter.date || letter.created_at);
@@ -3391,51 +3392,67 @@ export default function App() {
           <style>
             @page {
               size: A4 portrait;
-              margin: 18mm;
+              margin: 16mm;
             }
             body {
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
               color: #0f172a;
               margin: 0;
-              padding: 20px;
+              padding: 16px;
               line-height: 1.6;
               font-size: 13px;
               background: #fff;
+              position: relative;
+            }
+            .watermark {
+              position: fixed;
+              top: 50%;
+              left: 50%;
+              transform: translate(-50%, -50%);
+              width: 270px;
+              height: 270px;
+              opacity: 0.055;
+              z-index: 0;
+              pointer-events: none;
+              object-fit: contain;
             }
             .header-bar {
               height: 6px;
               background: #1e293b;
-              margin: -20px -20px 18px -20px;
+              margin: -16px -16px 14px -16px;
             }
             .sub-bar {
               height: 3px;
               background: #2563eb;
-              margin: -18px -20px 18px -20px;
+              margin: -14px -16px 16px -16px;
             }
             .top-header {
               display: flex;
               justify-content: space-between;
               align-items: flex-start;
               border-bottom: 2px solid #0f172a;
-              padding-bottom: 14px;
-              margin-bottom: 14px;
+              padding-bottom: 12px;
+              margin-bottom: 12px;
+              position: relative;
+              z-index: 1;
             }
             .company-name {
-              font-size: 20px;
+              font-size: 18px;
               font-weight: 900;
               color: #0f172a;
               letter-spacing: -0.5px;
             }
             .company-sub {
-              font-size: 11px;
+              font-size: 10.5px;
               color: #64748b;
               margin-top: 2px;
             }
             .company-contact {
               text-align: right;
-              font-size: 10px;
+              font-size: 9.5px;
               color: #475569;
               line-height: 1.4;
+              max-width: 220px;
             }
             .ref-strip {
               display: flex;
@@ -3444,9 +3461,11 @@ export default function App() {
               background: #f8fafc;
               border: 1px solid #e2e8f0;
               border-radius: 6px;
-              padding: 8px 12px;
-              margin: 14px 0;
-              font-size: 11px;
+              padding: 7px 12px;
+              margin: 12px 0;
+              font-size: 10.5px;
+              position: relative;
+              z-index: 1;
             }
             .ref-num {
               font-weight: 800;
@@ -3458,78 +3477,98 @@ export default function App() {
               font-weight: 600;
             }
             .to-block {
-              margin: 16px 0;
-              font-size: 12px;
+              margin: 14px 0;
+              font-size: 11.5px;
+              position: relative;
+              z-index: 1;
             }
             .to-label {
-              font-size: 10px;
+              font-size: 9.5px;
               font-weight: 800;
               color: #64748b;
               text-transform: uppercase;
               letter-spacing: 0.5px;
-              margin-bottom: 4px;
+              margin-bottom: 3px;
             }
             .to-name {
-              font-size: 14px;
+              font-size: 13px;
               font-weight: 800;
               color: #0f172a;
             }
             .to-desig {
               color: #475569;
-              font-size: 11.5px;
+              font-size: 11px;
             }
             .subject-box {
               background: #f1f5f9;
               border-left: 4px solid #4f46e5;
-              padding: 10px 14px;
+              border: 1px solid #e2e8f0;
+              border-left-width: 4px;
+              border-left-color: #4f46e5;
+              padding: 9px 12px;
               border-radius: 4px;
-              margin: 16px 0;
+              margin: 14px 0;
               font-weight: 800;
-              font-size: 12.5px;
+              font-size: 11.5px;
               color: #0f172a;
               text-transform: uppercase;
+              word-wrap: break-word;
+              overflow-wrap: break-word;
+              word-break: break-word;
+              white-space: normal;
+              line-height: 1.5;
+              position: relative;
+              z-index: 1;
             }
             .letter-content {
-              font-size: 12px;
+              font-size: 11.5px;
               color: #334155;
               line-height: 1.7;
               white-space: pre-wrap;
-              margin: 18px 0 30px 0;
+              margin: 16px 0 24px 0;
+              text-align: justify;
+              text-justify: inter-word;
+              word-wrap: break-word;
+              overflow-wrap: break-word;
+              position: relative;
+              z-index: 1;
             }
             .closing-row {
               display: flex;
               justify-content: space-between;
               align-items: flex-end;
-              margin-top: 35px;
-              padding-top: 18px;
+              margin-top: 28px;
+              padding-top: 16px;
               border-top: 1px solid #f1f5f9;
               page-break-inside: avoid;
+              position: relative;
+              z-index: 1;
             }
             .sign-label {
-              font-size: 11px;
+              font-size: 10.5px;
               color: #64748b;
               margin-bottom: 6px;
             }
             .signature-font {
               font-family: 'Georgia', serif;
               font-style: italic;
-              font-size: 18px;
+              font-size: 17px;
               font-weight: bold;
               color: #1e3a8a;
               margin-bottom: 4px;
             }
             .sign-name {
-              font-size: 13px;
+              font-size: 12.5px;
               font-weight: 800;
               color: #0f172a;
             }
             .sign-role {
-              font-size: 11px;
+              font-size: 10.5px;
               color: #475569;
             }
             .stamp-seal {
-              width: 100px;
-              height: 100px;
+              width: 102px;
+              height: 102px;
               border-radius: 50%;
               border: 2px solid ${stampColor};
               display: flex;
@@ -3537,11 +3576,12 @@ export default function App() {
               align-items: center;
               justify-content: center;
               text-align: center;
-              transform: rotate(-5deg);
-              background: rgba(239, 246, 255, 0.3);
+              transform: rotate(-6deg);
+              background: rgba(239, 246, 255, 0.45);
               color: ${stampColor};
               box-sizing: border-box;
-              padding: 4px;
+              padding: 3px;
+              box-shadow: inset 0 0 0 1px ${stampColor};
             }
             .stamp-inner {
               width: 88px;
@@ -3573,24 +3613,37 @@ export default function App() {
               font-weight: bold;
             }
             .footer-legal {
-              margin-top: 35px;
+              margin-top: 30px;
               padding-top: 8px;
               border-top: 1px solid #e2e8f0;
               display: flex;
               justify-content: space-between;
-              font-size: 8.5px;
+              align-items: center;
+              font-size: 8px;
               color: #94a3b8;
+              page-break-inside: avoid;
+              position: relative;
+              z-index: 1;
             }
           </style>
         </head>
         <body>
+          ${orgLogoUrl ? `<img src="${orgLogoUrl}" class="watermark" alt="" />` : `
+            <div class="watermark" style="border: 3px solid #94a3b8; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: 24px; font-weight: 900; color: #94a3b8;">
+              ${orgCode}<br><span style="font-size: 11px; font-weight: normal; margin-top: 4px;">OFFICIAL SEAL</span>
+            </div>
+          `}
+
           <div class="header-bar"></div>
           <div class="sub-bar"></div>
 
           <div class="top-header">
-            <div>
-              <div class="company-name">${orgName.toUpperCase()}</div>
-              <div class="company-sub">Org Code: <b>${orgCode}</b> &bull; Corporate Enterprise</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              ${orgLogoUrl ? `<img src="${orgLogoUrl}" style="width: 42px; height: 42px; object-fit: contain; border-radius: 6px;" />` : ''}
+              <div>
+                <div class="company-name">${orgName.toUpperCase()}</div>
+                <div class="company-sub">Org Code: <b>${orgCode}</b> &bull; Corporate Enterprise</div>
+              </div>
             </div>
             <div class="company-contact">
               ${orgWebsite ? `<div>${orgWebsite}</div>` : ''}
@@ -3641,8 +3694,8 @@ ${letter.content}
           </div>
 
           <div class="footer-legal">
-            <div>Electronically authenticated official document. Cryptographically logged on Vedotrix Pulse HRMS Cloud.</div>
-            <div>Page 1 of 1</div>
+            <div>This is an official computer-generated corporate document authenticated by Vedotrix Pulse HRMS. Digitally stamped & verified.</div>
+            <div style="font-weight: bold; white-space: nowrap; margin-left: 8px;">${orgCode} &bull; Page 1 of 1</div>
           </div>
         </body>
         </html>

@@ -339,9 +339,36 @@ export const NoticeBoardView: React.FC = () => {
     }
   };
 
-  // Vector PDF Generator using jsPDF
-  const handleDownloadLetterPDF = (letter: NoticeItem) => {
+  // Helper to load logo as Base64 for vector PDF embed and watermark
+  const loadBase64Image = (url?: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      if (!url) return resolve(null);
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(null);
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  };
+
+  // Vector PDF Generator using jsPDF with light watermark, justified text, and robust layout
+  const handleDownloadLetterPDF = async (letter: NoticeItem) => {
     try {
+      addToast('Preparing PDF...', 'Rendering letterhead and corporate watermark...', 'info');
+      const logoBase64 = await loadBase64Image(currentOrg.logoUrl);
+
       const doc = new jsPDF({
         orientation: 'portrait',
         unit: 'pt',
@@ -353,6 +380,42 @@ export const NoticeBoardView: React.FC = () => {
       const margin = 45;
       const contentWidth = pageWidth - margin * 2;
 
+      // Function to render light organization watermark on any page
+      const drawWatermark = () => {
+        try {
+          if (logoBase64) {
+            if ((doc as any).GState) {
+              doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
+            }
+            doc.addImage(logoBase64, 'PNG', (pageWidth - 250) / 2, (pageHeight - 250) / 2, 250, 250);
+            if ((doc as any).GState) {
+              doc.setGState(new (doc as any).GState({ opacity: 1.0 }));
+            }
+          } else {
+            if ((doc as any).GState) {
+              doc.setGState(new (doc as any).GState({ opacity: 0.06 }));
+            }
+            doc.setDrawColor(148, 163, 184);
+            doc.setLineWidth(2.5);
+            doc.circle(pageWidth / 2, pageHeight / 2, 110, 'S');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(26);
+            doc.setTextColor(148, 163, 184);
+            doc.text(currentOrg.name.toUpperCase().slice(0, 16), pageWidth / 2, pageHeight / 2 - 8, { align: 'center' });
+            doc.setFontSize(13);
+            doc.text('OFFICIAL CORPORATE SEAL', pageWidth / 2, pageHeight / 2 + 16, { align: 'center' });
+            if ((doc as any).GState) {
+              doc.setGState(new (doc as any).GState({ opacity: 1.0 }));
+            }
+          }
+        } catch {
+          // Graceful fallback if GState is not available
+        }
+      };
+
+      // Draw watermark on first page
+      drawWatermark();
+
       // 1. Top Decorative Brand Stripes
       doc.setFillColor(30, 41, 59); // slate-900
       doc.rect(0, 0, pageWidth, 8, 'F');
@@ -361,17 +424,28 @@ export const NoticeBoardView: React.FC = () => {
 
       let currentY = 38;
 
-      // 2. Company Letterhead Header
+      // 2. Company Letterhead Header with Official Logo
+      let headerTextX = margin;
+      if (logoBase64) {
+        try {
+          doc.addImage(logoBase64, 'PNG', margin, currentY - 6, 42, 42);
+          headerTextX = margin + 50;
+        } catch {}
+      }
+
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(18);
+      doc.setFontSize(17);
       doc.setTextColor(15, 23, 42); // slate-900
-      doc.text(currentOrg.name.toUpperCase(), margin, currentY);
+      doc.text(currentOrg.name.toUpperCase(), headerTextX, currentY + 8);
 
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setTextColor(100, 116, 139); // slate-500
-      currentY += 14;
-      doc.text(`Organization Code: ${currentOrg.orgCode} | Industry: ${currentOrg.industry || 'Technology Solutions'}`, margin, currentY);
+      doc.text(
+        `Org Code: ${currentOrg.orgCode} | Industry: ${currentOrg.industry || 'Enterprise Solutions'}`,
+        headerTextX,
+        currentY + 22
+      );
 
       // Right-aligned Corporate Contact Info
       const rightX = pageWidth - margin;
@@ -387,18 +461,18 @@ export const NoticeBoardView: React.FC = () => {
         contactY += 12;
       }
       if (currentOrg.address) {
-        const addrLines = doc.splitTextToSize(currentOrg.address, 200);
+        const addrLines = doc.splitTextToSize(currentOrg.address, 190);
         doc.text(addrLines, rightX, contactY, { align: 'right' });
       }
 
-      currentY += 28;
+      currentY += 44;
 
       // 3. Elegant Dividing Rule
       doc.setDrawColor(226, 232, 240); // slate-200
       doc.setLineWidth(1);
       doc.line(margin, currentY, rightX, currentY);
 
-      currentY += 18;
+      currentY += 16;
 
       // 4. Reference Number & Date Bar
       doc.setFillColor(248, 250, 252); // slate-50
@@ -416,79 +490,105 @@ export const NoticeBoardView: React.FC = () => {
       const issueDateText = `DATE: ${formatISTDate(letter.date || letter.createdAt)}`;
       doc.text(issueDateText, rightX - 12, currentY + 16, { align: 'right' });
 
-      currentY += 40;
+      currentY += 38;
 
       // 5. Recipient Details
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setTextColor(15, 23, 42);
       doc.text('TO:', margin, currentY);
       currentY += 14;
 
       if (letter.recipientType === 'individual' && letter.recipientName) {
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11);
+        doc.setFontSize(10.5);
         doc.setTextColor(30, 41, 59);
         doc.text(letter.recipientName, margin, currentY);
-        currentY += 14;
+        currentY += 13;
 
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9.5);
+        doc.setFontSize(9);
         doc.setTextColor(71, 85, 105);
         const roleDept = [letter.recipientDesig, letter.recipientDept].filter(Boolean).join(' • ');
         if (roleDept) {
           doc.text(roleDept, margin, currentY);
-          currentY += 13;
+          currentY += 12;
         }
         if (letter.recipientEmail) {
           doc.text(letter.recipientEmail, margin, currentY);
-          currentY += 13;
+          currentY += 12;
         }
         doc.text(currentOrg.name, margin, currentY);
-        currentY += 18;
+        currentY += 16;
       } else {
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11);
+        doc.setFontSize(10.5);
         doc.setTextColor(30, 41, 59);
         doc.text(`ALL STAFF MEMBERS & EMPLOYEES`, margin, currentY);
-        currentY += 14;
+        currentY += 13;
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9.5);
+        doc.setFontSize(9);
         doc.setTextColor(71, 85, 105);
         doc.text(`${currentOrg.name} Corporate Enterprise`, margin, currentY);
-        currentY += 20;
+        currentY += 18;
       }
 
-      // 6. Subject Line with subtle accent background
-      doc.setFillColor(241, 245, 249); // slate-100
-      doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'F');
+      // 6. Dynamic Non-Overflowing Subject Line Box
+      const subjectText = `SUBJECT: ${letter.title.toUpperCase()}`;
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text(`SUBJECT: ${letter.title.toUpperCase()}`, margin + 12, currentY + 17);
-
-      currentY += 42;
-
-      // 7. Letter Body Content
-      doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
+      const subjectLines = doc.splitTextToSize(subjectText, contentWidth - 24);
+      const subjectBoxHeight = Math.max(26, subjectLines.length * 14 + 12);
+
+      doc.setFillColor(241, 245, 249); // slate-100
+      doc.roundedRect(margin, currentY, contentWidth, subjectBoxHeight, 4, 4, 'F');
+      doc.setDrawColor(203, 213, 225); // slate-300
+      doc.roundedRect(margin, currentY, contentWidth, subjectBoxHeight, 4, 4, 'S');
+
+      doc.setTextColor(15, 23, 42);
+      doc.text(subjectLines, margin + 12, currentY + 16);
+
+      currentY += subjectBoxHeight + 20;
+
+      // 7. Letter Body Content with Text Justification
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9.5);
       doc.setTextColor(51, 65, 85); // slate-700
 
-      const splitLines = doc.splitTextToSize(letter.content, contentWidth);
-      splitLines.forEach((line: string) => {
-        if (currentY > pageHeight - 160) {
-          doc.addPage();
-          currentY = 50;
+      const paragraphs = (letter.content || '').split('\n');
+      paragraphs.forEach((para) => {
+        const trimmed = para.trim();
+        if (!trimmed) {
+          currentY += 8;
+          return;
         }
-        doc.text(line, margin, currentY);
-        currentY += 16;
+        const lines = doc.splitTextToSize(trimmed, contentWidth);
+        lines.forEach((line: string, idx: number) => {
+          if (currentY > pageHeight - 160) {
+            doc.addPage();
+            drawWatermark();
+            currentY = 55;
+          }
+          if (idx < lines.length - 1 && lines.length > 1) {
+            try {
+              doc.text(line, margin, currentY, { align: 'justify', maxWidth: contentWidth });
+            } catch {
+              doc.text(line, margin, currentY);
+            }
+          } else {
+            doc.text(line, margin, currentY);
+          }
+          currentY += 15;
+        });
+        currentY += 6;
       });
 
-      currentY += 24;
+      currentY += 18;
 
       // Ensure space for Signatory & Digital Stamp
       if (currentY > pageHeight - 160) {
         doc.addPage();
+        drawWatermark();
         currentY = 60;
       }
 
@@ -515,12 +615,11 @@ export const NoticeBoardView: React.FC = () => {
       doc.text(letter.signatoryRole || letter.authorRole, margin, signBlockY + 57);
       doc.text(currentOrg.name, margin, signBlockY + 69);
 
-      // 9. Vector Digital Stamping Seal Graphic
+      // 9. Standardized Corporate Digital Stamp Seal Graphic
       if (letter.isDigitallyStamped !== false) {
         const stampX = rightX - 60;
         const stampY = signBlockY + 36;
 
-        // Stamp theme color based on letter type
         let stampColor: [number, number, number] = [29, 78, 216]; // blue-700
         if (letter.letterType === 'warning') stampColor = [185, 28, 28]; // red-700
         else if (letter.letterType === 'appreciation') stampColor = [4, 120, 87]; // emerald-700
@@ -529,15 +628,13 @@ export const NoticeBoardView: React.FC = () => {
         doc.setDrawColor(...stampColor);
         doc.setTextColor(...stampColor);
 
-        // Outer Ring
+        // Outer Double Ring
         doc.setLineWidth(1.8);
         doc.circle(stampX, stampY, 44);
-
-        // Inner Dotted / Secondary Ring
         doc.setLineWidth(0.8);
         doc.circle(stampX, stampY, 38);
 
-        // Center Text
+        // Center Seal Text
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(6.5);
         doc.text(`★ ${currentOrg.orgCode || 'VDX'} OFFICIAL SEAL ★`, stampX, stampY - 18, { align: 'center' });
@@ -553,21 +650,25 @@ export const NoticeBoardView: React.FC = () => {
         doc.text(`ID: ${(letter.id || 'SEC').slice(0, 8).toUpperCase()}`, stampX, stampY + 31, { align: 'center' });
       }
 
-      // 10. Legal Security Bottom Footer
-      const footerY = pageHeight - 32;
-      doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.8);
-      doc.line(margin, footerY - 10, rightX, footerY - 10);
+      // 10. Standardized Legal Security Bottom Footer across ALL pages
+      const totalPages = (doc as any).internal.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        const footerY = pageHeight - 26;
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.8);
+        doc.line(margin, footerY - 10, rightX, footerY - 10);
 
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(148, 163, 184); // slate-400
-      doc.text(
-        'This is an official computer-generated corporate document authenticated by Vedotrix Pulse HRMS. Digitally stamped & cryptographically logged.',
-        margin,
-        footerY
-      );
-      doc.text(`Page 1 of 1 • ${currentOrg.orgCode}`, rightX, footerY, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184); // slate-400
+        doc.text(
+          'This is an official computer-generated corporate document authenticated by Vedotrix Pulse HRMS. Digitally stamped & verified.',
+          margin,
+          footerY
+        );
+        doc.text(`Page ${p} of ${totalPages} • ${currentOrg.orgCode}`, rightX, footerY, { align: 'right' });
+      }
 
       // Save & Trigger Download
       const safeFilename = `${(letter.refNumber || 'Letter').replace(/[^a-zA-Z0-9_-]/g, '_')}_${letter.title.slice(0, 20).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
