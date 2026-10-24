@@ -41,6 +41,20 @@ try {
   console.log('ImagePicker native module not available in this APK build:', e);
 }
 
+// Safely load expo-print & expo-sharing for PDF exports
+let SafePrint: any = null;
+let SafeSharing: any = null;
+try {
+  SafePrint = require('expo-print');
+} catch (e) {
+  console.log('expo-print native module not available in this APK build:', e);
+}
+try {
+  SafeSharing = require('expo-sharing');
+} catch (e) {
+  console.log('expo-sharing native module not available in this APK build:', e);
+}
+
 // Configure foreground notifications
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -527,11 +541,13 @@ export default function App() {
   // HR / Superadmin Employee Record Management Modal
   const [isEditEmployeeModal, setIsEditEmployeeModal] = useState(false);
   const [editEmpRole, setEditEmpRole] = useState('employee');
+  const [editEmpEmail, setEditEmpEmail] = useState('');
   const [editEmpDesig, setEditEmpDesig] = useState('');
   const [editEmpDept, setEditEmpDept] = useState('');
   const [editEmpJoining, setEditEmpJoining] = useState('');
   const [editEmpPasswordReset, setEditEmpPasswordReset] = useState('');
   const [isSavingEmpRecord, setIsSavingEmpRecord] = useState(false);
+  const [isExportingStandupPdf, setIsExportingStandupPdf] = useState(false);
 
   // User Self Password Management Modal
   const [isChangePasswordModal, setIsChangePasswordModal] = useState(false);
@@ -2082,6 +2098,39 @@ export default function App() {
     }
   };
 
+  // Toggle Custom Day Week-off Override (HR / Superadmin)
+  const handleToggleCustomDayWeekOff = async (dateStr: string) => {
+    if (!supabaseClient || !currentOrg) return;
+    try {
+      const curSettings = currentOrg.settings || {};
+      const curOverrides = curSettings.customDayOverrides || {};
+      const newOverrides = { ...curOverrides };
+
+      if (newOverrides[dateStr]?.type === 'week_off') {
+        delete newOverrides[dateStr];
+      } else {
+        newOverrides[dateStr] = { type: 'week_off' };
+      }
+
+      const updatedSettings = { ...curSettings, customDayOverrides: newOverrides };
+      const { error } = await supabaseClient
+        .from('organizations')
+        .update({ settings: updatedSettings })
+        .eq('id', currentOrg.id);
+
+      if (!error) {
+        setCurrentOrg({ ...currentOrg, settings: updatedSettings });
+        Alert.alert('Calendar Updated ✓', `Custom week-off policy updated for ${dateStr}.`);
+        setSelectedCalendarDayData(null);
+        refreshAllData(supabaseClient, currentOrg.id, userProfile?.id);
+      } else {
+        Alert.alert('Database Error', error.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    }
+  };
+
   // Submit Leave Request
   const handleSubmitLeave = async () => {
     if (!leaveReason.trim()) {
@@ -2432,6 +2481,201 @@ export default function App() {
       Alert.alert('Error', e?.message);
     } finally {
       setIsSavingStandup(false);
+    }
+  };
+
+  // Export Daily Standups PDF Report (Mobile)
+  const handleExportStandupPDFMobile = async (listToExport?: any[]) => {
+    const list = listToExport && listToExport.length > 0 ? listToExport : standups;
+    if (!list || list.length === 0) {
+      Alert.alert('No Standups', 'There are no standup records to export for the current filters.');
+      return;
+    }
+
+    setIsExportingStandupPdf(true);
+    try {
+      const orgName = currentOrg?.name || 'Vedotrix Pulse HRMS';
+      const orgCode = currentOrg?.orgCode || 'VDX';
+      const totalHours = list.reduce((acc: number, s: any) => acc + (Number(s.hours_logged) || 8), 0);
+      const blockersCount = list.filter((s: any) => s.blockers && s.blockers.trim()).length;
+
+      const rowsHtml = list.map((st: any) => {
+        const emp = teamProfiles.find((p: any) => p.id === st.employee_id);
+        const empName = emp ? `${emp.first_name} ${emp.last_name}` : 'Team Member';
+        const empDesig = `${emp?.designation || 'Staff'} &bull; ${emp?.department || 'Operations'}`;
+        const empEmail = emp?.email || '';
+
+        const hasBlocker = st.blockers && st.blockers.trim().length > 0;
+        const isGithubPR = (st.completed_today || '').includes('github.com') || (st.completed_today || '').includes('/pull/');
+
+        return `
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 12px; page-break-inside: avoid; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px; margin-bottom: 10px;">
+              <div>
+                <div style="font-size: 14px; font-weight: 800; color: #0f172a;">${empName}</div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${empDesig} &bull; ${empEmail}</div>
+              </div>
+              <div style="text-align: right;">
+                <span style="display: inline-block; background: #e0e7ff; color: #4338ca; font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 4px;">${st.date}</span>
+                <div style="font-size: 11px; font-weight: 700; color: #0284c7; margin-top: 3px;">${st.hours_logged || 8}h logged</div>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 8px;">
+              <div style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #059669; letter-spacing: 0.5px; margin-bottom: 2px;">
+                &check; Work Completed Today
+              </div>
+              <div style="font-size: 11.5px; color: #1e293b; line-height: 1.45; white-space: pre-wrap;">${st.completed_today || 'No details logged'}</div>
+              ${isGithubPR ? '<div style="margin-top: 5px; display: inline-block; background: #f3e8ff; border: 1px solid #d8b4fe; color: #7e22ce; font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">&link; PR Deliverable Linked</div>' : ''}
+            </div>
+
+            <div style="margin-bottom: 8px;">
+              <div style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #2563eb; letter-spacing: 0.5px; margin-bottom: 2px;">
+                &rarr; Plan for Next Shift
+              </div>
+              <div style="font-size: 11.5px; color: #334155; line-height: 1.45; white-space: pre-wrap;">${st.planned_tomorrow || 'Continuing ongoing sprint tasks'}</div>
+            </div>
+
+            ${hasBlocker ? `
+              <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 6px; padding: 7px 10px; margin-top: 6px;">
+                <div style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; color: #be123c;">
+                  &excl; Roadblock / Blocker
+                </div>
+                <div style="font-size: 11px; color: #9f1239; margin-top: 2px;">${st.blockers}</div>
+              </div>
+            ` : `
+              <div style="font-size: 10.5px; color: #94a3b8; font-style: italic;">
+                &bull; No roadblocks reported
+              </div>
+            `}
+          </div>
+        `;
+      }).join('');
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>EOD Standups Report - ${orgName}</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 15mm 12mm 15mm 12mm;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              background-color: #f8fafc;
+              color: #0f172a;
+              margin: 0;
+              padding: 20px;
+            }
+            .header-bar {
+              border-bottom: 3px solid #4f46e5;
+              padding-bottom: 14px;
+              margin-bottom: 16px;
+            }
+            .stats-bar {
+              display: flex;
+              gap: 10px;
+              margin-bottom: 16px;
+            }
+            .stat-card {
+              flex: 1;
+              background: #ffffff;
+              border: 1px solid #e2e8f0;
+              border-radius: 8px;
+              padding: 8px 12px;
+            }
+            .stat-val {
+              font-size: 17px;
+              font-weight: 800;
+              color: #4f46e5;
+            }
+            .stat-label {
+              font-size: 9.5px;
+              font-weight: 700;
+              color: #64748b;
+              text-transform: uppercase;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header-bar">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div>
+                <h1 style="margin: 0; font-size: 18px; font-weight: 900; color: #0f172a; letter-spacing: -0.5px;">${orgName}</h1>
+                <div style="font-size: 11px; color: #64748b; margin-top: 3px;">
+                  Official Daily EOD Standup & Work Accomplishment Report &bull; Org Code: ${orgCode}
+                </div>
+              </div>
+              <div style="text-align: right;">
+                <span style="background: #4f46e5; color: #ffffff; font-size: 9.5px; font-weight: 800; padding: 3px 8px; border-radius: 12px;">
+                  CONFIDENTIAL
+                </span>
+                <div style="font-size: 9.5px; color: #94a3b8; margin-top: 5px;">
+                  Generated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stats-bar">
+            <div class="stat-card">
+              <div class="stat-val">${list.length}</div>
+              <div class="stat-label">Total Logs</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" style="color: #0284c7;">${totalHours}h</div>
+              <div class="stat-label">Hours Logged</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" style="color: ${blockersCount > 0 ? '#e11d48' : '#10b981'};">${blockersCount}</div>
+              <div class="stat-label">Blockers Reported</div>
+            </div>
+          </div>
+
+          ${rowsHtml}
+
+          <div style="margin-top: 24px; border-top: 1px solid #cbd5e1; padding-top: 10px; text-align: center; font-size: 9.5px; color: #94a3b8;">
+            Generated via Vedotrix Pulse HRMS Cloud Platform &bull; Digitally Certified Corporate Record &bull; &copy; ${new Date().getFullYear()} ${orgName}
+          </div>
+        </body>
+        </html>
+      `;
+
+      if (SafePrint && SafePrint.printToFileAsync) {
+        const file = await SafePrint.printToFileAsync({ html });
+        if (SafeSharing && SafeSharing.shareAsync) {
+          await SafeSharing.shareAsync(file.uri, {
+            UTI: '.pdf',
+            mimeType: 'application/pdf',
+            dialogTitle: `EOD Standups Report - ${orgName}`
+          });
+        } else {
+          await Share.share({
+            title: `EOD Standups - ${orgName}`,
+            message: `Official EOD Standups PDF Report generated for ${orgName} (${list.length} logs, ${totalHours}h logged).`,
+            url: file.uri
+          });
+        }
+      } else {
+        const summary = list.map((st: any) => {
+          const emp = teamProfiles.find((p: any) => p.id === st.employee_id);
+          return `[${st.date}] ${emp ? `${emp.first_name} ${emp.last_name}` : 'Staff'} (${st.hours_logged}h):\nDone: ${st.completed_today}\nNext: ${st.planned_tomorrow}${st.blockers ? `\nBlocker: ${st.blockers}` : ''}`;
+        }).join('\n\n');
+
+        await Share.share({
+          title: `EOD Standups - ${orgName}`,
+          message: `📊 EOD Standups Report - ${orgName}\nGenerated: ${new Date().toLocaleString()}\n\n${summary}`
+        });
+      }
+    } catch (err: any) {
+      console.error('Error generating PDF on mobile:', err);
+      Alert.alert('Export Error', err?.message || 'Could not generate PDF.');
+    } finally {
+      setIsExportingStandupPdf(false);
     }
   };
 
@@ -6091,16 +6335,27 @@ export default function App() {
 
                   <View style={styles.card}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <View>
+                      <View style={{ flex: 1, paddingRight: 6 }}>
                         <Text style={styles.cardTitle}>Daily EOD Standup</Text>
                         <Text style={styles.cardDesc}>Accountability & PR accomplishment logs</Text>
                       </View>
-                      <TouchableOpacity
-                        style={styles.smallAddBtn}
-                        onPress={() => setIsStandupModal(true)}
-                      >
-                        <Text style={styles.smallAddBtnText}>+ Submit Today</Text>
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        <TouchableOpacity
+                          style={[styles.smallAddBtn, { backgroundColor: '#4f46e5' }]}
+                          disabled={isExportingStandupPdf}
+                          onPress={() => handleExportStandupPDFMobile(filteredList)}
+                        >
+                          <Text style={styles.smallAddBtnText}>
+                            {isExportingStandupPdf ? 'Generating...' : '📄 PDF Export'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.smallAddBtn}
+                          onPress={() => setIsStandupModal(true)}
+                        >
+                          <Text style={styles.smallAddBtnText}>+ Submit</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
                     {/* Date Filter Pills */}
@@ -7227,7 +7482,7 @@ export default function App() {
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Shift Window:</Text>
                       <Text style={styles.detailVal}>
-                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'} IST
+                        {currentOrg?.settings?.shiftStart || currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEnd || currentOrg?.settings?.shiftEndTime || '18:30'} IST
                       </Text>
                     </View>
                     <View style={styles.detailRow}>
@@ -7249,6 +7504,22 @@ export default function App() {
                         {p?.distance_meters ? ` (${p.distance_meters}m)` : ''}
                       </Text>
                     </View>
+                    {(() => {
+                      const approverUuid = p?.approved_by || p?.regularized_by;
+                      const approverProfile = approverUuid ? teamProfiles.find((x) => x.id === approverUuid) : null;
+                      return (
+                        <>
+                          {approverProfile && (
+                            <View style={{ marginTop: 6, padding: 8, backgroundColor: isDarkMode ? '#1e293b' : '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#10b98130' }}>
+                              <Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>✓ ATTENDANCE APPROVED BY:</Text>
+                              <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#065f46', fontWeight: '700', marginTop: 1 }}>
+                                {approverProfile.first_name} {approverProfile.last_name} ({approverProfile.role?.toUpperCase()})
+                              </Text>
+                            </View>
+                          )}
+                        </>
+                      );
+                    })()}
                     {(p?.regularization_notes || p?.approval_notes || p?.regularization_reason || p?.regularization_status === 'approved' || p?.approval_status === 'approved') && (
                       <View style={{ marginTop: 8, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: (p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '#10b98140' : '#f59e0b40' }}>
                         <Text style={{ fontSize: 10, color: (p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
@@ -7270,6 +7541,33 @@ export default function App() {
                             </Text>
                           </View>
                         )}
+                      </View>
+                    )}
+                    {isPrivileged && (
+                      <View style={{ marginTop: 8, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: isDarkMode ? '#334155' : '#e2e8f0' }}>
+                        <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#0284c7', textTransform: 'uppercase', marginBottom: 6 }}>
+                          ⚙️ Calendar Controls ({d.dStr})
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          <TouchableOpacity
+                            style={[styles.smallAddBtn, { flex: 1, backgroundColor: '#0284c7' }]}
+                            onPress={() => handleToggleCustomDayWeekOff(d.dStr)}
+                          >
+                            <Text style={[styles.smallAddBtnText, { textAlign: 'center' }]}>
+                              {currentOrg?.settings?.customDayOverrides?.[d.dStr]?.type === 'week_off' ? 'Mark Working Day' : 'Mark Week-Off'}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.smallAddBtn, { flex: 1, backgroundColor: '#7c3aed' }]}
+                            onPress={() => {
+                              setSelectedCalendarDayData(null);
+                              setNewHolDate(d.dStr);
+                              setIsHolidayModal(true);
+                            }}
+                          >
+                            <Text style={[styles.smallAddBtnText, { textAlign: 'center' }]}>Declare Holiday</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     )}
                   </ScrollView>
@@ -7416,6 +7714,7 @@ export default function App() {
                         style={[styles.loginBtn, { backgroundColor: '#4f46e5' }]}
                         onPress={() => {
                           setEditEmpRole(inspectedUserProfile.role || 'employee');
+                          setEditEmpEmail(inspectedUserProfile.email || '');
                           setEditEmpDesig(inspectedUserProfile.designation || '');
                           setEditEmpDept(inspectedUserProfile.department || '');
                           setEditEmpJoining(inspectedUserProfile.joining_date || '');
@@ -7796,11 +8095,22 @@ export default function App() {
       {/* ========================================================================= */}
       <Modal visible={isEditEmployeeModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Manage Employee Record</Text>
-            <Text style={styles.modalSub}>Update employee details in corporate Supabase database</Text>
+          <View style={[styles.modalCard, { maxHeight: '90%', paddingBottom: 14 }]}>
+            {/* Sticky Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 6 }}>
+              <View style={{ flex: 1, paddingRight: 6 }}>
+                <Text style={styles.modalTitle}>Manage Employee Record</Text>
+                <Text style={styles.modalSub}>
+                  {inspectedUserProfile ? `${inspectedUserProfile.first_name} ${inspectedUserProfile.last_name}` : 'Edit Profile'} &bull; Supabase Live Sync
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsEditEmployeeModal(false)} style={{ padding: 4 }}>
+                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', marginTop: 8 }}>
+            {/* Scrollable Body */}
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', flex: 1, marginVertical: 4 }}>
               <Text style={styles.inputLabel}>Corporate Role</Text>
               <View style={{ flexDirection: 'row', gap: 6, marginVertical: 6 }}>
                 {['employee', 'manager', 'hr'].map((r) => (
@@ -7819,6 +8129,17 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </View>
+
+              <Text style={styles.inputLabel}>Official Work Email * (HR / Admin)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editEmpEmail}
+                onChangeText={setEditEmpEmail}
+                placeholder="employee@company.com"
+                placeholderTextColor="#64748b"
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
 
               <Text style={styles.inputLabel}>Official Designation</Text>
               <TextInput
@@ -7856,12 +8177,23 @@ export default function App() {
                 placeholderTextColor="#64748b"
                 secureTextEntry
               />
+            </ScrollView>
+
+            {/* Pinned Sticky Footer */}
+            <View style={{ flexDirection: 'row', gap: 10, width: '100%', paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#334155' : '#e2e8f0' }}>
+              <TouchableOpacity style={[styles.modalCloseBtn, { flex: 1, marginTop: 0 }]} onPress={() => setIsEditEmployeeModal(false)}>
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.loginBtn, { marginTop: 14 }]}
+                style={[styles.loginBtn, { flex: 2, marginTop: 0 }]}
                 disabled={isSavingEmpRecord}
                 onPress={async () => {
                   if (!supabaseClient || !inspectedUserProfile) return;
+                  if (!editEmpEmail.trim() || !editEmpEmail.includes('@')) {
+                    Alert.alert('Invalid Email', 'Please provide a valid work email address.');
+                    return;
+                  }
                   if (editEmpPasswordReset.trim() && editEmpPasswordReset.trim().length < 6) {
                     Alert.alert('Too Short', 'New password must be at least 6 characters long.');
                     return;
@@ -7870,6 +8202,7 @@ export default function App() {
                   try {
                     const updates: any = {
                       role: editEmpRole,
+                      email: editEmpEmail.trim().toLowerCase(),
                       designation: editEmpDesig.trim() || 'Staff',
                       department: editEmpDept.trim() || 'Operations'
                     };
@@ -7891,7 +8224,7 @@ export default function App() {
                       const updatedEmp = { ...inspectedUserProfile, ...updates };
                       setInspectedUserProfile(updatedEmp);
                       setTeamProfiles((prev) => prev.map((p) => p.id === inspectedUserProfile.id ? { ...p, ...updates } : p));
-                      Alert.alert('Employee Updated ✓', `${inspectedUserProfile.first_name}'s record has been updated.`);
+                      Alert.alert('Employee Updated ✓', `${inspectedUserProfile.first_name}'s official record and email have been synced.`);
                       setIsEditEmployeeModal(false);
                     } else {
                       Alert.alert('Database Error', error.message);
@@ -7903,13 +8236,9 @@ export default function App() {
                   }
                 }}
               >
-                <Text style={styles.loginBtnText}>{isSavingEmpRecord ? 'Saving...' : 'Save Employee Changes'}</Text>
+                <Text style={styles.loginBtnText}>{isSavingEmpRecord ? 'Saving...' : 'Save Changes'}</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setIsEditEmployeeModal(false)}>
-                <Text style={styles.modalCloseBtnText}>Cancel</Text>
-              </TouchableOpacity>
-            </ScrollView>
+            </View>
           </View>
         </View>
       </Modal>
@@ -7972,7 +8301,9 @@ export default function App() {
                     const curSettings = currentOrg.settings || {};
                     const newSettings = {
                       ...curSettings,
+                      shiftStart: orgShiftStart.trim() || '09:30',
                       shiftStartTime: orgShiftStart.trim() || '09:30',
+                      shiftEnd: orgShiftEnd.trim() || '18:30',
                       shiftEndTime: orgShiftEnd.trim() || '18:30',
                       gracePeriodMins: parseInt(orgGracePeriod) || 15
                     };

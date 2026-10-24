@@ -16,8 +16,12 @@ import {
   ShieldAlert,
   Users,
   CheckCheck,
-  ChevronDown
+  ChevronDown,
+  FileText,
+  Printer
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { formatISTDate, getTodayISTDateString } from '../lib/serialUtils';
 
 interface StandupsViewProps {
@@ -231,6 +235,140 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
     addToast('EOD Report Exported 📄', `Exported ${filteredStandups.length} daily logs to CSV.`, 'success');
   };
 
+  // Export Standups Report to Corporate PDF
+  const handleExportPDF = () => {
+    if (filteredStandups.length === 0) {
+      addToast('No Records', 'There are no standup records to export for current filters.', 'warning');
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'pt',
+        format: 'a4'
+      });
+
+      const primaryColor: [number, number, number] = [30, 41, 59]; // slate-800
+      const accentColor: [number, number, number] = [79, 70, 229]; // indigo-600
+      const pageMargin = 30;
+
+      // Header Accent Line
+      doc.setFillColor(...accentColor);
+      doc.rect(0, 0, doc.internal.pageSize.getWidth(), 6, 'F');
+
+      // Company Title & Report Heading
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.setTextColor(...primaryColor);
+      doc.text(currentOrg.name?.toUpperCase() || 'VEDOTRIX PULSE HRMS', pageMargin, 32);
+
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `Official EOD Standup & Work Accomplishment Report • Org: ${currentOrg.orgCode || 'VDX'} • Department: ${selectedDeptFilter === 'all' ? 'All Departments' : selectedDeptFilter}`,
+        pageMargin,
+        46
+      );
+
+      // Meta Stats Box
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const metaText = `Generated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST  |  Logs: ${filteredStandups.length}  |  Total: ${filteredStandups.reduce((acc, s) => acc + (Number(s.hoursLogged) || 8), 0)}h  |  Scope: ${selectedDateFilter.toUpperCase()}`;
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(71, 85, 105);
+      doc.text(metaText, pageWidth - pageMargin, 32, { align: 'right' });
+
+      // Build Table Data
+      const tableHead = [
+        ['Date', 'Employee & Designation', 'Hours', 'Completed Work & PRs', 'Planned Next Shift', 'Blockers & Impediments']
+      ];
+
+      const tableBody = filteredStandups.map((s) => {
+        const emp = orgProfiles.find((p) => p.id === s.employeeId);
+        const empName = emp ? `${emp.firstName} ${emp.lastName}` : 'Team Member';
+        const empDesig = `${emp?.designation || 'Staff'} (${emp?.department || 'Operations'})`;
+        const empEmail = emp?.email || '';
+
+        const prs = extractUrls(`${s.completedToday} ${s.plannedTomorrow} ${s.blockers || ''}`);
+        let completed = s.completedToday || 'No details provided';
+        if (prs.length > 0) {
+          completed += `\n[Deliverables]: ${prs.join(', ')}`;
+        }
+
+        const blockers = s.blockers && s.blockers.trim() ? `[BLOCKER] ${s.blockers.trim()}` : 'None';
+
+        return [
+          s.date,
+          `${empName}\n${empDesig}\n${empEmail}`,
+          `${s.hoursLogged || 8}h`,
+          completed,
+          s.plannedTomorrow || 'Continuing sprint tasks',
+          blockers
+        ];
+      });
+
+      autoTable(doc, {
+        head: tableHead,
+        body: tableBody,
+        startY: 58,
+        margin: { left: pageMargin, right: pageMargin, bottom: 30 },
+        theme: 'striped',
+        styles: {
+          fontSize: 8.5,
+          cellPadding: 5.5,
+          lineColor: [226, 232, 240],
+          lineWidth: 0.5,
+          overflow: 'linebreak'
+        },
+        headStyles: {
+          fillColor: [30, 41, 59],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 9
+        },
+        columnStyles: {
+          0: { cellWidth: 58, fontStyle: 'bold', halign: 'center' },
+          1: { cellWidth: 160 },
+          2: { cellWidth: 42, halign: 'center', fontStyle: 'bold' },
+          3: { cellWidth: 'auto' },
+          4: { cellWidth: 150 },
+          5: { cellWidth: 120 }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 5) {
+            const val = String(data.cell.raw || '');
+            if (val.startsWith('[BLOCKER]')) {
+              data.cell.styles.textColor = [190, 18, 60];
+              data.cell.styles.fontStyle = 'bold';
+            } else {
+              data.cell.styles.textColor = [100, 116, 139];
+            }
+          }
+        },
+        didDrawPage: (data) => {
+          const pageCount = (doc as any).internal.getNumberOfPages();
+          doc.setFontSize(8);
+          doc.setTextColor(148, 163, 184);
+          doc.setFont('helvetica', 'normal');
+          doc.text(
+            `Vedotrix Pulse HRMS Cloud System • Certified Confidential Corporate Record • Page ${data.pageNumber} of ${pageCount}`,
+            pageMargin,
+            doc.internal.pageSize.getHeight() - 12
+          );
+        }
+      });
+
+      const fileName = `EOD_Standups_${currentOrg.orgCode || 'VDX'}_${todayStr}.pdf`;
+      doc.save(fileName);
+      addToast('PDF Report Exported 📄', `Exported ${filteredStandups.length} EOD logs to ${fileName}.`, 'success');
+    } catch (err: any) {
+      console.error('PDF generation error:', err);
+      addToast('PDF Error', err?.message || 'Failed to generate PDF.', 'error');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* 1. Header Toolbar */}
@@ -260,6 +398,16 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleExportPDF}
+            className="inline-flex items-center justify-center space-x-1.5 px-3 py-2 bg-gradient-to-r from-indigo-700 to-indigo-600 hover:from-indigo-600 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-sm border border-indigo-500/30"
+            title="Download Corporate EOD Standups PDF Report"
+          >
+            <FileText className="w-3.5 h-3.5 text-indigo-200" />
+            <span>Export PDF</span>
+          </button>
+
           {(isHrOrSuperadmin || isManager) && (
             <button
               type="button"
