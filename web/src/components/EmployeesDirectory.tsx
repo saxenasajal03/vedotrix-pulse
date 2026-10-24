@@ -85,6 +85,7 @@ export const EmployeesDirectory: React.FC = () => {
 
   // Edit Employee State
   const [editingEmployee, setEditingEmployee] = useState<Profile | null>(null);
+  const [editEmail, setEditEmail] = useState('');
   const [editDesignation, setEditDesignation] = useState('');
   const [editDepartment, setEditDepartment] = useState('');
   const [editBaseSalary, setEditBaseSalary] = useState('0');
@@ -104,6 +105,7 @@ export const EmployeesDirectory: React.FC = () => {
 
   const handleOpenEdit = (emp: Profile) => {
     setEditingEmployee(emp);
+    setEditEmail(emp.email || '');
     setEditDesignation(emp.designation || '');
     setEditDepartment(emp.department || 'Operations');
     setEditBaseSalary(emp.baseSalary !== null && emp.baseSalary !== undefined ? String(emp.baseSalary) : '0');
@@ -123,7 +125,7 @@ export const EmployeesDirectory: React.FC = () => {
     e.preventDefault();
     if (!editingEmployee) return;
     setIsSavingEdit(true);
-    await updateProfile(editingEmployee.id, {
+    const updates: Partial<Profile> = {
       designation: editDesignation.trim(),
       department: editDepartment.trim(),
       baseSalary: editBaseSalary !== '' && !isNaN(Number(editBaseSalary)) ? Number(editBaseSalary) : 0,
@@ -136,7 +138,11 @@ export const EmployeesDirectory: React.FC = () => {
       accountNumber: editAccountNumber.trim() || undefined,
       ifscCode: editIfscCode.trim().toUpperCase() || undefined,
       pfNumber: editPfNumber.trim().toUpperCase() || undefined
-    });
+    };
+    if (editEmail.trim() && editEmail.trim().toLowerCase() !== editingEmployee.email.toLowerCase()) {
+      updates.email = editEmail.trim().toLowerCase();
+    }
+    await updateProfile(editingEmployee.id, updates);
     if (editNewPassword.trim().length >= 6) {
       await updateUserPassword(editingEmployee.id, editNewPassword.trim());
     }
@@ -1191,295 +1197,320 @@ export const EmployeesDirectory: React.FC = () => {
 
       {/* Modal: Edit Employee Details & Compensation */}
       {editingEmployee && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden my-6 border border-slate-100">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden my-auto border border-slate-100 flex flex-col max-h-[92vh] sm:max-h-[88vh]">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
                   <Edit3 className="w-4 h-4" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-900 truncate">
                     Edit Employee Details
                   </h3>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-slate-500 truncate">
                     {editingEmployee.firstName} {editingEmployee.lastName} ({editingEmployee.email})
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setEditingEmployee(null)}
-                className="text-slate-400 hover:text-slate-700"
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-200/50 transition shrink-0 ml-2"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSaveEdit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
+                {/* Email Address - Editable for Superadmin & HR */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Designation *
+                    Work Email Address *
                   </label>
-                  <input
-                    type="text"
-                    required
-                    value={editDesignation}
-                    onChange={(e) => setEditDesignation(e.target.value)}
-                    placeholder="e.g. Lead Engineer / Intern"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Department *
-                  </label>
-                  <select
-                    value={editDepartment}
-                    onChange={(e) => setEditDepartment(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  >
-                    <option value="Development">Development</option>
-                    <option value="Marketing">Marketing</option>
-                    <option value="Operations">Operations</option>
-                    <option value="Design">Design</option>
-                    <option value="Sales">Sales</option>
-                    <option value="HR">HR</option>
-                    <option value="Finance">Finance</option>
-                    <option value="Leadership">Leadership</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Platform Role
-                  </label>
-                  <select
-                    value={editRole}
-                    onChange={(e) => setEditRole(e.target.value as UserRole)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  >
-                    <option value="employee">Employee / Intern</option>
-                    <option value="manager">Manager / Team Lead</option>
-                    <option value="hr">HR Administrator</option>
-                    <option value="owner">Organization Owner</option>
-                    <option value="superadmin">Superadmin</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Base Salary / Stipend (₹/mo)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1000"
-                    value={editBaseSalary}
-                    onChange={(e) => setEditBaseSalary(e.target.value)}
-                    placeholder="0 for Unpaid Intern"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="email"
+                      required
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      placeholder="employee@company.com"
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                  </div>
                   <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    ₹0 represents unpaid intern / trainee
+                    HR & Superadmin editable. Used for login authentication & system alerts.
                   </span>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Reporting Manager
-                  </label>
-                  <select
-                    value={editManagerId}
-                    onChange={(e) => setEditManagerId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  >
-                    <option value="">-- No Direct Manager / Executive --</option>
-                    {orgProfiles
-                      .filter((p) => p.id !== editingEmployee.id)
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.firstName} {p.lastName} ({p.role.toUpperCase()})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Contact Phone
-                  </label>
-                  <input
-                    type="text"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    placeholder="+91 98765 43210"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Official Joining Date (IST) *</span>
-                  <span className="text-[10px] text-blue-600 font-normal">Attendance tracks from this date</span>
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={editJoiningDate}
-                  onChange={(e) => setEditJoiningDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                />
-                <span className="text-[10px] text-slate-400 mt-0.5 block">
-                  Configured by Superadmin / HR. Attendance & absent checks apply strictly starting from this date.
-                </span>
-              </div>
-
-              {/* Banking & Statutory Details (HR / Superadmin Editable) */}
-              <div className="pt-3 border-t border-slate-100 space-y-3">
-                <div className="flex items-center space-x-1.5">
-                  <CreditCard className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-bold text-slate-900">
-                    Banking & Statutory Details (Real / Non-Static)
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Real employee account credentials and Provident Fund (UAN) for direct payroll disbursement. Editable strictly by HR & Superadmin.
-                </p>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Bank Name
+                      Designation *
                     </label>
                     <input
                       type="text"
-                      value={editBankName}
-                      onChange={(e) => setEditBankName(e.target.value)}
-                      placeholder="e.g. HDFC Bank / State Bank of India"
+                      required
+                      value={editDesignation}
+                      onChange={(e) => setEditDesignation(e.target.value)}
+                      placeholder="e.g. Lead Engineer / Intern"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                     />
                   </div>
-
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Account Number
+                      Department *
                     </label>
-                    <input
-                      type="text"
-                      value={editAccountNumber}
-                      onChange={(e) => setEditAccountNumber(e.target.value)}
-                      placeholder="e.g. 50100492817291"
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    />
+                    <select
+                      value={editDepartment}
+                      onChange={(e) => setEditDepartment(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    >
+                      <option value="Development">Development</option>
+                      <option value="Marketing">Marketing</option>
+                      <option value="Operations">Operations</option>
+                      <option value="Design">Design</option>
+                      <option value="Sales">Sales</option>
+                      <option value="HR">HR</option>
+                      <option value="Finance">Finance</option>
+                      <option value="Leadership">Leadership</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Platform Role
+                    </label>
+                    <select
+                      value={editRole}
+                      onChange={(e) => setEditRole(e.target.value as UserRole)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    >
+                      <option value="employee">Employee / Intern</option>
+                      <option value="manager">Manager / Team Lead</option>
+                      <option value="hr">HR Administrator</option>
+                      <option value="owner">Organization Owner</option>
+                      <option value="superadmin">Superadmin</option>
+                    </select>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      IFSC Code
+                      Base Salary / Stipend (₹/mo)
                     </label>
                     <input
-                      type="text"
-                      value={editIfscCode}
-                      onChange={(e) => setEditIfscCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. HDFC0001234"
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={editBaseSalary}
+                      onChange={(e) => setEditBaseSalary(e.target.value)}
+                      placeholder="0 for Unpaid Intern"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                     />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                      ₹0 represents unpaid intern / trainee
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Reporting Manager
+                    </label>
+                    <select
+                      value={editManagerId}
+                      onChange={(e) => setEditManagerId(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    >
+                      <option value="">-- No Direct Manager / Executive --</option>
+                      {orgProfiles
+                        .filter((p) => p.id !== editingEmployee.id)
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.firstName} {p.lastName} ({p.role.toUpperCase()})
+                          </option>
+                        ))}
+                    </select>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      PF Number (UAN)
+                      Contact Phone
                     </label>
                     <input
                       type="text"
-                      value={editPfNumber}
-                      onChange={(e) => setEditPfNumber(e.target.value.toUpperCase())}
-                      placeholder="e.g. UP/LKO/0049281/000/0001092"
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* Reset Password by Superadmin / HR */}
-              <div className="pt-3 border-t border-slate-100 space-y-2">
-                <div className="flex items-center space-x-1.5">
-                  <Key className="w-4 h-4 text-amber-600" />
-                  <span className="text-xs font-bold text-slate-900">
-                    Reset Employee Password (Superadmin / HR)
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-500">
-                  Update employee's security credentials in Supabase. Minimum 6 characters.
-                </p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    value={editNewPassword}
-                    onChange={(e) => setEditNewPassword(e.target.value)}
-                    placeholder="Enter new password (min. 6 chars)"
-                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                  <button
-                    type="button"
-                    disabled={isResettingPassword || !editNewPassword.trim() || editNewPassword.trim().length < 6}
-                    onClick={async () => {
-                      if (!editingEmployee || editNewPassword.trim().length < 6) return;
-                      setIsResettingPassword(true);
-                      const res = await updateUserPassword(editingEmployee.id, editNewPassword.trim());
-                      setIsResettingPassword(false);
-                      if (res.success) {
-                        setEditNewPassword('');
-                      }
-                    }}
-                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition shrink-0 shadow-xs"
-                  >
-                    {isResettingPassword ? 'Updating...' : 'Set Password'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div>
-                  <span className="text-xs font-semibold text-slate-800 block">
-                    Account Status
-                  </span>
-                  <span className="text-[10px] text-slate-500">
-                    Suspended employees cannot log in or record attendance
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                    <span>Official Joining Date (IST) *</span>
+                    <span className="text-[10px] text-blue-600 font-normal">Attendance tracks from this date</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editJoiningDate}
+                    onChange={(e) => setEditJoiningDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Configured by Superadmin / HR. Attendance & absent checks apply strictly starting from this date.
                   </span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editIsActive}
-                    onChange={(e) => setEditIsActive(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
-                  <span className="ml-2 text-xs font-bold text-slate-700">
-                    {editIsActive ? 'Active' : 'Suspended'}
-                  </span>
-                </label>
+
+                {/* Banking & Statutory Details (HR / Superadmin Editable) */}
+                <div className="pt-3 border-t border-slate-100 space-y-3">
+                  <div className="flex items-center space-x-1.5">
+                    <CreditCard className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-bold text-slate-900">
+                      Banking & Statutory Details (Real / Non-Static)
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    Real employee account credentials and Provident Fund (UAN) for direct payroll disbursement. Editable strictly by HR & Superadmin.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Bank Name
+                      </label>
+                      <input
+                        type="text"
+                        value={editBankName}
+                        onChange={(e) => setEditBankName(e.target.value)}
+                        placeholder="e.g. HDFC Bank / State Bank of India"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Account Number
+                      </label>
+                      <input
+                        type="text"
+                        value={editAccountNumber}
+                        onChange={(e) => setEditAccountNumber(e.target.value)}
+                        placeholder="e.g. 50100492817291"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        IFSC Code
+                      </label>
+                      <input
+                        type="text"
+                        value={editIfscCode}
+                        onChange={(e) => setEditIfscCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. HDFC0001234"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        PF Number (UAN)
+                      </label>
+                      <input
+                        type="text"
+                        value={editPfNumber}
+                        onChange={(e) => setEditPfNumber(e.target.value.toUpperCase())}
+                        placeholder="e.g. UP/LKO/0049281/000/0001092"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reset Password by Superadmin / HR */}
+                <div className="pt-3 border-t border-slate-100 space-y-2">
+                  <div className="flex items-center space-x-1.5">
+                    <Key className="w-4 h-4 text-amber-600" />
+                    <span className="text-xs font-bold text-slate-900">
+                      Reset Employee Password (Superadmin / HR)
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Update employee's security credentials in Supabase. Minimum 6 characters.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={editNewPassword}
+                      onChange={(e) => setEditNewPassword(e.target.value)}
+                      placeholder="Enter new password (min. 6 chars)"
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={isResettingPassword || !editNewPassword.trim() || editNewPassword.trim().length < 6}
+                      onClick={async () => {
+                        if (!editingEmployee || editNewPassword.trim().length < 6) return;
+                        setIsResettingPassword(true);
+                        const res = await updateUserPassword(editingEmployee.id, editNewPassword.trim());
+                        setIsResettingPassword(false);
+                        if (res.success) {
+                          setEditNewPassword('');
+                        }
+                      }}
+                      className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition shrink-0 shadow-xs cursor-pointer"
+                    >
+                      {isResettingPassword ? 'Updating...' : 'Set Password'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-800 block">
+                      Account Status
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      Suspended employees cannot log in or record attendance
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editIsActive}
+                      onChange={(e) => setEditIsActive(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                    <span className="ml-2 text-xs font-bold text-slate-700">
+                      {editIsActive ? 'Active' : 'Suspended'}
+                    </span>
+                  </label>
+                </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-4 border-t border-slate-100">
+              {/* Modal Footer: Fixed & Never cut off */}
+              <div className="flex items-center justify-end space-x-2 p-3.5 sm:p-4 border-t border-slate-100 bg-slate-50 shrink-0">
                 <button
                   type="button"
                   onClick={() => setEditingEmployee(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSavingEdit}
-                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center space-x-1.5"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center space-x-1.5 cursor-pointer"
                 >
                   {isSavingEdit ? (
                     <>

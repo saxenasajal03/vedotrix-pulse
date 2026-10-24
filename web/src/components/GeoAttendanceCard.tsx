@@ -34,6 +34,7 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
   const {
     currentOrg,
     currentProfile,
+    orgProfiles,
     officeLocations,
     leaveRequests,
     holidays,
@@ -61,17 +62,33 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
   const todayStr = getTodayISTDateString();
   const todayRecord = getTodayAttendance();
 
-  // 1. Week-Off Enforcement (IST)
+  // 1. Week-Off & Holiday Enforcement (IST)
   const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const dayOfWeek = nowIST.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const weekOffDays = currentOrg.settings?.weekOffDays || [0];
+  const userWeekOffs = currentOrg.settings?.employeeWeekOffs?.[currentProfile.id];
+  const weekOffDays = Array.isArray(userWeekOffs) ? userWeekOffs : (currentOrg.settings?.weekOffDays || [0]);
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const isWeekOffToday = weekOffDays.includes(dayOfWeek);
-
-  // 2. Official Holiday Schedule Check
-  const holidayToday = holidays.find(
+  
+  const customOverrides = currentOrg.settings?.customDayOverrides || {};
+  const todayOverride = customOverrides[`${todayStr}_${currentProfile.id}`] || customOverrides[todayStr];
+  
+  let isWeekOffToday = weekOffDays.includes(dayOfWeek);
+  let holidayToday = holidays.find(
     (h) => (h.orgId === currentOrg.id || !h.orgId) && h.date === todayStr
   );
+
+  if (todayOverride) {
+    if (todayOverride.type === 'week_off') {
+      isWeekOffToday = true;
+      holidayToday = undefined;
+    } else if (todayOverride.type === 'working') {
+      isWeekOffToday = false;
+      holidayToday = undefined;
+    } else if (todayOverride.type === 'holiday') {
+      holidayToday = { id: `override_${todayStr}`, name: todayOverride.name || 'Company Holiday', date: todayStr, orgId: currentOrg.id };
+      isWeekOffToday = false;
+    }
+  }
 
   // 3. Live Open-Meteo Weather State
   const [liveWeather, setLiveWeather] = useState<LiveWeatherData>({
@@ -424,6 +441,15 @@ export const GeoAttendanceCard: React.FC<GeoAttendanceCardProps> = ({
                   Standard Shift: <strong className="text-cyan-400 font-mono">{todayRecord.totalHours} hrs</strong>
                 </span>
               )}
+              {(todayRecord.approvedBy || todayRecord.regularizedBy) && (() => {
+                const approver = orgProfiles.find((p) => p.id === (todayRecord.approvedBy || todayRecord.regularizedBy));
+                return (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-400" />
+                    Approved by: {approver ? `${approver.firstName} ${approver.lastName} (${approver.role.toUpperCase()})` : 'Manager/HR'}
+                  </span>
+                );
+              })()}
             </div>
           )}
 

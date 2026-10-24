@@ -789,9 +789,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status: a.status || 'present',
             isRemote: a.is_remote ?? false,
             approvalStatus: a.approval_status || 'approved',
+            approvedBy: a.approved_by || a.regularized_by,
+            approvalNotes: a.approval_notes || a.regularization_notes,
             regularizationStatus: a.regularization_status || 'none',
             regularizationReason: a.regularization_reason,
-            regularizedBy: a.regularized_by,
+            regularizedBy: a.regularized_by || a.approved_by,
             regularizationNotes: a.regularization_notes || a.approval_notes,
             totalHours: a.total_hours ? Number(a.total_hours) : 0
           }));
@@ -1302,9 +1304,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               status: a.status || 'present',
               isRemote: a.is_remote ?? false,
               approvalStatus: a.approval_status || 'approved',
+              approvedBy: a.approved_by || a.regularized_by,
+              approvalNotes: a.approval_notes || a.regularization_notes,
               regularizationStatus: a.regularization_status || 'none',
               regularizationReason: a.regularization_reason,
-              regularizedBy: a.regularized_by,
+              regularizedBy: a.regularized_by || a.approved_by,
               regularizationNotes: a.regularization_notes || a.approval_notes,
               totalHours: a.total_hours ? Number(a.total_hours) : 0
             };
@@ -1332,9 +1336,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                       status: a.status || att.status,
                       isRemote: a.is_remote ?? att.isRemote,
                       approvalStatus: a.approval_status || att.approvalStatus,
+                      approvedBy: a.approved_by ?? a.regularized_by ?? att.approvedBy,
+                      approvalNotes: a.approval_notes ?? a.regularization_notes ?? att.approvalNotes,
                       regularizationStatus: a.regularization_status || att.regularizationStatus,
                       regularizationReason: a.regularization_reason ?? att.regularizationReason,
-                      regularizedBy: a.regularized_by ?? att.regularizedBy,
+                      regularizedBy: a.regularized_by ?? a.approved_by ?? att.regularizedBy,
                       regularizationNotes: a.regularization_notes ?? a.approval_notes ?? att.regularizationNotes,
                       totalHours: a.total_hours ? Number(a.total_hours) : att.totalHours
                     }
@@ -1753,9 +1759,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status: a.status || 'present',
             isRemote: a.is_remote ?? false,
             approvalStatus: a.approval_status || 'approved',
+            approvedBy: a.approved_by || a.regularized_by,
+            approvalNotes: a.approval_notes || a.regularization_notes,
             regularizationStatus: a.regularization_status || 'none',
             regularizationReason: a.regularization_reason,
-            regularizedBy: a.regularized_by,
+            regularizedBy: a.regularized_by || a.approved_by,
             regularizationNotes: a.regularization_notes || a.approval_notes,
             totalHours: a.total_hours ? Number(a.total_hours) : 0
           }));

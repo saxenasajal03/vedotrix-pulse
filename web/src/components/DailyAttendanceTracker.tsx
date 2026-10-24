@@ -58,6 +58,8 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     tasks,
     standups,
     holidays,
+    addHoliday,
+    deleteHoliday,
     isVedotrixSuperadmin,
     resolveRegularization,
     requestRegularization,
@@ -120,14 +122,25 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   // Date Popup on Click
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<any | null>(null);
 
-  // Shift & Week-Off Configuration Modal (Superadmin / HR only)
+  // Shift & Organization Calendar Configuration Modal (Superadmin / HR only)
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
-  const [shiftStart, setShiftStart] = useState(currentOrg.settings?.shiftStartTime || '10:00');
-  const [shiftEnd, setShiftEnd] = useState(currentOrg.settings?.shiftEndTime || '19:00');
+  const [shiftModalTab, setShiftModalTab] = useState<'shift' | 'emp_weekoffs' | 'holidays'>('shift');
+  const [shiftStart, setShiftStart] = useState(currentOrg.settings?.shiftStartTime || '09:30');
+  const [shiftEnd, setShiftEnd] = useState(currentOrg.settings?.shiftEndTime || '18:30');
   const [graceMins, setGraceMins] = useState(currentOrg.settings?.gracePeriodMins || 15);
   const [halfDayHours, setHalfDayHours] = useState(currentOrg.settings?.halfDayThresholdHours || 4.5);
   const [weekOffs, setWeekOffs] = useState<number[]>(currentOrg.settings?.weekOffDays || [0]);
   const [isSavingShift, setIsSavingShift] = useState(false);
+
+  // Employee-Specific Week-Off customization state
+  const [selectedEmpForWeekOff, setSelectedEmpForWeekOff] = useState<string>('');
+  const [empWeekOffDays, setEmpWeekOffDays] = useState<number[]>([0]);
+
+  // Holiday management state
+  const [newHolidayName, setNewHolidayName] = useState('');
+  const [newHolidayDate, setNewHolidayDate] = useState('');
+  const [newHolidayType, setNewHolidayType] = useState<'public' | 'optional' | 'restricted'>('public');
+  const [isSavingHoliday, setIsSavingHoliday] = useState(false);
 
   // Joining Date Management State (Superadmin / HR can set/edit)
   const [isEditingJoiningDate, setIsEditingJoiningDate] = useState(false);
@@ -161,6 +174,86 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       addToast('Error', 'Could not update shift timing.', 'error');
     } finally {
       setIsSavingShift(false);
+    }
+  };
+
+  const handleSaveEmployeeWeekOff = async () => {
+    if (!selectedEmpForWeekOff) {
+      addToast('Select Employee', 'Please select a team member to set custom weekly off days.', 'warning');
+      return;
+    }
+    setIsSavingShift(true);
+    try {
+      const curEmpWeekOffs = { ...(currentOrg.settings?.employeeWeekOffs || {}) };
+      curEmpWeekOffs[selectedEmpForWeekOff] = empWeekOffDays;
+      await updateOrganization(currentOrg.id, {
+        settings: {
+          ...currentOrg.settings,
+          employeeWeekOffs: curEmpWeekOffs
+        }
+      });
+      const empObj = orgProfiles.find((p) => p.id === selectedEmpForWeekOff);
+      addToast('Employee Week-Off Saved ☕', `Custom weekly off days configured for ${empObj ? empObj.firstName : 'Employee'}.`, 'success');
+    } catch (err) {
+      addToast('Error', 'Could not update employee week-off.', 'error');
+    } finally {
+      setIsSavingShift(false);
+    }
+  };
+
+  const handleAddNewHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newHolidayName.trim() || !newHolidayDate) return;
+    setIsSavingHoliday(true);
+    try {
+      await addHoliday({
+        name: newHolidayName.trim(),
+        date: newHolidayDate,
+        type: newHolidayType
+      });
+      setNewHolidayName('');
+      setNewHolidayDate('');
+      addToast('Holiday Added 🎊', 'Holiday added to organization calendar.', 'success');
+    } catch (err) {
+      addToast('Error', 'Failed to add holiday.', 'error');
+    } finally {
+      setIsSavingHoliday(false);
+    }
+  };
+
+  const handleToggleDayWeekOff = async (dateStr: string, empId: string) => {
+    const key = `${dateStr}_${empId}`;
+    const curOverrides = { ...(currentOrg.settings?.customDayOverrides || {}) };
+    const currentType = curOverrides[key]?.type;
+    
+    if (currentType === 'week_off') {
+      curOverrides[key] = { type: 'working', employeeId: empId };
+      addToast('Day Marked as Working 💼', `Marked ${dateStr} as an active working day for this employee.`, 'info');
+    } else {
+      curOverrides[key] = { type: 'week_off', employeeId: empId };
+      addToast('Day Marked as Week-Off ☕', `Marked ${dateStr} as scheduled week-off for this employee.`, 'success');
+    }
+
+    await updateOrganization(currentOrg.id, {
+      settings: {
+        ...currentOrg.settings,
+        customDayOverrides: curOverrides
+      }
+    });
+  };
+
+  const handleToggleHolidayForDate = async (dateStr: string) => {
+    const existing = holidays.find((h) => (h.orgId === currentOrg.id || !h.orgId) && h.date === dateStr);
+    if (existing) {
+      await deleteHoliday(existing.id);
+      addToast('Holiday Removed', `Removed ${existing.name} (${dateStr}) from company calendar.`, 'info');
+    } else {
+      await addHoliday({
+        name: 'Corporate Holiday / Off',
+        date: dateStr,
+        type: 'public'
+      });
+      addToast('Holiday Declared 🎊', `Marked ${dateStr} as company holiday.`, 'success');
     }
   };
 
@@ -246,22 +339,42 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
 
     const daysArray = [];
 
-    // Week-off configuration (default [0] = Sunday)
-    const weekOffDays = currentOrg.settings?.weekOffDays || [0];
+    // Week-off configuration: respects employee-specific week-offs if configured
+    const empWeekOffs = currentOrg.settings?.employeeWeekOffs?.[inspectedEmployee.id];
+    const weekOffDays = Array.isArray(empWeekOffs) ? empWeekOffs : (currentOrg.settings?.weekOffDays || [0]);
     const joiningDateStr = inspectedEmployee.joiningDate || '';
 
-    // Shift timing calculation for today (IST)
-    const [shiftEndH, shiftEndM] = (currentOrg.settings?.shiftEndTime || '18:30').split(':').map(Number);
+    // Shift timing calculation strictly from organization settings
+    const orgShiftEnd = currentOrg.settings?.shiftEndTime || '18:30';
+    const [shiftEndH, shiftEndM] = orgShiftEnd.split(':').map(Number);
     const shiftEndMins = (shiftEndH || 18) * 60 + (shiftEndM || 30);
     const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
     const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
 
+    const customOverrides = currentOrg.settings?.customDayOverrides || {};
+
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const dayOfWeek = new Date(currentYear, currentMonth - 1, day).getDay();
-      const isWeekOff = weekOffDays.includes(dayOfWeek);
+      
+      let isWeekOff = weekOffDays.includes(dayOfWeek);
+      let holiday = orgHolidays.find((h) => h.date === dateStr);
 
-      const holiday = orgHolidays.find((h) => h.date === dateStr);
+      // Check per-employee or per-date overrides
+      const empOverrideKey = `${dateStr}_${inspectedEmployee.id}`;
+      const dayOverride = customOverrides[empOverrideKey] || customOverrides[dateStr];
+      if (dayOverride) {
+        if (dayOverride.type === 'week_off') {
+          isWeekOff = true;
+          holiday = undefined;
+        } else if (dayOverride.type === 'working') {
+          isWeekOff = false;
+          holiday = undefined;
+        } else if (dayOverride.type === 'holiday') {
+          holiday = { id: `override_${dateStr}`, name: dayOverride.name || 'Company Holiday', date: dateStr, orgId: currentOrg.id };
+          isWeekOff = false;
+        }
+      }
 
       const leave = employeeLeaves.find(
         (l) => l.startDate <= dateStr && l.endDate >= dateStr
@@ -336,7 +449,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     }
 
     return { daysArray, firstDayIndex, daysInMonth };
-  }, [currentYear, currentMonth, currentOrg.settings, orgHolidays, employeeLeaves, employeeMonthPunches, todayIST, inspectedEmployee.joiningDate]);
+  }, [currentYear, currentMonth, currentOrg.settings, orgHolidays, employeeLeaves, employeeMonthPunches, todayIST, inspectedEmployee.joiningDate, inspectedEmployee.id]);
 
   // Monthly summary metrics strictly based on post-joining active days
   const monthlyMetrics = useMemo(() => {
@@ -441,9 +554,31 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     const currentTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
     const isPast = selectedRosterDate < todayIST;
     const isToday = selectedRosterDate === todayIST;
+    const [rYear, rMonth, rDay] = selectedRosterDate.split('-').map(Number);
+    const dayOfWeek = new Date(rYear, rMonth - 1, rDay).getDay();
+    const customDayOverrides = currentOrg.settings?.customDayOverrides || {};
 
     return managedTeam.map((emp) => {
       const isBeforeJoining = Boolean(emp.joiningDate && selectedRosterDate < emp.joiningDate);
+      const empWeekOffDays = currentOrg.settings?.employeeWeekOffs?.[emp.id] || currentOrg.settings?.weekOffDays || [0];
+      let isEmpWeekOff = empWeekOffDays.includes(dayOfWeek);
+      let empHoliday = holidayOnDate;
+
+      // Check per-employee or per-date overrides
+      const empOverrideKey = `${selectedRosterDate}_${emp.id}`;
+      const empOverride = customDayOverrides[empOverrideKey] || customDayOverrides[selectedRosterDate];
+      if (empOverride) {
+        if (empOverride.type === 'week_off') {
+          isEmpWeekOff = true;
+          empHoliday = undefined;
+        } else if (empOverride.type === 'working') {
+          isEmpWeekOff = false;
+          empHoliday = undefined;
+        } else if (empOverride.type === 'holiday') {
+          empHoliday = { id: `override_${selectedRosterDate}`, name: empOverride.name || 'Company Holiday', date: selectedRosterDate, orgId: currentOrg.id };
+          isEmpWeekOff = false;
+        }
+      }
 
       const empRecords = attendanceRecords.filter((a) => {
         if (a.employeeId === emp.id) return true;
@@ -493,15 +628,15 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         ) {
           status = 'pending_approval';
         } else if (record.approvalStatus === 'rejected' || record.status === 'absent') {
-          if (holidayOnDate) status = 'holiday';
-          else if (weekOffOnDate.isWeekOff) status = 'week_off';
+          if (empHoliday) status = 'holiday';
+          else if (isEmpWeekOff) status = 'week_off';
           else status = 'absent';
         }
       } else if (leave) {
         status = 'on_leave';
-      } else if (holidayOnDate) {
+      } else if (empHoliday) {
         status = 'holiday';
-      } else if (weekOffOnDate.isWeekOff) {
+      } else if (isEmpWeekOff) {
         status = 'week_off';
       } else if (isPast || (isToday && currentTotalMins >= shiftEndMins)) {
         status = 'absent';
@@ -511,13 +646,13 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         employee: emp,
         record,
         leave,
-        holiday: holidayOnDate,
-        isWeekOff: weekOffOnDate.isWeekOff,
+        holiday: empHoliday,
+        isWeekOff: isEmpWeekOff,
         isBeforeJoining,
         status
       };
     });
-  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings, orgProfiles, holidayOnDate, weekOffOnDate]);
+  }, [managedTeam, attendanceRecords, leaveRequests, selectedRosterDate, todayIST, currentOrg.settings, orgProfiles, holidayOnDate]);
 
   const rosterStats = useMemo(() => {
     const total = rosterEmployeeData.length;
@@ -548,8 +683,11 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   }, [rosterEmployeeData, rosterFilterTab, rosterDept, rosterSearch]);
 
   const handleExportCSV = () => {
-    const headers = ['Employee Name', 'Email', 'Role', 'Department', 'Date', 'Status', 'Check-In Time', 'Location / Office', 'Distance (m)', 'Leave Type'];
+    const headers = ['Employee Name', 'Email', 'Role', 'Department', 'Date', 'Status', 'Check-In Time', 'Location / Office', 'Distance (m)', 'Leave Type', 'Approved By'];
     const rows = filteredRosterData.map(({ employee, record, leave, status }) => {
+      const approverId = record?.approvedBy || record?.regularizedBy;
+      const approverProfile = approverId ? orgProfiles.find((p) => p.id === approverId) : null;
+      const approverText = approverProfile ? `${approverProfile.firstName} ${approverProfile.lastName} (${approverProfile.role.toUpperCase()})` : 'N/A';
       return [
         `"${employee.firstName} ${employee.lastName}"`,
         employee.email,
@@ -560,7 +698,8 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         record?.checkInTime ? formatISTTime(record.checkInTime) : 'N/A',
         `"${record?.officeAddress || (record?.isRemote ? 'Remote' : 'N/A')}"`,
         record?.distanceMeters || '0',
-        leave ? `"${leave.leaveType.toUpperCase()} (${leave.status})"` : 'N/A'
+        leave ? `"${leave.leaveType.toUpperCase()} (${leave.status})"` : 'N/A',
+        `"${approverText}"`
       ].join(',');
     });
 
@@ -1341,13 +1480,14 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Punch Time (IST)</th>
                   <th className="py-3 px-4">Location / Address</th>
+                  <th className="py-3 px-4">Approver</th>
                   <th className="py-3 px-4">Inspection</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-color)]">
                 {filteredRosterData.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-xs text-[var(--text-muted)]">
+                    <td colSpan={7} className="py-8 text-center text-xs text-[var(--text-muted)]">
                       No team members found for this date.
                     </td>
                   </tr>
@@ -1410,6 +1550,35 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                           : status === 'pre_joining'
                           ? `Joined on ${formatISTDate(employee.joiningDate)}`
                           : (record?.officeAddress || (record?.isRemote ? `Remote (${record.distanceMeters ? `${Math.round(record.distanceMeters)}m` : 'WFH'})` : '—'))}
+                      </td>
+                      {/* Approver Column */}
+                      <td className="py-3 px-4">
+                        {record?.approvedBy || record?.regularizedBy ? (() => {
+                          const appProf = orgProfiles.find((p) => p.id === (record.approvedBy || record.regularizedBy));
+                          return (
+                            <div className="flex items-center space-x-1.5 text-emerald-400 text-xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                              <div className="min-w-0">
+                                <span className="font-bold text-white block truncate max-w-[120px]" title={appProf ? `${appProf.firstName} ${appProf.lastName}` : 'Approved'}>
+                                  {appProf ? `${appProf.firstName} ${appProf.lastName?.[0]}.` : 'Manager'}
+                                </span>
+                                <span className="text-[9px] text-emerald-400/80 block uppercase font-mono font-bold">
+                                  {appProf?.role || 'MGR'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })() : status === 'pending_approval' ? (
+                          <span className="text-[10px] text-amber-400 italic bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                            Awaiting Approval
+                          </span>
+                        ) : record?.checkInTime ? (
+                          <span className="text-[10px] text-cyan-400/80 font-mono">
+                            Geo Verified
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-1.5 justify-end">
@@ -1615,7 +1784,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                             {formatISTDate(req.date)}
                           </span>
                           <span className="text-[10px] text-[var(--text-muted)] block">
-                            Shift: {currentOrg.settings?.shiftStartTime || '10:00'} - {currentOrg.settings?.shiftEndTime || '19:00'}
+                            Shift: {currentOrg.settings?.shiftStartTime || '09:30'} - {currentOrg.settings?.shiftEndTime || '18:30'}
                           </span>
                         </td>
 
@@ -1639,10 +1808,24 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                               <span>Pending Review</span>
                             </span>
                           ) : req.regularizationStatus === 'approved' ? (
-                            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                              <CheckCircle2 className="w-3 h-3" />
-                              <span>Approved</span>
-                            </span>
+                            <div className="space-y-0.5">
+                              <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Approved</span>
+                              </span>
+                              {(() => {
+                                const approver = orgProfiles.find((p) => p.id === (req.approvedBy || req.regularizedBy));
+                                return approver ? (
+                                  <span className="block text-[10px] text-emerald-400 font-medium truncate max-w-[140px]">
+                                    by {approver.firstName} {approver.lastName} ({approver.role.toUpperCase()})
+                                  </span>
+                                ) : (
+                                  <span className="block text-[10px] text-emerald-400/80 font-medium">
+                                    by Manager/HR
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           ) : (
                             <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30">
                               <XCircle className="w-3 h-3" />
@@ -1871,7 +2054,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                       : '—'}
                   </span>
                   <span className="text-[10px] text-[var(--text-muted)] block mt-0.5">
-                    Shift starts {currentOrg.settings?.shiftStartTime || '10:00'} IST
+                    Shift starts {currentOrg.settings?.shiftStartTime || '09:30'} IST
                   </span>
                 </div>
 
@@ -1887,7 +2070,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                       : '—'}
                   </span>
                   <span className="text-[10px] text-[var(--text-muted)] block mt-0.5">
-                    Shift ends {currentOrg.settings?.shiftEndTime || '19:00'} IST
+                    Shift ends {currentOrg.settings?.shiftEndTime || '18:30'} IST
                   </span>
                 </div>
               </div>
@@ -1897,7 +2080,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                 <div className="flex items-center justify-between pb-2 border-b border-[var(--border-color)]">
                   <span className="text-slate-400 font-medium">Shift Configuration:</span>
                   <span className="font-bold text-[var(--text-primary)] font-mono">
-                    {currentOrg.settings?.shiftStartTime || '10:00'} - {currentOrg.settings?.shiftEndTime || '19:00'} IST ({currentOrg.settings?.workHoursPerDay || 8}h Shift)
+                    {currentOrg.settings?.shiftStartTime || '09:30'} - {currentOrg.settings?.shiftEndTime || '18:30'} IST ({currentOrg.settings?.workHoursPerDay || 8}h Shift)
                   </span>
                 </div>
 
@@ -1926,6 +2109,80 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Approver Details (Shown when approved/regularized) */}
+              {(selectedCalendarDay.punch?.approvedBy || selectedCalendarDay.punch?.regularizedBy) && (() => {
+                const approverId = selectedCalendarDay.punch.approvedBy || selectedCalendarDay.punch.regularizedBy;
+                const approver = orgProfiles.find((p) => p.id === approverId);
+                return (
+                  <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider block text-emerald-400">
+                          Attendance Approved & Verified
+                        </span>
+                        <p className="text-xs font-bold text-white mt-0.5 truncate">
+                          Approved by: {approver ? `${approver.firstName} ${approver.lastName}` : 'Authorized Manager'}
+                          <span className="ml-1.5 text-[10px] font-semibold text-emerald-300 px-1.5 py-0.2 rounded bg-emerald-500/20">
+                            {approver?.role?.toUpperCase() || 'MANAGEMENT'}
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                    {selectedCalendarDay.punch?.approvalNotes && (
+                      <p className="text-[11px] text-emerald-400/90 mt-2 pt-2 border-t border-emerald-500/20">
+                        <strong>Approval Notes:</strong> {selectedCalendarDay.punch.approvalNotes}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Calendar Customization Controls (Superadmin & HR) */}
+              {isHrOrSuperadmin && (
+                <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-200 flex items-center space-x-1.5">
+                      <CalendarDays className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Calendar Customization for {selectedCalendarDay.dateStr}</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-300 font-mono font-bold">
+                      {selectedCalendarDay.isWeekOff ? 'Week-Off' : selectedCalendarDay.holiday ? 'Holiday' : 'Working Day'}
+                    </span>
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    Change week-off or holiday classification for this employee ({inspectedEmployee.firstName}) or the entire organization on this date.
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleDayWeekOff(selectedCalendarDay.dateStr, inspectedEmployee.id)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition flex items-center space-x-1 cursor-pointer"
+                    >
+                      <Coffee className="w-3.5 h-3.5 text-indigo-300" />
+                      <span>
+                        {selectedCalendarDay.isWeekOff ? 'Mark as Working Day 💼' : 'Set as Custom Week-Off ☕'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleHolidayForDate(selectedCalendarDay.dateStr)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 border border-purple-500/40 transition flex items-center space-x-1 cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                      <span>
+                        {selectedCalendarDay.holiday ? 'Remove Holiday ❌' : 'Declare Company Holiday 🎊'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Regularization Notes (if applicable) */}
               {(selectedCalendarDay.status === 'regularized' || selectedCalendarDay.status === 'pending') && selectedCalendarDay.punch?.regularizationStatus && selectedCalendarDay.punch.regularizationStatus !== 'none' && (
@@ -2029,7 +2286,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 4. SHIFT TIMING & WEEK-OFF CONFIGURATION MODAL (SUPERADMIN / HR ONLY)      */}
+      {/* 4. SHIFT TIMING & ORGANIZATION CALENDAR CONFIGURATION (SUPERADMIN / HR)    */}
       {/* ========================================================================= */}
       {isShiftModalOpen && isHrOrSuperadmin && (
         <div
@@ -2038,19 +2295,20 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-lg bg-[var(--bg-card)] rounded-t-3xl sm:rounded-2xl border border-[var(--border-color)] shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh] overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200"
+            className="relative w-full max-w-xl bg-[var(--bg-card)] rounded-t-3xl sm:rounded-2xl border border-[var(--border-color)] shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200"
           >
+            {/* Modal Header */}
             <div className="p-4 sm:p-5 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-card-subtle)] shrink-0">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-600/15 text-blue-500 flex items-center justify-center font-bold">
-                  <Clock className="w-5 h-5" />
+                  <CalendarDays className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-sm sm:text-base font-bold text-[var(--text-primary)]">
-                    Team Shift Timings & Week-Offs
+                    Organization Shift & Calendar Console
                   </h3>
                   <p className="text-xs text-[var(--text-muted)]">
-                    Configure official shift hours & weekly off days for {currentOrg.name}
+                    Configure shifts, employee week-offs & corporate holidays for {currentOrg.name}
                   </p>
                 </div>
               </div>
@@ -2062,149 +2320,450 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
               </button>
             </div>
 
-            <div className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1 overscroll-contain">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
-                    Shift Start Time (IST)
-                  </label>
-                  <input
-                    type="time"
-                    value={shiftStart}
-                    onChange={(e) => setShiftStart(e.target.value)}
-                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
-                    Shift End Time (IST)
-                  </label>
-                  <input
-                    type="time"
-                    value={shiftEnd}
-                    onChange={(e) => setShiftEnd(e.target.value)}
-                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
-                    Grace Period (Minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="120"
-                    value={graceMins}
-                    onChange={(e) => setGraceMins(Number(e.target.value) || 0)}
-                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
-                    Half-Day Threshold (Hours)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="1"
-                    max="12"
-                    value={halfDayHours}
-                    onChange={(e) => setHalfDayHours(Number(e.target.value) || 4.5)}
-                    className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              {/* Week-Off Days */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                    Scheduled Team Week-Offs
-                  </label>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffs([0])}
-                      className="text-[10px] text-blue-400 hover:underline font-semibold"
-                    >
-                      Sunday Only
-                    </button>
-                    <span className="text-[var(--text-muted)]">•</span>
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffs([0, 6])}
-                      className="text-[10px] text-blue-400 hover:underline font-semibold"
-                    >
-                      Sat + Sun
-                    </button>
-                    <span className="text-[var(--text-muted)]">•</span>
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffs([])}
-                      className="text-[10px] text-rose-400 hover:underline font-semibold"
-                    >
-                      None
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-7 gap-1">
-                  {[
-                    { name: 'Sun', day: 0 },
-                    { name: 'Mon', day: 1 },
-                    { name: 'Tue', day: 2 },
-                    { name: 'Wed', day: 3 },
-                    { name: 'Thu', day: 4 },
-                    { name: 'Fri', day: 5 },
-                    { name: 'Sat', day: 6 }
-                  ].map(({ name, day }) => {
-                    const isSelected = weekOffs.includes(day);
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            setWeekOffs(weekOffs.filter((d) => d !== day));
-                          } else {
-                            setWeekOffs([...weekOffs, day].sort());
-                          }
-                        }}
-                        className={`py-2 rounded-xl text-xs font-bold transition border ${
-                          isSelected
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                            : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border-[var(--border-color)] hover:text-[var(--text-primary)]'
-                        }`}
-                      >
-                        {name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+            {/* Modal Tabs Navigation */}
+            <div className="flex items-center px-4 pt-2.5 border-b border-[var(--border-color)] bg-[var(--bg-card)] gap-2 shrink-0 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setShiftModalTab('shift')}
+                className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  shiftModalTab === 'shift'
+                    ? 'border-blue-500 text-blue-500'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Shift Timings & Global Offs</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShiftModalTab('emp_weekoffs');
+                  if (!selectedEmpForWeekOff && orgProfiles.length > 0) {
+                    const firstEmp = orgProfiles[0].id;
+                    setSelectedEmpForWeekOff(firstEmp);
+                    const curEmpDays = currentOrg.settings?.employeeWeekOffs?.[firstEmp] || currentOrg.settings?.weekOffDays || [0];
+                    setEmpWeekOffDays(curEmpDays);
+                  }
+                }}
+                className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  shiftModalTab === 'emp_weekoffs'
+                    ? 'border-blue-500 text-blue-500'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Employee-Specific Week-Offs</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShiftModalTab('holidays')}
+                className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  shiftModalTab === 'holidays'
+                    ? 'border-blue-500 text-blue-500'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Corporate Holidays ({orgHolidays.length})</span>
+              </button>
             </div>
 
-            <div className="p-3.5 sm:p-4 border-t border-[var(--border-color)] flex items-center justify-end space-x-2 bg-[var(--bg-card-subtle)] shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsShiftModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-muted)] hover:bg-[var(--border-color)] transition"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSavingShift}
-                onClick={handleSaveShiftSettings}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
-              >
-                <span>{isSavingShift ? 'Saving...' : 'Save Shift Settings'}</span>
-              </button>
+            {/* Modal Body */}
+            <div className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1 overscroll-contain">
+              {/* TAB 1: SHIFT TIMINGS & GLOBAL WEEK-OFFS */}
+              {shiftModalTab === 'shift' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                        Shift Start Time (IST) *
+                      </label>
+                      <input
+                        type="time"
+                        value={shiftStart}
+                        onChange={(e) => setShiftStart(e.target.value)}
+                        className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[10px] text-[var(--text-muted)] mt-0.5 block">
+                        Official punch-in window opens 30 min before
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                        Shift End Time (IST) *
+                      </label>
+                      <input
+                        type="time"
+                        value={shiftEnd}
+                        onChange={(e) => setShiftEnd(e.target.value)}
+                        className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[10px] text-[var(--text-muted)] mt-0.5 block">
+                        Shift ends; unrecorded shifts marked absent
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                        Grace Period (Minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="120"
+                        value={graceMins}
+                        onChange={(e) => setGraceMins(Number(e.target.value) || 0)}
+                        className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[10px] text-[var(--text-muted)] mt-0.5 block">
+                        Late-login threshold
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                        Half-Day Threshold (Hours)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="1"
+                        max="12"
+                        value={halfDayHours}
+                        onChange={(e) => setHalfDayHours(Number(e.target.value) || 4.5)}
+                        className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-[var(--text-primary)] font-mono text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-[10px] text-[var(--text-muted)] mt-0.5 block">
+                        Minimum hours for half day
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Standard Team Week-Offs */}
+                  <div className="pt-2 border-t border-[var(--border-color)]">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[var(--text-primary)]">
+                          Default Organization Week-Offs
+                        </label>
+                        <span className="text-[10px] text-[var(--text-muted)]">
+                          Applies to team members without custom schedules
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => setWeekOffs([0])}
+                          className="text-[10px] text-blue-400 hover:underline font-semibold cursor-pointer"
+                        >
+                          Sunday Only
+                        </button>
+                        <span className="text-[var(--text-muted)]">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setWeekOffs([0, 6])}
+                          className="text-[10px] text-blue-400 hover:underline font-semibold cursor-pointer"
+                        >
+                          Sat + Sun
+                        </button>
+                        <span className="text-[var(--text-muted)]">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setWeekOffs([])}
+                          className="text-[10px] text-rose-400 hover:underline font-semibold cursor-pointer"
+                        >
+                          None
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-7 gap-1">
+                      {[
+                        { name: 'Sun', day: 0 },
+                        { name: 'Mon', day: 1 },
+                        { name: 'Tue', day: 2 },
+                        { name: 'Wed', day: 3 },
+                        { name: 'Thu', day: 4 },
+                        { name: 'Fri', day: 5 },
+                        { name: 'Sat', day: 6 }
+                      ].map(({ name, day }) => {
+                        const isSelected = weekOffs.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setWeekOffs(weekOffs.filter((d) => d !== day));
+                              } else {
+                                setWeekOffs([...weekOffs, day].sort());
+                              }
+                            }}
+                            className={`py-2 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                                : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border-[var(--border-color)] hover:text-[var(--text-primary)]'
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: EMPLOYEE-SPECIFIC WEEK-OFFS */}
+              {shiftModalTab === 'emp_weekoffs' && (
+                <div className="space-y-4">
+                  <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1">
+                    <p className="font-bold flex items-center space-x-1.5">
+                      <Users className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Custom Employee Weekly Rosters</span>
+                    </p>
+                    <p className="text-[11px] text-blue-300/80 leading-relaxed">
+                      Configure custom weekly off days for individual team members (e.g. support engineers or interns working Sunday with mid-week off).
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                      Select Team Member *
+                    </label>
+                    <select
+                      value={selectedEmpForWeekOff}
+                      onChange={(e) => {
+                        const empId = e.target.value;
+                        setSelectedEmpForWeekOff(empId);
+                        const cur = currentOrg.settings?.employeeWeekOffs?.[empId] || currentOrg.settings?.weekOffDays || [0];
+                        setEmpWeekOffDays(cur);
+                      }}
+                      className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-xs font-bold text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    >
+                      {orgProfiles.map((p) => (
+                        <option key={p.id} value={p.id} className="bg-[var(--bg-card)] text-[var(--text-primary)]">
+                          {p.firstName} {p.lastName} ({p.role.toUpperCase()} • {p.department})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedEmpForWeekOff && (
+                    <div className="space-y-2 pt-2 border-t border-[var(--border-color)]">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-[11px] font-bold text-[var(--text-primary)]">
+                          Weekly Off Days for {orgProfiles.find((p) => p.id === selectedEmpForWeekOff)?.firstName}
+                        </label>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => setEmpWeekOffDays([0])}
+                            className="text-[10px] text-blue-400 hover:underline font-semibold cursor-pointer"
+                          >
+                            Sunday Only
+                          </button>
+                          <span className="text-[var(--text-muted)]">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setEmpWeekOffDays([0, 6])}
+                            className="text-[10px] text-blue-400 hover:underline font-semibold cursor-pointer"
+                          >
+                            Sat + Sun
+                          </button>
+                          <span className="text-[var(--text-muted)]">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setEmpWeekOffDays([1])}
+                            className="text-[10px] text-indigo-400 hover:underline font-semibold cursor-pointer"
+                          >
+                            Monday Only
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-7 gap-1">
+                        {[
+                          { name: 'Sun', day: 0 },
+                          { name: 'Mon', day: 1 },
+                          { name: 'Tue', day: 2 },
+                          { name: 'Wed', day: 3 },
+                          { name: 'Thu', day: 4 },
+                          { name: 'Fri', day: 5 },
+                          { name: 'Sat', day: 6 }
+                        ].map(({ name, day }) => {
+                          const isSelected = empWeekOffDays.includes(day);
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setEmpWeekOffDays(empWeekOffDays.filter((d) => d !== day));
+                                } else {
+                                  setEmpWeekOffDays([...empWeekOffDays, day].sort());
+                                }
+                              }}
+                              className={`py-2 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                                  : 'bg-[var(--bg-card-subtle)] text-[var(--text-muted)] border-[var(--border-color)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              {name}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSaveEmployeeWeekOff}
+                          disabled={isSavingShift}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition shadow-sm cursor-pointer"
+                        >
+                          {isSavingShift ? 'Saving...' : 'Save Employee Week-Off'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: CORPORATE HOLIDAYS MANAGEMENT */}
+              {shiftModalTab === 'holidays' && (
+                <div className="space-y-4">
+                  {/* Form to declare new holiday */}
+                  <form onSubmit={handleAddNewHoliday} className="p-3.5 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-color)] space-y-3">
+                    <span className="text-[11px] font-bold text-[var(--text-primary)] block">
+                      + Declare Corporate Holiday / Paid Off Day
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-1">
+                        <label className="block text-[10px] font-semibold text-[var(--text-muted)] mb-1">Date *</label>
+                        <input
+                          type="date"
+                          required
+                          value={newHolidayDate}
+                          onChange={(e) => setNewHolidayDate(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-lg text-xs font-mono text-[var(--text-primary)] focus:outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[10px] font-semibold text-[var(--text-muted)] mb-1">Holiday Name *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Diwali / Republic Day / Company Foundation Day"
+                          value={newHolidayName}
+                          onChange={(e) => setNewHolidayName(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-lg text-xs text-[var(--text-primary)] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center space-x-2">
+                        <label className="text-[10px] font-semibold text-[var(--text-muted)]">Type:</label>
+                        <select
+                          value={newHolidayType}
+                          onChange={(e) => setNewHolidayType(e.target.value as any)}
+                          className="px-2 py-1 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-lg text-[11px] text-[var(--text-primary)]"
+                        >
+                          <option value="public">Official Public / National Holiday</option>
+                          <option value="optional">Optional / Floating Holiday</option>
+                          <option value="restricted">Restricted Company Off</option>
+                        </select>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSavingHoliday || !newHolidayName.trim() || !newHolidayDate}
+                        className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs transition cursor-pointer flex items-center space-x-1"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{isSavingHoliday ? 'Declaring...' : 'Add Holiday'}</span>
+                      </button>
+                    </div>
+                  </form>
+
+                  {/* Existing Holidays List */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold text-[var(--text-primary)] block">
+                      Scheduled Organization Holidays ({orgHolidays.length})
+                    </span>
+                    <div className="divide-y divide-[var(--border-color)] rounded-xl border border-[var(--border-color)] overflow-hidden bg-[var(--bg-card)] max-h-56 overflow-y-auto">
+                      {orgHolidays.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-[var(--text-muted)]">
+                          No official corporate holidays configured.
+                        </div>
+                      ) : (
+                        orgHolidays
+                          .sort((a, b) => a.date.localeCompare(b.date))
+                          .map((h) => (
+                            <div key={h.id} className="p-2.5 flex items-center justify-between gap-2 hover:bg-[var(--bg-card-subtle)] transition text-xs">
+                              <div className="flex items-center space-x-2.5 min-w-0">
+                                <span className="font-mono font-bold text-blue-400 text-[11px] shrink-0 bg-blue-500/10 px-2 py-0.5 rounded">
+                                  {h.date}
+                                </span>
+                                <div className="truncate">
+                                  <span className="font-bold text-[var(--text-primary)] block truncate">
+                                    {h.name}
+                                  </span>
+                                  <span className="text-[10px] text-[var(--text-muted)] uppercase">
+                                    {h.type || 'Public'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await deleteHoliday(h.id);
+                                  addToast('Holiday Removed', `Removed ${h.name} from calendar.`, 'info');
+                                }}
+                                className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition cursor-pointer shrink-0"
+                                title="Delete Holiday"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3.5 sm:p-4 border-t border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-card-subtle)] shrink-0">
+              <span className="text-[11px] text-[var(--text-muted)]">
+                Syncs dynamically with Supabase & Mobile Apps
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsShiftModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-muted)] hover:bg-[var(--border-color)] transition cursor-pointer"
+                >
+                  Close
+                </button>
+                {shiftModalTab === 'shift' && (
+                  <button
+                    type="button"
+                    disabled={isSavingShift}
+                    onClick={handleSaveShiftSettings}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                  >
+                    <span>{isSavingShift ? 'Saving...' : 'Save Shift Settings'}</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

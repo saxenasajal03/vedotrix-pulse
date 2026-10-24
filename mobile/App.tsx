@@ -368,13 +368,29 @@ export default function App() {
   const [locLoading, setLocLoading] = useState<boolean>(false);
   const [attendanceAlertActive, setAttendanceAlertActive] = useState<boolean>(false);
   const todayStr = getTodayISTDate();
-  const todayHoliday = useMemo(() => holidays.find((h) => h.date === todayStr), [holidays, todayStr]);
+  const todayHoliday = useMemo(() => {
+    const directHoliday = holidays.find((h) => h.date === todayStr);
+    if (directHoliday) return directHoliday;
+    const overrides = currentOrg?.settings?.customDayOverrides || {};
+    const empOverride = overrides[`${todayStr}_${userProfile?.id}`] || overrides[todayStr];
+    if (empOverride?.type === 'holiday') {
+      return { id: `override_${todayStr}`, name: empOverride.name || 'Company Holiday', date: todayStr };
+    }
+    return null;
+  }, [holidays, todayStr, currentOrg, userProfile]);
+
   const isWeekOffToday = useMemo(() => {
+    const overrides = currentOrg?.settings?.customDayOverrides || {};
+    const empOverride = overrides[`${todayStr}_${userProfile?.id}`] || overrides[todayStr];
+    if (empOverride?.type === 'week_off') return true;
+    if (empOverride?.type === 'working') return false;
+
     const nowISTDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
     const todayDayOfWeek = nowISTDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    const weekOffDays: number[] = currentOrg?.settings?.weekOffDays || [0];
+    const userWeekOffs = currentOrg?.settings?.employeeWeekOffs?.[userProfile?.id];
+    const weekOffDays: number[] = Array.isArray(userWeekOffs) ? userWeekOffs : (currentOrg?.settings?.weekOffDays || [0]);
     return weekOffDays.includes(todayDayOfWeek);
-  }, [currentOrg]);
+  }, [currentOrg, userProfile, todayStr]);
 
   // Team Profiles & Hierarchy
   const [teamProfiles, setTeamProfiles] = useState<any[]>([]);
@@ -3497,7 +3513,7 @@ export default function App() {
               </View>
 
               <Text style={styles.cardDesc}>
-                Office: {activeOfficeCoords.name} • Shift: {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'} IST
+                Office: {activeOfficeCoords.name} • Shift: {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'} IST
               </Text>
 
               <View style={[styles.statusBadge, isInside ? styles.statusBadgeInside : styles.statusBadgeRemote]}>
@@ -5868,7 +5884,7 @@ export default function App() {
                         style={[styles.smallAddBtn, { backgroundColor: '#4f46e5' }]}
                         onPress={() => {
                           setOrgShiftStart(currentOrg?.settings?.shiftStartTime || '09:30');
-                          setOrgShiftEnd(currentOrg?.settings?.shiftEndTime || '19:00');
+                          setOrgShiftEnd(currentOrg?.settings?.shiftEndTime || '18:30');
                           setOrgGracePeriod(String(currentOrg?.settings?.gracePeriodMins ?? 15));
                           setOrgGeofenceRadius(String(activeOfficeCoords.radiusMeters || 200));
                           setIsOrgSettingsModal(true);
@@ -5882,7 +5898,7 @@ export default function App() {
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Shift Timing:</Text>
                       <Text style={styles.detailVal}>
-                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'} IST
+                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'} IST
                       </Text>
                     </View>
 
@@ -7211,7 +7227,7 @@ export default function App() {
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Shift Window:</Text>
                       <Text style={styles.detailVal}>
-                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '19:00'} IST
+                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'} IST
                       </Text>
                     </View>
                     <View style={styles.detailRow}>
@@ -7922,7 +7938,7 @@ export default function App() {
                 style={styles.textInput}
                 value={orgShiftEnd}
                 onChangeText={setOrgShiftEnd}
-                placeholder="19:00"
+                placeholder="18:30"
                 placeholderTextColor="#64748b"
               />
 
@@ -7957,7 +7973,7 @@ export default function App() {
                     const newSettings = {
                       ...curSettings,
                       shiftStartTime: orgShiftStart.trim() || '09:30',
-                      shiftEndTime: orgShiftEnd.trim() || '19:00',
+                      shiftEndTime: orgShiftEnd.trim() || '18:30',
                       gracePeriodMins: parseInt(orgGracePeriod) || 15
                     };
 
