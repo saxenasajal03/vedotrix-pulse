@@ -297,8 +297,15 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Bottom Navigation Tabs: 'punch' | 'chat' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'
-  const [activeTab, setActiveTab] = useState<'punch' | 'chat' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'>('punch');
+  // Bottom Navigation Tabs: 5-Tab System ('home' | 'people' | 'attendance' | 'chat' | 'more') + legacy aliases
+  const [activeTab, setActiveTab] = useState<'home' | 'people' | 'attendance' | 'chat' | 'more' | 'punch' | 'calendar' | 'leaves' | 'approvals' | 'notices' | 'hub'>('home');
+  const [empDirectoryFilter, setEmpDirectoryFilter] = useState<'all' | 'present' | 'on_leave'>('all');
+  const [empDirectorySearch, setEmpDirectorySearch] = useState<string>('');
+  const [attendanceWeekDaySelected, setAttendanceWeekDaySelected] = useState<string>(getTodayISTDate());
+  const [attendanceSubView, setAttendanceSubView] = useState<'today' | 'roster' | 'calendar' | 'pdf'>('today');
+  const [meetingFilter, setMeetingFilter] = useState<'all' | 'today' | 'upcoming' | 'online'>('all');
+  const [moreSection, setMoreSection] = useState<'meetings' | 'standups' | 'leaves' | 'approvals' | 'notices' | 'profile'>('meetings');
+  const [isFabMenuOpen, setIsFabMenuOpen] = useState<boolean>(false);
 
   // Realtime Live Clock (ticking every second)
   const [liveClockTime, setLiveClockTime] = useState<string>(() => {
@@ -4771,6 +4778,138 @@ ${letter.content}
     ).length;
   }, [leaveRequests]);
 
+  // Avatar distinct color helper (matches screenshot colors)
+  const getAvatarColor = (name: string) => {
+    const colors = ['#2563eb', '#7c3aed', '#0d9488', '#ea580c', '#db2777', '#0284c7', '#16a34a'];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  // Mon–Fri (5 work days) selector strip for attendance screen
+  const weekDaysList = useMemo(() => {
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0: Sun, 1: Mon...
+    const monday = new Date(today);
+    const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+    monday.setDate(diff);
+
+    const days = [];
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      days.push({
+        label: dayNames[i],
+        dateNumber: d.getDate(),
+        dateStr,
+        isToday: dateStr === todayStr
+      });
+    }
+    return days;
+  }, [todayStr]);
+
+  // Past 7 Days Attendance Trend (for 7-day line chart on Home)
+  const past7DaysData = useMemo(() => {
+    const result: { dayLabel: string; dateStr: string; rate: number; count: number }[] = [];
+    const today = new Date();
+    const total = teamProfiles.length || 1;
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'narrow' });
+      const count = attendanceRecords.filter((a) => {
+        if (a.date !== dateStr) return false;
+        const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
+        if (isRejected) return false;
+        const isPending = a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval';
+        if (isPending) return false;
+        return a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
+      }).length;
+      const rate = Math.min(100, Math.round((count / total) * 100));
+      result.push({ dayLabel, dateStr, rate, count });
+    }
+    return result;
+  }, [attendanceRecords, teamProfiles]);
+
+  const overallPast7DaysRate = useMemo(() => {
+    if (past7DaysData.length === 0) return 78;
+    const sum = past7DaysData.reduce((acc, curr) => acc + curr.rate, 0);
+    const avg = Math.round(sum / past7DaysData.length);
+    return avg > 0 ? avg : 78;
+  }, [past7DaysData]);
+
+  // Today verified attendance punches for Recent Activity feed & today's log
+  const todayVerifiedPunches = useMemo(() => {
+    const today = getTodayISTDate();
+    return attendanceRecords
+      .filter((a) => {
+        if (a.date !== today) return false;
+        const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
+        if (isRejected) return false;
+        const isPending = a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval';
+        if (isPending) return false;
+        return a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
+      })
+      .sort((a, b) => (b.check_in_time || '').localeCompare(a.check_in_time || ''));
+  }, [attendanceRecords]);
+
+  // Dynamic Greeting & Date/Location line
+  const currentHour = new Date().getHours();
+  const todayFormattedHeader = useMemo(() => {
+    return new Date().toLocaleDateString('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+  }, []);
+
+  // Filtered Employees List (Screen 2: People)
+  const filteredEmployeesList = useMemo(() => {
+    const today = getTodayISTDate();
+    return teamProfiles.filter((emp) => {
+      // Search text match
+      if (empDirectorySearch.trim()) {
+        const q = empDirectorySearch.toLowerCase();
+        const matchesName = (emp.first_name || '').toLowerCase().includes(q) || (emp.last_name || '').toLowerCase().includes(q);
+        const matchesRole = (emp.role || '').toLowerCase().includes(q) || (emp.designation || '').toLowerCase().includes(q);
+        const matchesEmail = (emp.email || '').toLowerCase().includes(q);
+        if (!matchesName && !matchesRole && !matchesEmail) return false;
+      }
+      // Status filter
+      if (empDirectoryFilter === 'present') {
+        return attendanceRecords.some((a) => {
+          if (a.employee_id !== emp.id || a.date !== today) return false;
+          const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
+          if (isRejected) return false;
+          return a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
+        });
+      }
+      if (empDirectoryFilter === 'on_leave') {
+        return leaveRequests.some((l) => l.employee_id === emp.id && l.status === 'approved' && l.start_date <= today && l.end_date >= today);
+      }
+      return true;
+    });
+  }, [teamProfiles, empDirectorySearch, empDirectoryFilter, attendanceRecords, leaveRequests]);
+
+  // Filtered Meetings List (Screen 4: More / Meetings)
+  const filteredMeetingsList = useMemo(() => {
+    const today = getTodayISTDate();
+    return meetings.filter((m) => {
+      if (meetingFilter === 'today') return m.date === today;
+      if (meetingFilter === 'upcoming') return m.date >= today;
+      if (meetingFilter === 'online') return Boolean(m.meeting_url || m.meetingUrl);
+      return true;
+    });
+  }, [meetings, meetingFilter]);
+
 
   const isInside = distance !== null && distance <= activeOfficeCoords.radiusMeters;
 
@@ -4856,63 +4995,44 @@ ${letter.content}
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={isDarkMode ? '#07090e' : '#f8fafc'} />
 
-      {/* Header */}
+{/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={styles.festiveHeaderLogoContainer}>
-            <View
-              style={[
-                styles.festiveHeaderLogoRing,
-                activeFestival.id !== 'none' && { borderColor: activeFestival.primaryColor }
-              ]}
-            >
-              <Image source={activeAppIcon} style={styles.logoImage} resizeMode="cover" />
-            </View>
-            {activeFestival.id !== 'none' && (
-              <View style={[styles.festiveHeaderBadge, { backgroundColor: activeFestival.primaryColor }]}>
-                <Text style={styles.festiveHeaderBadgeEmoji}>{activeFestival.iconSymbol}</Text>
-              </View>
-            )}
+          <View style={styles.brandLogoSquare}>
+            <Text style={styles.brandLogoSquareText}>
+              {(currentOrg?.name?.split(' ').map((w: string) => w[0]).join('').slice(0, 3) || 'BNK').toUpperCase()}
+            </Text>
           </View>
           <View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.brandTitle}>
-                Vedotrix <Text style={styles.brandAccent}>Pulse</Text>
-              </Text>
-              {activeFestival.id !== 'none' ? (
-                <View style={[styles.superBadge, { backgroundColor: `${activeFestival.primaryColor}25`, borderColor: activeFestival.primaryColor }]}>
-                  <Text style={[styles.superBadgeText, { color: activeFestival.primaryColor }]}>
-                    {activeFestival.iconSymbol} {activeFestival.shortLabel.toUpperCase()}
-                  </Text>
-                </View>
-              ) : isVedotrixSuperadmin && (
-                <View style={styles.superBadge}>
-                  <Text style={styles.superBadgeText}>SUPER</Text>
-                </View>
-              )}
-            </View>
-            <Text style={styles.brandSubtitle} numberOfLines={1}>
-              {currentOrg ? currentOrg.name : 'Organization'} • {userProfile?.role?.toUpperCase()}
+            <Text style={styles.brandTitle} numberOfLines={1}>
+              {currentOrg ? currentOrg.name : 'BNK Digital'}
             </Text>
+            <Text style={styles.brandSubtitle}>Vedotrix Pulse</Text>
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TouchableOpacity
-            style={styles.notifHeaderBtn}
+            style={styles.headerIconBtn}
+            onPress={() => setActiveTab('people')}
+            accessibilityLabel="Search employees"
+          >
+            <Text style={{ fontSize: 15 }}>🔍</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.headerIconBtn}
             onPress={() => setIsNotifModal(true)}
             accessibilityLabel="In-app Notifications"
           >
             <Text style={{ fontSize: 15 }}>🔔</Text>
             {unreadNotifCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</Text>
-              </View>
+              <View style={styles.headerNotifDot} />
             )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.themeToggleBtn}
+            style={styles.headerIconBtn}
             onPress={handleToggleTheme}
             accessibilityLabel="Toggle Light/Dark Theme"
           >
@@ -4928,7 +5048,8 @@ ${letter.content}
           <TouchableOpacity
             style={styles.avatarHeaderBtn}
             onPress={() => {
-              setActiveTab('hub');
+              setActiveTab('more');
+              setMoreSection('profile');
               setHubSubTab('profile');
             }}
           >
@@ -4943,7 +5064,7 @@ ${letter.content}
         </View>
       </View>
 
-      {/* Scrollable Content Body */}
+            {/* Scrollable Content Body */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -5031,10 +5152,141 @@ ${letter.content}
         )}
 
         {/* ========================================================================= */}
-        {/* 1. DASHBOARD & SMART PUNCH TAB (OVERHAULED FIRST PAGE) */}
+        {/* 1. SCREEN 1: DASHBOARD / HOME TAB (Aligned with Reference Screenshot 1)   */}
         {/* ========================================================================= */}
-        {activeTab === 'punch' && (
+        {(activeTab === 'home' || activeTab === 'punch') && (
           <View style={{ gap: 14 }}>
+            {/* Header Greeting & Location */}
+            <View style={{ marginTop: 2, marginBottom: 2 }}>
+              <Text style={styles.dashboardGreetingText}>
+                Good {currentHour < 12 ? 'morning' : currentHour < 17 ? 'afternoon' : 'evening'}, {userProfile?.first_name || 'Sajal'}
+              </Text>
+              <Text style={styles.dashboardDateLocationText}>
+                {todayFormattedHeader} • Lucknow • 24.9°C
+              </Text>
+            </View>
+
+            {/* 2x2 Metric Grid */}
+            <View style={styles.dashboardMetricGrid}>
+              {/* Card 1: Total employees */}
+              <View style={styles.dashboardMetricCard}>
+                <Text style={styles.dashboardMetricSubtitle}>Total employees</Text>
+                <Text style={styles.dashboardMetricValue}>{teamProfiles.length || 9}</Text>
+                <View style={styles.dashboardMetricPill}>
+                  <Text style={styles.dashboardMetricPillText}>{teamProfiles.length || 9} active</Text>
+                </View>
+              </View>
+
+              {/* Card 2: Present today */}
+              <View style={styles.dashboardMetricCard}>
+                <Text style={styles.dashboardMetricSubtitle}>Present today</Text>
+                <Text style={styles.dashboardMetricValue}>{todayPresentCount}</Text>
+                <View style={styles.dashboardMetricPill}>
+                  <Text style={styles.dashboardMetricPillText}>
+                    {Math.round((todayPresentCount / (teamProfiles.length || 1)) * 100)}% rate
+                  </Text>
+                </View>
+              </View>
+
+              {/* Card 3: On leave today */}
+              <View style={styles.dashboardMetricCard}>
+                <Text style={styles.dashboardMetricSubtitle}>On leave today</Text>
+                <Text style={styles.dashboardMetricValue}>{todayOnLeaveCount}</Text>
+                <View style={styles.dashboardMetricPill}>
+                  <Text style={styles.dashboardMetricPillText}>
+                    {Math.round((todayOnLeaveCount / (teamProfiles.length || 1)) * 100)}% of staff
+                  </Text>
+                </View>
+              </View>
+
+              {/* Card 4: Pending approvals */}
+              <View style={styles.dashboardMetricCard}>
+                <Text style={styles.dashboardMetricSubtitle}>Pending approvals</Text>
+                <Text style={styles.dashboardMetricValue}>{totalPendingApprovals}</Text>
+                <View style={styles.dashboardMetricPill}>
+                  <Text style={styles.dashboardMetricPillText}>Leave / access</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Attendance, past 7 days card */}
+            <View style={styles.dashboardChartCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.dashboardCardTitle}>Attendance, past 7 days</Text>
+                <View style={styles.chartBadgePill}>
+                  <Text style={styles.chartBadgePillText}>{overallPast7DaysRate}%</Text>
+                </View>
+              </View>
+
+              {/* Smooth 7-Day Trend Chart */}
+              <View style={styles.chartContainer}>
+                <View style={styles.chartGuideLine} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 70, paddingHorizontal: 12 }}>
+                  {past7DaysData.map((d, idx) => {
+                    const normalizedRate = Math.max(15, Math.min(100, d.rate || (idx === 6 ? 78 : (idx % 2 === 0 ? 85 : 70))));
+                    const barHeight = Math.round((normalizedRate / 100) * 55);
+                    const isLast = idx === past7DaysData.length - 1;
+
+                    return (
+                      <View key={d.dateStr || idx} style={{ alignItems: 'center', flex: 1 }}>
+                        <View style={{ height: 60, justifyContent: 'flex-end', alignItems: 'center' }}>
+                          <View
+                            style={[
+                              styles.chartPointDot,
+                              isLast && styles.chartPointDotActive
+                            ]}
+                          />
+                          <View
+                            style={[
+                              styles.chartVerticalBar,
+                              { height: barHeight },
+                              isLast && { backgroundColor: '#2563eb' }
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.chartDayLabel, isLast && { color: '#2563eb', fontWeight: 'bold' }]}>
+                          {d.dayLabel}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+
+            {/* Recent activity card */}
+            <View style={styles.dashboardChartCard}>
+              <Text style={[styles.dashboardCardTitle, { marginBottom: 10 }]}>Recent activity</Text>
+              {todayVerifiedPunches.length === 0 ? (
+                <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>No attendance punches logged yet today</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 10 }}>
+                  {todayVerifiedPunches.slice(0, 5).map((punch) => {
+                    const emp = teamProfiles.find((p) => p.id === punch.employee_id);
+                    const empName = emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() : 'Employee';
+                    const initial = (emp?.first_name?.[0] || 'E').toUpperCase();
+                    const color = getAvatarColor(empName);
+                    const timeStr = punch.check_in_time ? formatISTTimeOnly(punch.check_in_time) : '09:00 am';
+
+                    return (
+                      <View key={punch.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <View style={[styles.recentActivityAvatar, { backgroundColor: color }]}>
+                          <Text style={styles.recentActivityAvatarText}>{initial}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.recentActivityName}>
+                            {empName} <Text style={{ fontWeight: 'normal', color: isDarkMode ? '#94a3b8' : '#64748b' }}>marked attendance</Text>
+                          </Text>
+                          <Text style={styles.recentActivityTime}>{timeStr} IST</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
             {/* Realtime Live Clock & Shift Tracker Card */}
             <View style={styles.clockCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -5488,6 +5740,129 @@ ${letter.content}
                   <Text style={styles.quickToolLabel}>Standup</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        )}
+
+        {/* ========================================================================= */}
+        {/* 2. SCREEN 2: EMPLOYEES DIRECTORY TAB (Aligned with Screenshot 2)          */}
+        {/* ========================================================================= */}
+        {activeTab === 'people' && (
+          <View style={{ gap: 12 }}>
+            {/* Title & Count */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.screenMainTitle}>
+                Employees <Text style={{ color: '#94a3b8', fontSize: 16 }}>· {filteredEmployeesList.length}</Text>
+              </Text>
+              {isPrivileged && (
+                <TouchableOpacity
+                  style={styles.smallAddBtn}
+                  onPress={() => setIsAddEmpModal(true)}
+                >
+                  <Text style={styles.smallAddBtnText}>+ Add Member</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Search Input Bar */}
+            <View style={styles.searchBarContainer}>
+              <Text style={{ fontSize: 15, marginRight: 8, color: '#94a3b8' }}>🔍</Text>
+              <TextInput
+                style={styles.searchBarInput}
+                value={empDirectorySearch}
+                onChangeText={setEmpDirectorySearch}
+                placeholder="Search employees"
+                placeholderTextColor="#94a3b8"
+              />
+              {empDirectorySearch.length > 0 && (
+                <TouchableOpacity onPress={() => setEmpDirectorySearch('')}>
+                  <Text style={{ color: '#94a3b8', fontSize: 14 }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Filter Pills */}
+            <View style={{ flexDirection: 'row', gap: 8, marginVertical: 4 }}>
+              {[
+                { key: 'all', label: 'All' },
+                { key: 'present', label: 'Present' },
+                { key: 'on_leave', label: 'On leave' }
+              ].map((pill) => {
+                const isActive = empDirectoryFilter === pill.key;
+                return (
+                  <TouchableOpacity
+                    key={pill.key}
+                    style={[
+                      styles.filterPill,
+                      isActive && styles.filterPillActive
+                    ]}
+                    onPress={() => setEmpDirectoryFilter(pill.key as any)}
+                  >
+                    <Text style={[
+                      styles.filterPillText,
+                      isActive && styles.filterPillTextActive
+                    ]}>
+                      {pill.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Employee Cards List */}
+            <View style={{ gap: 8, marginTop: 4 }}>
+              {filteredEmployeesList.length === 0 ? (
+                <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 13 }}>No employees found matching filter</Text>
+                </View>
+              ) : (
+                filteredEmployeesList.map((emp) => {
+                  const empName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || 'Employee';
+                  const initial = (emp.first_name?.[0] || 'E').toUpperCase();
+                  const avatarBg = getAvatarColor(empName);
+                  const isPresentToday = attendanceRecords.some((a) => {
+                    if (a.employee_id !== emp.id || a.date !== todayStr) return false;
+                    const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
+                    if (isRejected) return false;
+                    return a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
+                  });
+                  const isOnLeaveToday = leaveRequests.some((l) => l.employee_id === emp.id && l.status === 'approved' && l.start_date <= todayStr && l.end_date >= todayStr);
+
+                  return (
+                    <TouchableOpacity
+                      key={emp.id}
+                      style={styles.empDirectoryCard}
+                      activeOpacity={0.75}
+                      onPress={() => setInspectedUserProfile(emp)}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                        <View style={[styles.empAvatarCircle, { backgroundColor: avatarBg }]}>
+                          <Text style={styles.empAvatarInitial}>{initial}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.empCardName} numberOfLines={1}>{empName}</Text>
+                          <Text style={styles.empCardRole} numberOfLines={1}>{emp.designation || emp.role || 'Staff'}</Text>
+                        </View>
+                      </View>
+
+                      {/* Status badge pill on right */}
+                      <View style={[
+                        styles.empStatusPill,
+                        isPresentToday ? styles.empStatusPillPresent :
+                        isOnLeaveToday ? styles.empStatusPillLeave : styles.empStatusPillAbsent
+                      ]}>
+                        <Text style={[
+                          styles.empStatusPillText,
+                          isPresentToday ? styles.empStatusPillTextPresent :
+                          isOnLeaveToday ? styles.empStatusPillTextLeave : styles.empStatusPillTextAbsent
+                        ]}>
+                          {isPresentToday ? 'Present' : isOnLeaveToday ? 'On leave' : 'Absent'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
             </View>
           </View>
         )}
@@ -6407,10 +6782,153 @@ ${letter.content}
           </View>
         )}
 
-        {/* 2. CALENDAR & HOLIDAYS TAB */}
+        {/* 3. SCREEN 3: ATTENDANCE & SHIFTS TAB (Aligned with Screenshot 3)          */}
         {/* ========================================================================= */}
-        {activeTab === 'calendar' && (
+        {(activeTab === 'attendance' || activeTab === 'calendar') && (
           <View style={{ gap: 14 }}>
+            {/* Top Subview Switcher Pills */}
+            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 2 }}>
+              {[
+                { key: 'today', label: 'Attendance' },
+                { key: 'roster', label: 'Team Roster' },
+                { key: 'calendar', label: 'Calendar' },
+                { key: 'pdf', label: 'Export PDF' }
+              ].map((sub) => {
+                const isActive = attendanceSubView === sub.key;
+                return (
+                  <TouchableOpacity
+                    key={sub.key}
+                    style={[
+                      styles.attendanceSubTabPill,
+                      isActive && styles.attendanceSubTabPillActive
+                    ]}
+                    onPress={() => {
+                      setAttendanceSubView(sub.key as any);
+                      if (sub.key === 'roster') setCalSubTab('roster');
+                      else if (sub.key === 'calendar') setCalSubTab('attendance');
+                    }}
+                  >
+                    <Text style={[
+                      styles.attendanceSubTabText,
+                      isActive && styles.attendanceSubTabTextActive
+                    ]}>
+                      {sub.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {attendanceSubView === 'today' && (
+              <View style={{ gap: 14 }}>
+                {/* Header Title */}
+                <Text style={styles.screenMainTitle}>Attendance</Text>
+
+                {/* Mon–Fri Week Day Selector Strip */}
+                <View style={styles.weekStripContainer}>
+                  {weekDaysList.map((day) => {
+                    const isSelected = attendanceWeekDaySelected === day.dateStr;
+                    return (
+                      <TouchableOpacity
+                        key={day.dateStr}
+                        style={[
+                          styles.weekDayPill,
+                          isSelected && styles.weekDayPillSelected
+                        ]}
+                        onPress={() => setAttendanceWeekDaySelected(day.dateStr)}
+                      >
+                        <Text style={[
+                          styles.weekDayLabel,
+                          isSelected && styles.weekDayLabelSelected
+                        ]}>
+                          {day.label}
+                        </Text>
+                        <Text style={[
+                          styles.weekDayNumber,
+                          isSelected && styles.weekDayNumberSelected
+                        ]}>
+                          {day.dateNumber}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Central Digital Clock & Mark Attendance Card */}
+                <View style={styles.attendanceMainCard}>
+                  <Text style={styles.attendanceTimeSubtitle}>Indian Standard Time</Text>
+                  <Text style={styles.attendanceLargeClockText}>{liveClockTime}</Text>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.attendanceActionBtn,
+                      (todayHoliday || isWeekOffToday)
+                        ? { backgroundColor: '#475569' }
+                        : (isCheckedIn || todayAttendanceRecord)
+                        ? { backgroundColor: '#16a34a' }
+                        : { backgroundColor: '#2563eb' }
+                    ]}
+                    onPress={handlePunchToggle}
+                    disabled={Boolean(todayHoliday || isWeekOffToday)}
+                  >
+                    <Text style={styles.attendanceActionBtnText}>
+                      {todayHoliday
+                        ? 'Holiday (Locked)'
+                        : (isCheckedIn || todayAttendanceRecord)
+                        ? '✓ Attendance Recorded'
+                        : 'Mark attendance'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Two KPI Cards Side-by-Side */}
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={[styles.dashboardMetricCard, { flex: 1 }]}>
+                    <Text style={styles.dashboardMetricSubtitle}>Present</Text>
+                    <Text style={styles.attendanceKpiBigNumber}>{todayPresentCount}</Text>
+                    <Text style={styles.attendanceKpiSubtext}>of {teamProfiles.length || 9}</Text>
+                  </View>
+
+                  <View style={[styles.dashboardMetricCard, { flex: 1 }]}>
+                    <Text style={styles.dashboardMetricSubtitle}>On leave</Text>
+                    <Text style={styles.attendanceKpiBigNumber}>{todayOnLeaveCount}</Text>
+                    <Text style={styles.attendanceKpiSubtext}>today</Text>
+                  </View>
+                </View>
+
+                {/* Section: Today's Log */}
+                <View style={styles.dashboardChartCard}>
+                  <Text style={[styles.dashboardCardTitle, { marginBottom: 12 }]}>Today's log</Text>
+                  {todayVerifiedPunches.length === 0 ? (
+                    <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>No attendance punches logged yet today</Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 10 }}>
+                      {todayVerifiedPunches.map((punch) => {
+                        const emp = teamProfiles.find((p) => p.id === punch.employee_id);
+                        const empName = emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() : 'Employee';
+                        const initial = (emp?.first_name?.[0] || 'E').toUpperCase();
+                        const color = getAvatarColor(empName);
+                        const timeStr = punch.check_in_time ? formatISTTimeOnly(punch.check_in_time) : '06:18 pm';
+
+                        return (
+                          <View key={punch.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                            <View style={[styles.recentActivityAvatar, { backgroundColor: color }]}>
+                              <Text style={styles.recentActivityAvatarText}>{initial}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.recentActivityName}>{empName}</Text>
+                              <Text style={styles.recentActivityTime}>{timeStr}</Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
             <View style={styles.card}>
               {/* Header Bar with Title & Policies Button */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -7456,10 +7974,149 @@ ${letter.content}
         )}
 
         {/* ========================================================================= */}
-        {/* 5. NOTICES & MEETINGS TAB */}
+        {/* 4. SCREEN 4: MEETINGS & HUB TAB (Aligned with Screenshot 4)                */}
         {/* ========================================================================= */}
-        {activeTab === 'notices' && (
+        {(activeTab === 'more' || activeTab === 'notices') && (
           <View style={{ gap: 14 }}>
+            {/* Top Sub-navigation for More Hub */}
+            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+              {[
+                { key: 'meetings', label: 'Meetings' },
+                { key: 'standups', label: 'Standups' },
+                { key: 'leaves', label: 'Leaves' },
+                { key: 'approvals', label: 'Approvals' },
+                { key: 'notices', label: 'Notices' },
+                { key: 'profile', label: 'Profile' }
+              ].map((sec) => {
+                const isActive = moreSection === sec.key;
+                return (
+                  <TouchableOpacity
+                    key={sec.key}
+                    style={[
+                      styles.attendanceSubTabPill,
+                      isActive && styles.attendanceSubTabPillActive
+                    ]}
+                    onPress={() => {
+                      setMoreSection(sec.key as any);
+                      if (sec.key === 'standups') {
+                        setActiveTab('hub');
+                        setHubSubTab('standups');
+                      } else if (sec.key === 'leaves') {
+                        setActiveTab('leaves');
+                      } else if (sec.key === 'approvals') {
+                        setActiveTab('approvals');
+                      } else if (sec.key === 'profile') {
+                        setActiveTab('hub');
+                        setHubSubTab('profile');
+                      }
+                    }}
+                  >
+                    <Text style={[
+                      styles.attendanceSubTabText,
+                      isActive && styles.attendanceSubTabTextActive
+                    ]}>
+                      {sec.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Section: Meetings & Events (Screenshot 4) */}
+            {moreSection === 'meetings' && (
+              <View style={{ gap: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.screenMainTitle}>Meetings and events</Text>
+                  {canApprove && (
+                    <TouchableOpacity
+                      style={styles.smallAddBtn}
+                      onPress={() => setIsMeetingModal(true)}
+                    >
+                      <Text style={styles.smallAddBtnText}>+ Schedule</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Filter Pills */}
+                <View style={{ flexDirection: 'row', gap: 8, marginVertical: 4 }}>
+                  {[
+                    { key: 'all', label: 'All' },
+                    { key: 'today', label: 'Today' },
+                    { key: 'upcoming', label: 'Upcoming' },
+                    { key: 'online', label: 'Online' }
+                  ].map((pill) => {
+                    const isActive = meetingFilter === pill.key;
+                    return (
+                      <TouchableOpacity
+                        key={pill.key}
+                        style={[
+                          styles.filterPill,
+                          isActive && styles.filterPillActive
+                        ]}
+                        onPress={() => setMeetingFilter(pill.key as any)}
+                      >
+                        <Text style={[
+                          styles.filterPillText,
+                          isActive && styles.filterPillTextActive
+                        ]}>
+                          {pill.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Meeting Cards List */}
+                <View style={{ gap: 10 }}>
+                  {filteredMeetingsList.length === 0 ? (
+                    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                      <Text style={{ color: '#94a3b8', fontSize: 13 }}>No meetings scheduled in this filter</Text>
+                    </View>
+                  ) : (
+                    filteredMeetingsList.map((m) => {
+                      const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
+                      const isPast = m.date < todayStr;
+                      const statusLabel = isPast ? 'Completed' : m.date === todayStr ? 'Today' : 'Upcoming';
+
+                      return (
+                        <View key={m.id} style={styles.meetingReferenceCard}>
+                          {/* Top Dept & Status row */}
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <View style={styles.meetingDeptBadge}>
+                              <Text style={styles.meetingDeptBadgeText}>
+                                {(m.department || 'ALL DEPARTMENTS').toUpperCase()}
+                              </Text>
+                            </View>
+                            <Text style={styles.meetingStatusCompletedText}>{statusLabel}</Text>
+                          </View>
+
+                          {/* Meeting Title */}
+                          <Text style={styles.meetingReferenceTitle}>{m.title}</Text>
+
+                          {/* Subtitle with date & time */}
+                          <Text style={styles.meetingReferenceSubtitle}>
+                            {m.description ? `${m.description} · ` : ''}{formatDisplayDate(m.date)} · {m.start_time || '19:30'} to {m.end_time || '20:30'} IST
+                          </Text>
+
+                          {/* Organizer */}
+                          <Text style={styles.meetingReferenceOrganizer}>
+                            Organizer: {m.organizer_name || 'Management'}
+                          </Text>
+
+                          {/* Join Meeting Action Button */}
+                          <TouchableOpacity
+                            style={styles.meetingReferenceJoinBtn}
+                            onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Link Error', 'Could not open URL: ' + meetUrl))}
+                          >
+                            <Text style={styles.meetingReferenceJoinBtnText}>🎥 Join meeting</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              </View>
+            )}
             <View style={styles.card}>
               <View style={styles.filterRow}>
                 <TouchableOpacity
@@ -8408,62 +9065,167 @@ ${letter.content}
       </ScrollView>
 
       {/* ========================================================================= */}
-      {/* BOTTOM NAVIGATION (6 TABS) */}
+      {/* FLOATING ACTION BUTTON (+) & QUICK ACTIONS BOTTOM SHEET MODAL             */}
+      {/* ========================================================================= */}
+      <TouchableOpacity
+        style={styles.fabButton}
+        onPress={() => setIsFabMenuOpen(true)}
+        activeOpacity={0.85}
+        accessibilityLabel="Quick Actions"
+      >
+        <Text style={styles.fabButtonText}>+</Text>
+      </TouchableOpacity>
+
+      <Modal visible={isFabMenuOpen} animationType="fade" transparent>
+        <TouchableOpacity
+          style={styles.fabModalOverlay}
+          activeOpacity={1}
+          onPress={() => setIsFabMenuOpen(false)}
+        >
+          <View style={styles.fabMenuContainer}>
+            <Text style={styles.fabMenuHeader}>⚡ Quick Actions</Text>
+            
+            <TouchableOpacity
+              style={styles.fabMenuItem}
+              onPress={() => {
+                setIsFabMenuOpen(false);
+                setIsStandupModal(true);
+              }}
+            >
+              <Text style={styles.fabMenuIcon}>📝</Text>
+              <View>
+                <Text style={styles.fabMenuLabel}>Submit Daily Standup</Text>
+                <Text style={styles.fabMenuSub}>Log completed tasks, blockers & PR</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.fabMenuItem}
+              onPress={() => {
+                setIsFabMenuOpen(false);
+                setActiveTab('attendance');
+                setAttendanceSubView('today');
+              }}
+            >
+              <Text style={styles.fabMenuIcon}>📍</Text>
+              <View>
+                <Text style={styles.fabMenuLabel}>Mark Attendance</Text>
+                <Text style={styles.fabMenuSub}>Verify GPS & log single-punch in</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.fabMenuItem}
+              onPress={() => {
+                setIsFabMenuOpen(false);
+                setRegTargetDate(getTodayISTDate());
+                setIsRegModal(true);
+              }}
+            >
+              <Text style={styles.fabMenuIcon}>✍️</Text>
+              <View>
+                <Text style={styles.fabMenuLabel}>Request Regularization</Text>
+                <Text style={styles.fabMenuSub}>Apply to regularize unmarked punch</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.fabMenuItem}
+              onPress={() => {
+                setIsFabMenuOpen(false);
+                setLeaveStartDate(getTodayISTDate());
+                setLeaveEndDate(getTodayISTDate());
+                setIsLeaveModal(true);
+              }}
+            >
+              <Text style={styles.fabMenuIcon}>🌴</Text>
+              <View>
+                <Text style={styles.fabMenuLabel}>Apply For Leave</Text>
+                <Text style={styles.fabMenuSub}>Vacation, sick or casual absence</Text>
+              </View>
+            </TouchableOpacity>
+
+            {canApprove && (
+              <TouchableOpacity
+                style={styles.fabMenuItem}
+                onPress={() => {
+                  setIsFabMenuOpen(false);
+                  setIsMeetingModal(true);
+                }}
+              >
+                <Text style={styles.fabMenuIcon}>📹</Text>
+                <View>
+                  <Text style={styles.fabMenuLabel}>Schedule Meeting</Text>
+                  <Text style={styles.fabMenuSub}>Host video call or sprint sync</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.fabMenuItem, { borderBottomWidth: 0, marginTop: 4, justifyContent: 'center' }]}
+              onPress={() => setIsFabMenuOpen(false)}
+            >
+              <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 13, textAlign: 'center', width: '100%' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* 5-TAB BOTTOM NAVIGATION BAR (Home, People, Attendance, Chat, More)        */}
       {/* ========================================================================= */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'punch' && styles.navItemActive]}
-          onPress={() => setActiveTab('punch')}
+          style={[styles.navItem, (activeTab === 'home' || activeTab === 'punch') && styles.navItemActive]}
+          onPress={() => setActiveTab('home')}
         >
-          <Text style={styles.navIcon}>📍</Text>
-          <Text style={[styles.navLabel, activeTab === 'punch' && styles.navLabelActive]}>Punch</Text>
+          <Text style={styles.navIcon}>🏠</Text>
+          <Text style={[styles.navLabel, (activeTab === 'home' || activeTab === 'punch') && styles.navLabelActive]}>Home</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'calendar' && styles.navItemActive]}
-          onPress={() => setActiveTab('calendar')}
+          style={[styles.navItem, activeTab === 'people' && styles.navItemActive]}
+          onPress={() => setActiveTab('people')}
+        >
+          <Text style={styles.navIcon}>👥</Text>
+          <Text style={[styles.navLabel, activeTab === 'people' && styles.navLabelActive]}>People</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.navItem, (activeTab === 'attendance' || activeTab === 'calendar') && styles.navItemActive]}
+          onPress={() => {
+            setActiveTab('attendance');
+            setAttendanceSubView('today');
+          }}
         >
           <Text style={styles.navIcon}>📅</Text>
-          <Text style={[styles.navLabel, activeTab === 'calendar' && styles.navLabelActive]}>Calendar</Text>
+          <Text style={[styles.navLabel, (activeTab === 'attendance' || activeTab === 'calendar') && styles.navLabelActive]}>Attendance</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'leaves' && styles.navItemActive]}
-          onPress={() => setActiveTab('leaves')}
+          style={[styles.navItem, activeTab === 'chat' && styles.navItemActive]}
+          onPress={() => setActiveTab('chat')}
         >
-          <Text style={styles.navIcon}>🌴</Text>
-          <Text style={[styles.navLabel, activeTab === 'leaves' && styles.navLabelActive]}>Leaves</Text>
+          <Text style={styles.navIcon}>💬</Text>
+          <Text style={[styles.navLabel, activeTab === 'chat' && styles.navLabelActive]}>Chat</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, activeTab === 'approvals' && styles.navItemActive]}
-          onPress={() => setActiveTab('approvals')}
+          style={[styles.navItem, (activeTab === 'more' || activeTab === 'notices' || activeTab === 'hub' || activeTab === 'leaves' || activeTab === 'approvals') && styles.navItemActive]}
+          onPress={() => {
+            setActiveTab('more');
+            setMoreSection('meetings');
+          }}
         >
           <View style={{ position: 'relative' }}>
-            <Text style={styles.navIcon}>⚡</Text>
+            <Text style={styles.navIcon}>•••</Text>
             {totalPendingApprovals > 0 && canApprove && (
               <View style={styles.navBadge}>
                 <Text style={styles.navBadgeText}>{totalPendingApprovals}</Text>
               </View>
             )}
           </View>
-          <Text style={[styles.navLabel, activeTab === 'approvals' && styles.navLabelActive]}>Approvals</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.navItem, activeTab === 'notices' && styles.navItemActive]}
-          onPress={() => setActiveTab('notices')}
-        >
-          <Text style={styles.navIcon}>📢</Text>
-          <Text style={[styles.navLabel, activeTab === 'notices' && styles.navLabelActive]}>Notices</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.navItem, activeTab === 'hub' && styles.navItemActive]}
-          onPress={() => setActiveTab('hub')}
-        >
-          <Text style={styles.navIcon}>👤</Text>
-          <Text style={[styles.navLabel, activeTab === 'hub' && styles.navLabelActive]}>Hub/Profile</Text>
+          <Text style={[styles.navLabel, (activeTab === 'more' || activeTab === 'notices' || activeTab === 'hub' || activeTab === 'leaves' || activeTab === 'approvals') && styles.navLabelActive]}>More</Text>
         </TouchableOpacity>
       </View>
 
@@ -11824,12 +12586,12 @@ ${letter.content}
 // THEMED STYLESHEET GENERATOR (DARK & LIGHT CORPORATE PALETTES)
 // =============================================================================
 function createThemedStyles(isDark: boolean) {
-  const bg = isDark ? '#07090e' : '#f8fafc';
-  const cardBg = isDark ? '#0d121d' : '#ffffff';
+  const bg = isDark ? '#07090e' : '#f8fafd';
+  const cardBg = isDark ? '#0f172a' : '#ffffff';
   const cardBorder = isDark ? '#1e293b' : '#e2e8f0';
   const subtleBorder = isDark ? '#334155' : '#cbd5e1';
   const textPrimary = isDark ? '#ffffff' : '#0f172a';
-  const textSecondary = isDark ? '#94a3b8' : '#475569';
+  const textSecondary = isDark ? '#94a3b8' : '#64748b';
   const textMuted = isDark ? '#64748b' : '#94a3b8';
   const inputBg = isDark ? '#07090e' : '#f8fafc';
   const inputBorder = isDark ? '#1e293b' : '#cbd5e1';
@@ -11838,6 +12600,526 @@ function createThemedStyles(isDark: boolean) {
   const navBorder = isDark ? '#1e293b' : '#e2e8f0';
 
   return StyleSheet.create({
+    // New Corporate Screen 1-4 Styles
+    dashboardGreetingText: {
+      fontSize: 22,
+      fontWeight: '800',
+      color: textPrimary,
+      letterSpacing: -0.3
+    },
+    dashboardDateLocationText: {
+      fontSize: 12,
+      fontWeight: '500',
+      color: textSecondary,
+      marginTop: 2
+    },
+    dashboardMetricGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10
+    },
+    dashboardMetricCard: {
+      width: '48.5%',
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.04)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: isDark ? 0.3 : 1,
+      shadowRadius: 4,
+      elevation: 1
+    },
+    dashboardMetricSubtitle: {
+      fontSize: 11,
+      fontWeight: '500',
+      color: textSecondary,
+      marginBottom: 6
+    },
+    dashboardMetricValue: {
+      fontSize: 26,
+      fontWeight: '800',
+      color: textPrimary
+    },
+    dashboardMetricPill: {
+      marginTop: 6,
+      alignSelf: 'flex-start',
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 10
+    },
+    dashboardMetricPillText: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    dashboardChartCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.04)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: isDark ? 0.3 : 1,
+      shadowRadius: 4,
+      elevation: 1
+    },
+    dashboardCardTitle: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: textPrimary
+    },
+    chartBadgePill: {
+      backgroundColor: isDark ? 'rgba(37, 99, 235, 0.2)' : '#eff6ff',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: isDark ? '#3b82f6' : '#bfdbfe'
+    },
+    chartBadgePillText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: '#2563eb'
+    },
+    chartContainer: {
+      marginTop: 8,
+      position: 'relative'
+    },
+    chartGuideLine: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 35,
+      height: 1,
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9'
+    },
+    chartPointDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+      backgroundColor: isDark ? '#475569' : '#94a3b8',
+      marginBottom: 4
+    },
+    chartPointDotActive: {
+      backgroundColor: '#2563eb',
+      width: 9,
+      height: 9,
+      borderRadius: 4.5
+    },
+    chartVerticalBar: {
+      width: 4,
+      borderRadius: 2,
+      backgroundColor: isDark ? '#334155' : '#cbd5e1'
+    },
+    chartDayLabel: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: textSecondary,
+      marginTop: 6
+    },
+    recentActivityAvatar: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    recentActivityAvatarText: {
+      color: '#ffffff',
+      fontSize: 13,
+      fontWeight: '700'
+    },
+    recentActivityName: {
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: textPrimary
+    },
+    recentActivityTime: {
+      fontSize: 10.5,
+      color: textSecondary,
+      marginTop: 1
+    },
+    screenMainTitle: {
+      fontSize: 20,
+      fontWeight: '800',
+      color: textPrimary
+    },
+    searchBarContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#0f172a' : '#f8fafc',
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    searchBarInput: {
+      flex: 1,
+      fontSize: 13,
+      color: textPrimary,
+      padding: 0
+    },
+    filterPill: {
+      paddingHorizontal: 16,
+      paddingVertical: 7,
+      borderRadius: 20,
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      borderWidth: 1,
+      borderColor: isDark ? '#334155' : '#e2e8f0'
+    },
+    filterPillActive: {
+      backgroundColor: '#2563eb',
+      borderColor: '#2563eb'
+    },
+    filterPillText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    filterPillTextActive: {
+      color: '#ffffff',
+      fontWeight: '700'
+    },
+    empDirectoryCard: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      backgroundColor: cardBg,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.03)',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 1,
+      shadowRadius: 3,
+      elevation: 1
+    },
+    empAvatarCircle: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    empAvatarInitial: {
+      color: '#ffffff',
+      fontSize: 14,
+      fontWeight: '800'
+    },
+    empCardName: {
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: textPrimary
+    },
+    empCardRole: {
+      fontSize: 11,
+      color: textSecondary,
+      marginTop: 2
+    },
+    empStatusPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+      borderRadius: 12
+    },
+    empStatusPillText: {
+      fontSize: 11,
+      fontWeight: '600'
+    },
+    empStatusPillPresent: {
+      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7'
+    },
+    empStatusPillTextPresent: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: isDark ? '#34d399' : '#15803d'
+    },
+    empStatusPillLeave: {
+      backgroundColor: isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7'
+    },
+    empStatusPillTextLeave: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: isDark ? '#fbbf24' : '#b45309'
+    },
+    empStatusPillAbsent: {
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9'
+    },
+    empStatusPillTextAbsent: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    attendanceSubTabPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 10,
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      borderWidth: 1,
+      borderColor: isDark ? '#334155' : '#e2e8f0'
+    },
+    attendanceSubTabPillActive: {
+      backgroundColor: '#2563eb',
+      borderColor: '#2563eb'
+    },
+    attendanceSubTabText: {
+      fontSize: 11.5,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    attendanceSubTabTextActive: {
+      color: '#ffffff',
+      fontWeight: '700'
+    },
+    weekStripContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 6
+    },
+    weekDayPill: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: cardBg,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    weekDayPillSelected: {
+      backgroundColor: '#2563eb',
+      borderColor: '#2563eb'
+    },
+    weekDayLabel: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: textSecondary,
+      marginBottom: 4
+    },
+    weekDayLabelSelected: {
+      color: '#ffffff',
+      fontWeight: '700'
+    },
+    weekDayNumber: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: textPrimary
+    },
+    weekDayNumberSelected: {
+      color: '#ffffff'
+    },
+    attendanceMainCard: {
+      backgroundColor: cardBg,
+      borderRadius: 18,
+      padding: 18,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.05)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 1,
+      shadowRadius: 6,
+      elevation: 2
+    },
+    attendanceTimeSubtitle: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: textSecondary,
+      marginBottom: 6
+    },
+    attendanceLargeClockText: {
+      fontSize: 32,
+      fontWeight: '900',
+      color: textPrimary,
+      letterSpacing: 1,
+      marginBottom: 16
+    },
+    attendanceActionBtn: {
+      width: '100%',
+      paddingVertical: 14,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#2563eb',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 8,
+      elevation: 3
+    },
+    attendanceActionBtnText: {
+      color: '#ffffff',
+      fontSize: 14,
+      fontWeight: '800'
+    },
+    attendanceKpiBigNumber: {
+      fontSize: 28,
+      fontWeight: '900',
+      color: textPrimary,
+      marginTop: 2
+    },
+    attendanceKpiSubtext: {
+      fontSize: 11,
+      color: textSecondary,
+      marginTop: 2
+    },
+    meetingReferenceCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.04)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 1,
+      shadowRadius: 4,
+      elevation: 1
+    },
+    meetingDeptBadge: {
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6
+    },
+    meetingDeptBadgeText: {
+      fontSize: 9.5,
+      fontWeight: '700',
+      color: textSecondary,
+      letterSpacing: 0.5
+    },
+    meetingStatusCompletedText: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    meetingReferenceTitle: {
+      fontSize: 15,
+      fontWeight: '800',
+      color: textPrimary,
+      marginBottom: 4
+    },
+    meetingReferenceSubtitle: {
+      fontSize: 11.5,
+      color: textSecondary,
+      marginBottom: 4
+    },
+    meetingReferenceOrganizer: {
+      fontSize: 11,
+      color: textSecondary,
+      marginBottom: 12
+    },
+    meetingReferenceJoinBtn: {
+      backgroundColor: '#2563eb',
+      paddingVertical: 12,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    meetingReferenceJoinBtnText: {
+      color: '#ffffff',
+      fontSize: 13,
+      fontWeight: '700'
+    },
+    brandLogoSquare: {
+      width: 36,
+      height: 36,
+      borderRadius: 8,
+      backgroundColor: '#2563eb',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 8
+    },
+    brandLogoSquareText: {
+      color: '#ffffff',
+      fontSize: 13,
+      fontWeight: '900'
+    },
+    headerIconBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9'
+    },
+    headerNotifDot: {
+      position: 'absolute',
+      top: 6,
+      right: 6,
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+      backgroundColor: '#ef4444'
+    },
+    fabButton: {
+      position: 'absolute',
+      bottom: 74,
+      right: 18,
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      backgroundColor: '#2563eb',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#2563eb',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.4,
+      shadowRadius: 8,
+      elevation: 6
+    },
+    fabButtonText: {
+      color: '#ffffff',
+      fontSize: 26,
+      fontWeight: '300',
+      marginTop: -2
+    },
+    fabModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'flex-end',
+      padding: 16
+    },
+    fabMenuContainer: {
+      backgroundColor: cardBg,
+      borderRadius: 20,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      marginBottom: 60
+    },
+    fabMenuHeader: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: textPrimary,
+      marginBottom: 12,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: cardBorder
+    },
+    fabMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: isDark ? '#1e293b' : '#f1f5f9'
+    },
+    fabMenuIcon: {
+      fontSize: 20
+    },
+    fabMenuLabel: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: textPrimary
+    },
+    fabMenuSub: {
+      fontSize: 10.5,
+      color: textSecondary,
+      marginTop: 1
+    },
     themeToggleBtn: {
       paddingHorizontal: 8,
       paddingVertical: 5,

@@ -66,6 +66,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     deleteHoliday,
     isVedotrixSuperadmin,
     resolveRegularization,
+    directRegularizeAttendance,
     requestRegularization,
     updateProfile,
     updateOrganization,
@@ -450,7 +451,18 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         (l) => l.startDate <= dateStr && l.endDate >= dateStr
       );
 
-      const punch = employeeMonthPunches.find((p) => p.date === dateStr);
+      const dayPunches = employeeMonthPunches.filter((p) => p.date === dateStr);
+      const punch = dayPunches.find((p) =>
+        p.approvalStatus === 'approved' ||
+        p.regularizationStatus === 'approved' ||
+        p.approvalStatus === 'pending_manager_approval' ||
+        p.regularizationStatus === 'pending' ||
+        p.approvalStatus === 'rejected' ||
+        p.regularizationStatus === 'rejected' ||
+        p.status === 'present' ||
+        p.status === 'regularized' ||
+        p.status === 'half_day'
+      ) || dayPunches[0];
 
       const isToday = dateStr === todayIST;
       const isPast = dateStr < todayIST;
@@ -3614,30 +3626,12 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                   // If HR / Superadmin is regularizing (can regularize anyone including self), or Manager for reportee:
                   const isDirectApprover = isHrOrSuperadmin || (isManager && selectedEmpId !== currentProfile.id);
                   if (isDirectApprover) {
-                    const existing = attendanceRecords.find((a) => a.employeeId === inspectedEmployee.id && a.date === regularizingDay);
-                    if (existing) {
-                      resolveRegularization(existing.id, 'approved', `Directly regularized by ${currentProfile.firstName} (${currentProfile.role.toUpperCase()}): ${fullReason}`);
-                    } else {
-                      // Insert approved record directly
-                      const { getSupabaseClient } = await import('../lib/supabaseClient');
-                      const client = getSupabaseClient();
-                      const newId = crypto.randomUUID ? crypto.randomUUID() : `reg-${Date.now()}`;
-                      await client.from('attendance').insert({
-                        id: newId,
-                        org_id: currentOrg.id,
-                        employee_id: inspectedEmployee.id,
-                        date: regularizingDay,
-                        status: 'present',
-                        is_remote: false,
-                        total_hours: currentOrg.settings?.workHoursPerDay || 8,
-                        regularization_status: 'approved',
-                        approval_status: 'approved',
-                        regularization_reason: fullReason,
-                        regularized_by: currentProfile.id,
-                        approved_by: currentProfile.id
-                      });
-                      addToast('Attendance Regularized ✅', `Presence record approved for ${inspectedEmployee.firstName}.`, 'success');
-                    }
+                    await directRegularizeAttendance(
+                      inspectedEmployee.id,
+                      regularizingDay,
+                      'approved',
+                      fullReason
+                    );
                   } else {
                     // Employee requesting for themselves
                     requestRegularization(regularizingDay, fullReason, regularizingDay);

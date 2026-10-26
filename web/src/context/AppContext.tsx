@@ -121,6 +121,7 @@ interface AppContextType {
   punchOutAttendance: (lat?: number, long?: number) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   requestRegularization: (attendanceId: string, reason: string, targetDate?: string) => void;
   resolveRegularization: (attendanceId: string, status: 'approved' | 'rejected', notes?: string) => void;
+  directRegularizeAttendance: (employeeId: string, dateStr: string, status: 'approved' | 'rejected', reason?: string) => Promise<void>;
   getTodayAttendance: () => AttendanceRecord | undefined;
   
   // Actions: Tasks & Standup
@@ -1318,39 +1319,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               totalHours: a.total_hours ? Number(a.total_hours) : 0
             };
             setAttendanceRecords((prev) => {
-              if (prev.some((x) => x.id === newAtt.id)) return prev;
-              const updated = [newAtt, ...prev];
+              const filtered = prev.filter((x) => !(x.employeeId === newAtt.employeeId && x.date === newAtt.date) && x.id !== newAtt.id);
+              const updated = [newAtt, ...filtered];
               try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
               return updated;
             });
           } else if (payload.eventType === 'UPDATE') {
             const a = payload.new;
+            const updatedAttItem: AttendanceRecord = {
+              id: a.id,
+              orgId: a.org_id,
+              employeeId: a.employee_id,
+              date: a.date,
+              checkInTime: a.check_in_time,
+              checkOutTime: a.check_out_time,
+              checkInLat: a.check_in_lat ? Number(a.check_in_lat) : undefined,
+              checkInLong: a.check_in_long ? Number(a.check_in_long) : undefined,
+              checkOutLat: a.check_out_lat ? Number(a.check_out_lat) : undefined,
+              checkOutLong: a.check_out_long ? Number(a.check_out_long) : undefined,
+              distanceMeters: a.distance_meters ? Number(a.distance_meters) : 0,
+              officeAddress: a.office_address || '',
+              status: a.status || 'present',
+              isRemote: a.is_remote ?? false,
+              approvalStatus: a.approval_status || 'approved',
+              approvedBy: a.approved_by || a.regularized_by,
+              approvalNotes: a.approval_notes || a.regularization_notes,
+              regularizationStatus: a.regularization_status || 'none',
+              regularizationReason: a.regularization_reason,
+              regularizedBy: a.regularized_by || a.approved_by,
+              regularizationNotes: a.regularization_notes || a.approval_notes,
+              totalHours: a.total_hours ? Number(a.total_hours) : 0
+            };
             setAttendanceRecords((prev) => {
-              const updated = prev.map((att) =>
-                att.id === a.id
-                  ? {
-                      ...att,
-                      checkInTime: a.check_in_time,
-                      checkOutTime: a.check_out_time,
-                      checkInLat: a.check_in_lat ? Number(a.check_in_lat) : att.checkInLat,
-                      checkInLong: a.check_in_long ? Number(a.check_in_long) : att.checkInLong,
-                      checkOutLat: a.check_out_lat ? Number(a.check_out_lat) : att.checkOutLat,
-                      checkOutLong: a.check_out_long ? Number(a.check_out_long) : att.checkOutLong,
-                      distanceMeters: a.distance_meters ? Number(a.distance_meters) : att.distanceMeters,
-                      officeAddress: a.office_address || att.officeAddress,
-                      status: a.status || att.status,
-                      isRemote: a.is_remote ?? att.isRemote,
-                      approvalStatus: a.approval_status || att.approvalStatus,
-                      approvedBy: a.approved_by ?? a.regularized_by ?? att.approvedBy,
-                      approvalNotes: a.approval_notes ?? a.regularization_notes ?? att.approvalNotes,
-                      regularizationStatus: a.regularization_status || att.regularizationStatus,
-                      regularizationReason: a.regularization_reason ?? att.regularizationReason,
-                      regularizedBy: a.regularized_by ?? a.approved_by ?? att.regularizedBy,
-                      regularizationNotes: a.regularization_notes ?? a.approval_notes ?? att.regularizationNotes,
-                      totalHours: a.total_hours ? Number(a.total_hours) : att.totalHours
-                    }
-                  : att
-              );
+              const hasExisting = prev.some((att) => att.id === a.id || (att.employeeId === a.employee_id && att.date === a.date));
+              let updated: AttendanceRecord[];
+              if (hasExisting) {
+                updated = prev.map((att) =>
+                  att.id === a.id || (att.employeeId === a.employee_id && att.date === a.date)
+                    ? updatedAttItem
+                    : att
+                );
+              } else {
+                updated = [updatedAttItem, ...prev];
+              }
               try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
               return updated;
             });
@@ -3889,9 +3900,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         updatePayload.total_hours = 0;
       }
-      client.from('attendance').update(updatePayload).eq('id', attendanceId).then(({ error }) => {
-        if (error) console.error('Supabase attendance regularization resolve error:', error);
-      });
+      if (targetAtt) {
+        client.from('attendance').update(updatePayload).match({
+          employee_id: targetAtt.employeeId,
+          date: targetAtt.date
+        }).then(({ error }) => {
+          if (error) console.error('Supabase attendance regularization resolve error:', error);
+        });
+      } else {
+        client.from('attendance').update(updatePayload).eq('id', attendanceId).then(({ error }) => {
+          if (error) console.error('Supabase attendance regularization resolve error:', error);
+        });
+      }
     } catch (e) {}
 
     addToast(
@@ -3908,6 +3928,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'attendance',
         { recipientId: targetAtt.employeeId }
       );
+    }
+  };
+
+  const directRegularizeAttendance = async (
+    employeeId: string,
+    dateStr: string,
+    status: 'approved' | 'rejected',
+    reason?: string
+  ) => {
+    const approverUuid = currentProfile.id && currentProfile.id.length === 36 ? currentProfile.id : null;
+    const approverName = `${currentProfile.firstName || ''} ${currentProfile.lastName || ''}`.trim() || 'HR/Admin';
+    const roleTitle = currentProfile.designation || currentProfile.role?.toUpperCase() || 'Authority';
+    const nowISTDateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+    const defaultNote = status === 'approved'
+      ? `Direct Regularization approved by ${approverName} (${roleTitle}) on ${nowISTDateStr}`
+      : `Regularization rejected by ${approverName} (${roleTitle}) on ${nowISTDateStr}`;
+    const effectiveNote = reason?.trim() ? `${reason.trim()} (By ${approverName} on ${nowISTDateStr})` : defaultNote;
+
+    const payload: any = {
+      org_id: currentOrg.id,
+      employee_id: employeeId,
+      date: dateStr,
+      status: status === 'approved' ? 'present' : 'absent',
+      regularization_status: status,
+      approval_status: status === 'approved' ? 'approved' : 'rejected',
+      regularized_by: approverUuid,
+      approved_by: approverUuid,
+      regularization_notes: effectiveNote,
+      approval_notes: effectiveNote,
+      regularization_reason: effectiveNote,
+      total_hours: status === 'approved' ? (currentOrg.settings?.workHoursPerDay || 8) : 0
+    };
+
+    try {
+      const client = getSupabaseClient();
+      const { data: upsertData, error } = await client
+        .from('attendance')
+        .upsert(payload, { onConflict: 'employee_id,date' })
+        .select();
+
+      if (error) {
+        console.error('Direct regularize Supabase error:', error);
+        addToast('Regularization Error', error.message, 'error');
+        return;
+      }
+
+      const savedRecordId = (upsertData && upsertData[0]?.id) || generateUUID();
+      const newAttRecord: AttendanceRecord = {
+        id: savedRecordId,
+        orgId: currentOrg.id,
+        employeeId: employeeId,
+        date: dateStr,
+        status: status === 'approved' ? 'present' : 'absent',
+        isRemote: false,
+        totalHours: status === 'approved' ? (currentOrg.settings?.workHoursPerDay || 8) : 0,
+        regularizationStatus: status,
+        approvalStatus: status === 'approved' ? 'approved' : 'rejected',
+        regularizationReason: effectiveNote,
+        regularizationNotes: effectiveNote,
+        approvalNotes: effectiveNote,
+        approvedBy: currentProfile.id,
+        regularizedBy: currentProfile.id
+      };
+
+      setAttendanceRecords((prev) => {
+        const filtered = prev.filter((a) => !(a.employeeId === employeeId && a.date === dateStr));
+        const updated = [newAttRecord, ...filtered];
+        try { localStorage.setItem('vdx_attendance', JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+
+      addToast(
+        status === 'approved' ? 'Attendance Regularized ✅' : 'Presence Rejected ❌',
+        `Attendance for ${dateStr} ${status.toUpperCase()} by ${currentProfile.firstName}.`,
+        status === 'approved' ? 'success' : 'info'
+      );
+    } catch (e: any) {
+      console.error('Direct regularize exception:', e);
+      addToast('Regularization Error', e?.message || 'Could not regularize record.', 'error');
     }
   };
 
@@ -3987,20 +4086,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      const { error } = await client.from('daily_standups').upsert(
-        {
-          id: newId,
-          org_id: currentOrg.id,
-          employee_id: currentProfile.id,
-          date: todayStr,
-          completed_today: completedToday,
-          planned_tomorrow: plannedTomorrow,
-          blockers: blockers || null,
-          hours_logged: hours
-        },
-        { onConflict: 'employee_id,date' }
-      );
-      if (error) console.error('Supabase standup upsert error:', error);
+      const { data: existingStandup } = await client
+        .from('daily_standups')
+        .select('id')
+        .eq('employee_id', currentProfile.id)
+        .eq('date', todayStr)
+        .maybeSingle();
+
+      let opError: any = null;
+      if (existingStandup?.id) {
+        const { error } = await client
+          .from('daily_standups')
+          .update({
+            completed_today: completedToday,
+            planned_tomorrow: plannedTomorrow,
+            blockers: blockers || null,
+            hours_logged: hours
+          })
+          .eq('id', existingStandup.id);
+        opError = error;
+      } else {
+        const { error } = await client
+          .from('daily_standups')
+          .insert({
+            id: newId,
+            org_id: currentOrg.id,
+            employee_id: currentProfile.id,
+            date: todayStr,
+            completed_today: completedToday,
+            planned_tomorrow: plannedTomorrow,
+            blockers: blockers || null,
+            hours_logged: hours
+          });
+        opError = error;
+      }
+      if (opError) console.error('Supabase standup save error:', opError);
       else console.log('Daily standup synced to Supabase successfully!');
     } catch (e) {
       console.error('Standup insert error:', e);
@@ -5267,6 +5387,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         punchOutAttendance,
         requestRegularization,
         resolveRegularization,
+        directRegularizeAttendance,
         getTodayAttendance,
         createTask,
         updateTaskStatus,
