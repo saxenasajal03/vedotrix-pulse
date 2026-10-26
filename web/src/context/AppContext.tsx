@@ -3860,10 +3860,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             regularizationStatus: status,
             approvalStatus: (status === 'approved' ? 'approved' : 'rejected') as 'approved' | 'rejected',
             status: (status === 'approved' ? 'present' : 'absent') as AttendanceStatus,
-            totalHours: status === 'approved' && (!a.totalHours || a.totalHours === 0) ? (currentOrg.settings?.workHoursPerDay || 8) : a.totalHours,
+            totalHours: status === 'approved' ? ((!a.totalHours || a.totalHours === 0) ? (currentOrg.settings?.workHoursPerDay || 8) : a.totalHours) : 0,
             regularizedBy: currentProfile.id,
             approvedBy: currentProfile.id,
-            regularizationNotes: effectiveNote
+            regularizationNotes: effectiveNote,
+            approvalNotes: effectiveNote
           };
         }
         return a;
@@ -3885,6 +3886,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
       if (status === 'approved') {
         updatePayload.total_hours = currentOrg.settings?.workHoursPerDay || 8;
+      } else {
+        updatePayload.total_hours = 0;
       }
       client.from('attendance').update(updatePayload).eq('id', attendanceId).then(({ error }) => {
         if (error) console.error('Supabase attendance regularization resolve error:', error);
@@ -4276,7 +4279,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       const totalDaysInMonth = new Date(year, month, 0).getDate();
-      const presentCount = empAttendance.filter((a) => a.status === 'present' || a.status === 'regularized' || a.status === 'on_leave').length;
+      const presentCount = empAttendance.filter((a) => {
+        const isRejected = a.regularizationStatus === 'rejected' || a.approvalStatus === 'rejected';
+        if (isRejected) return false;
+        const isPending = a.regularizationStatus === 'pending' || a.approvalStatus === 'pending_manager_approval';
+        if (isPending) return false;
+        if (a.status === 'absent') return false;
+        return a.status === 'present' || a.status === 'regularized' || a.status === 'on_leave';
+      }).length;
       const halfDayCount = empAttendance.filter((a) => a.status === 'half_day').length;
       const effectivePresent = Math.min(totalDaysInMonth, Math.max(0, presentCount + halfDayCount * 0.5));
       const lopDays = Math.max(0, totalDaysInMonth - effectivePresent);

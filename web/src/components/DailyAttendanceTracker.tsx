@@ -457,25 +457,33 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       } else if (leave) {
         status = 'leave';
       } else if (punch) {
-        if (
+        const isRejected = punch.regularizationStatus === 'rejected' || punch.approvalStatus === 'rejected';
+        const isPending = !isRejected && (
+          punch.regularizationStatus === 'pending' ||
+          punch.approvalStatus === 'pending_manager_approval' ||
+          punch.status === 'pending'
+        );
+        const isApproved = !isRejected && !isPending && (
           punch.approvalStatus === 'approved' ||
-          punch.regularizationStatus === 'approved' ||
-          (punch.status === 'present' && punch.approvalStatus !== 'pending_manager_approval') ||
-          punch.status === 'regularized' ||
-          punch.status === 'half_day'
-        ) {
-          status = (!punch.checkInTime && punch.regularizationStatus === 'approved') ? 'regularized' : 'present';
-        } else if (
-          (punch.regularizationStatus === 'pending' || punch.approvalStatus === 'pending_manager_approval') &&
-          punch.approvalStatus !== 'approved' &&
-          punch.regularizationStatus !== 'approved'
-        ) {
-          status = 'pending';
-        } else if (punch.approvalStatus === 'rejected' || punch.status === 'absent') {
+          punch.regularizationStatus === 'approved'
+        );
+
+        if (isRejected) {
+          // Explicitly rejected regularization: must NEVER be marked present, show in original absent state
           status = 'absent';
-        } else {
-          // Standard punch-in or verified presence
+        } else if (isPending) {
+          // Unapproved / pending regularization: must NOT count as present
+          status = 'pending';
+        } else if (isApproved) {
+          status = (!punch.checkInTime && punch.regularizationStatus === 'approved') ? 'regularized' : 'present';
+        } else if (punch.status === 'present' && punch.approvalStatus !== 'pending_manager_approval') {
           status = 'present';
+        } else if (punch.status === 'regularized') {
+          status = 'regularized';
+        } else if (punch.status === 'half_day') {
+          status = 'present';
+        } else {
+          status = 'absent';
         }
       } else if (isPast) {
         // Past working day after joining date without punch -> Automatically Absent until regularized!
@@ -648,15 +656,17 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
         return false;
       }).filter((a) => a.date === selectedRosterDate);
 
-      // Prefer approved, present or pending records over absent
+      // Prefer approved, pending, or active records
       const record = empRecords.find((a) =>
         a.approvalStatus === 'approved' ||
         a.regularizationStatus === 'approved' ||
+        a.approvalStatus === 'pending_manager_approval' ||
+        a.regularizationStatus === 'pending' ||
+        a.approvalStatus === 'rejected' ||
+        a.regularizationStatus === 'rejected' ||
         a.status === 'present' ||
         a.status === 'regularized' ||
-        a.status === 'half_day' ||
-        a.approvalStatus === 'pending_manager_approval' ||
-        a.regularizationStatus === 'pending'
+        a.status === 'half_day'
       ) || empRecords[0];
 
       const leave = leaveRequests.find(
@@ -672,21 +682,32 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
       if (isBeforeJoining) {
         status = 'pre_joining';
       } else if (record) {
-        if (
+        const isRejected = record.approvalStatus === 'rejected' || record.regularizationStatus === 'rejected';
+        const isPending = !isRejected && (
+          record.approvalStatus === 'pending_manager_approval' ||
+          record.regularizationStatus === 'pending' ||
+          record.status === 'pending'
+        );
+        const isApproved = !isRejected && !isPending && (
           record.approvalStatus === 'approved' ||
-          record.regularizationStatus === 'approved' ||
-          (record.status === 'present' && record.approvalStatus !== 'pending_manager_approval') ||
-          record.status === 'regularized' ||
-          record.status === 'half_day'
-        ) {
-          status = 'present';
-        } else if (
-          (record.approvalStatus === 'pending_manager_approval' || record.regularizationStatus === 'pending') &&
-          record.approvalStatus !== 'approved' &&
-          record.regularizationStatus !== 'approved'
-        ) {
+          record.regularizationStatus === 'approved'
+        );
+
+        if (isRejected) {
+          // If rejected, do NOT mark as present. Show original state (absent / week-off / holiday)
+          if (empHoliday) status = 'holiday';
+          else if (isEmpWeekOff) status = 'week_off';
+          else status = 'absent';
+        } else if (isPending) {
+          // Pending approval: strictly pending, not counted as present
           status = 'pending_approval';
-        } else if (record.approvalStatus === 'rejected' || record.status === 'absent') {
+        } else if (isApproved) {
+          status = 'present';
+        } else if (record.status === 'present' && record.approvalStatus !== 'pending_manager_approval') {
+          status = 'present';
+        } else if (record.status === 'regularized' || record.status === 'half_day') {
+          status = 'present';
+        } else if (record.status === 'absent') {
           if (empHoliday) status = 'holiday';
           else if (isEmpWeekOff) status = 'week_off';
           else status = 'absent';
@@ -783,14 +804,14 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
 
     return attendanceRecords
       .filter((a) => {
-        const isApproved = a.approvalStatus === 'approved' || a.regularizationStatus === 'approved';
         const isRejected = a.approvalStatus === 'rejected' || a.regularizationStatus === 'rejected';
-        const isPending = !isApproved && !isRejected && (a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending');
+        const isPending = !isRejected && (a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending');
+        const isApproved = !isRejected && !isPending && (a.approvalStatus === 'approved' || a.regularizationStatus === 'approved');
         
         if (!isApproved && !isRejected && !isPending) return false;
         if (allowedEmpIds && !allowedEmpIds.has(a.employeeId)) return false;
 
-        const effectiveStatus = isApproved ? 'approved' : isRejected ? 'rejected' : 'pending';
+        const effectiveStatus = isRejected ? 'rejected' : isApproved ? 'approved' : 'pending';
         if (regFilterStatus !== 'all' && effectiveStatus !== regFilterStatus) return false;
         if (regSearchQuery.trim()) {
           const emp = orgProfiles.find((p) => p.id === a.employeeId);
@@ -807,18 +828,18 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   const regStats = useMemo(() => {
     const allowedEmpIds = isHrOrSuperadmin ? null : new Set(managedTeam.map((m) => m.id));
     const allRegs = attendanceRecords.filter((a) => {
-      const isApproved = a.approvalStatus === 'approved' || a.regularizationStatus === 'approved';
       const isRejected = a.approvalStatus === 'rejected' || a.regularizationStatus === 'rejected';
-      const isPending = !isApproved && !isRejected && (a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending');
+      const isPending = !isRejected && (a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending');
+      const isApproved = !isRejected && !isPending && (a.approvalStatus === 'approved' || a.regularizationStatus === 'approved');
       if (!isApproved && !isRejected && !isPending) return false;
       if (allowedEmpIds && !allowedEmpIds.has(a.employeeId)) return false;
       return true;
     });
     return {
       all: allRegs.length,
-      pending: allRegs.filter((a) => (a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending') && a.approvalStatus !== 'approved' && a.regularizationStatus !== 'approved').length,
-      approved: allRegs.filter((a) => a.regularizationStatus === 'approved' || a.approvalStatus === 'approved').length,
-      rejected: allRegs.filter((a) => (a.regularizationStatus === 'rejected' || a.approvalStatus === 'rejected') && a.approvalStatus !== 'approved' && a.regularizationStatus !== 'approved').length
+      pending: allRegs.filter((a) => (a.approvalStatus === 'pending_manager_approval' || a.regularizationStatus === 'pending') && a.approvalStatus !== 'approved' && a.regularizationStatus !== 'approved' && a.approvalStatus !== 'rejected' && a.regularizationStatus !== 'rejected').length,
+      approved: allRegs.filter((a) => (a.regularizationStatus === 'approved' || a.approvalStatus === 'approved') && a.regularizationStatus !== 'rejected' && a.approvalStatus !== 'rejected').length,
+      rejected: allRegs.filter((a) => a.regularizationStatus === 'rejected' || a.approvalStatus === 'rejected').length
     };
   }, [attendanceRecords, isHrOrSuperadmin, managedTeam]);
 
@@ -2077,7 +2098,9 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                         : selectedCalendarDay.status === 'pending'
                         ? 'Regularization Pending Approval'
                         : selectedCalendarDay.status === 'absent'
-                        ? 'Unmarked Shift • Marked as Absent'
+                        ? (selectedCalendarDay.punch?.regularizationStatus === 'rejected' || selectedCalendarDay.punch?.approvalStatus === 'rejected'
+                            ? 'Regularization Rejected • Absent'
+                            : 'Unmarked Shift • Marked as Absent')
                         : selectedCalendarDay.status === 'pre_joining'
                         ? 'Pre-Joining Period'
                         : 'Future Shift Scheduled'}
@@ -2092,7 +2115,9 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                         : selectedCalendarDay.status === 'holiday'
                         ? 'Mandatory paid corporate holiday'
                         : selectedCalendarDay.status === 'absent'
-                        ? 'Shift completed without punch. Marked as absent until regularized by reporting lead or HR.'
+                        ? (selectedCalendarDay.punch?.regularizationStatus === 'rejected' || selectedCalendarDay.punch?.approvalStatus === 'rejected'
+                            ? 'Regularization was rejected by manager/HR. Attendance is not approved and remains absent.'
+                            : 'Shift completed without punch. Marked as absent until regularized by reporting lead or HR.')
                         : selectedCalendarDay.status === 'pre_joining'
                         ? `Employee joined on ${formatISTDate(inspectedEmployee.joiningDate)}. Attendance is only tracked from joining date onwards.`
                         : 'Scheduled according to corporate roster'}
@@ -2243,17 +2268,23 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                 </div>
               )}
 
-              {/* Regularization Notes (if applicable) */}
-              {(selectedCalendarDay.status === 'regularized' || selectedCalendarDay.status === 'pending') && selectedCalendarDay.punch?.regularizationStatus && selectedCalendarDay.punch.regularizationStatus !== 'none' && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300">
+              {/* Regularization Notes (if applicable: approved, pending, or rejected) */}
+              {selectedCalendarDay.punch?.regularizationStatus && selectedCalendarDay.punch.regularizationStatus !== 'none' && (
+                <div className={`p-3 rounded-xl border ${
+                  selectedCalendarDay.punch.regularizationStatus === 'approved' || selectedCalendarDay.punch.approvalStatus === 'approved'
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                    : selectedCalendarDay.punch.regularizationStatus === 'rejected' || selectedCalendarDay.punch.approvalStatus === 'rejected'
+                    ? 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+                    : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                }`}>
                   <span className="text-[10px] font-bold uppercase tracking-wider block mb-1">
-                    Regularization Details ({selectedCalendarDay.punch.regularizationStatus})
+                    Regularization Details: {(selectedCalendarDay.punch.regularizationStatus || '').toUpperCase()}
                   </span>
                   <p className="text-[11px] leading-relaxed">
                     Reason: {selectedCalendarDay.punch.regularizationReason || 'No reason specified'}
                   </p>
                   {selectedCalendarDay.punch.regularizationNotes && (
-                    <p className="text-[10px] text-amber-400/80 mt-1">
+                    <p className="text-[10px] mt-1 font-medium opacity-90">
                       Notes: {selectedCalendarDay.punch.regularizationNotes}
                     </p>
                   )}

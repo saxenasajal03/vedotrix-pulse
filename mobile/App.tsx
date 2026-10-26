@@ -1622,6 +1622,10 @@ export default function App() {
         (a) =>
           a.employee_id === myId &&
           a.date === todayStr &&
+          a.regularization_status !== 'rejected' &&
+          a.approval_status !== 'rejected' &&
+          a.regularization_status !== 'pending' &&
+          a.approval_status !== 'pending_manager_approval' &&
           (a.check_in_time || a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved')
       ) || isCheckedIn;
 
@@ -1963,16 +1967,23 @@ export default function App() {
       const fullReason = `[${regCategory}] Shift: ${regInTime} - ${regOutTime} IST. ${regJustification.trim()}`;
 
       if (existing) {
+        const updatePayload = {
+          regularization_reason: fullReason,
+          regularization_status: 'pending',
+          approval_status: 'pending_manager_approval',
+          status: 'absent'
+        };
         const { error } = await supabaseClient
           .from('attendance')
-          .update({
-            regularization_reason: fullReason,
-            regularization_status: 'pending',
-            approval_status: 'pending_manager_approval'
-          })
+          .update(updatePayload)
           .eq('id', existing.id);
 
         if (error) throw error;
+
+        // Immediate local state update so unapproved status shows pending/absent immediately
+        setAttendanceRecords((prev) =>
+          prev.map((rec) => (rec.id === existing.id ? { ...rec, ...updatePayload } : rec))
+        );
       } else {
         const newId = generateUUID();
         let checkInISO: string | null = null;
@@ -4030,10 +4041,17 @@ ${letter.content}
     } catch {}
   };
 
-  // Today Team Presence Counts
+  // Today Team Presence Counts (Strictly excludes rejected & unapproved/pending records)
   const todayPresentCount = useMemo(() => {
     const today = getTodayISTDate();
-    return attendanceRecords.filter((a) => a.date === today && a.status === 'present').length;
+    return attendanceRecords.filter((a) => {
+      if (a.date !== today) return false;
+      const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
+      if (isRejected) return false;
+      const isPending = a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval';
+      if (isPending) return false;
+      return a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
+    }).length;
   }, [attendanceRecords]);
 
   const todayOnLeaveCount = useMemo(() => {
@@ -4489,28 +4507,40 @@ ${letter.content}
                   </Text>
                 </View>
 
-                {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes || todayAttendanceRecord.regularization_reason || todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') && (
-                  <View style={{ marginTop: 10, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: (todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') ? '#10b98140' : '#f59e0b40' }}>
-                    <Text style={{ fontSize: 10, color: (todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
-                      {(todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved') ? '✅ REGULARIZATION APPROVED' : '⏳ REGULARIZATION PENDING'}
-                    </Text>
-                    {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
-                      <View style={{ marginTop: 4 }}>
-                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>APPROVAL NOTE:</Text>
-                        <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#0f172a', marginTop: 1, fontWeight: '600' }}>
-                          {todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes}
+                {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes || todayAttendanceRecord.regularization_reason || todayAttendanceRecord.regularization_status || todayAttendanceRecord.approval_status) && (
+                  (() => {
+                    const isRejected = todayAttendanceRecord.regularization_status === 'rejected' || todayAttendanceRecord.approval_status === 'rejected';
+                    const isApproved = !isRejected && (todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved');
+                    const isPending = !isRejected && !isApproved && (todayAttendanceRecord.regularization_status === 'pending' || todayAttendanceRecord.approval_status === 'pending_manager_approval');
+                    if (!isRejected && !isApproved && !isPending && !todayAttendanceRecord.regularization_notes && !todayAttendanceRecord.approval_notes) return null;
+
+                    const badgeColor = isRejected ? '#f43f5e' : isApproved ? '#10b981' : '#f59e0b';
+                    const badgeTitle = isRejected ? '❌ REGULARIZATION REJECTED' : isApproved ? '✅ REGULARIZATION APPROVED' : '⏳ REGULARIZATION PENDING';
+
+                    return (
+                      <View style={{ marginTop: 10, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : isRejected ? '#fff1f2' : isApproved ? '#f0fdf4' : '#fffbeb', borderRadius: 8, borderWidth: 1, borderColor: badgeColor + '40' }}>
+                        <Text style={{ fontSize: 10, color: badgeColor, fontWeight: 'bold' }}>
+                          {badgeTitle}
                         </Text>
+                        {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
+                          <View style={{ marginTop: 4 }}>
+                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>{isRejected ? 'REJECTION NOTE:' : 'APPROVAL NOTE:'}</Text>
+                            <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#0f172a', marginTop: 1, fontWeight: '600' }}>
+                              {todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes}
+                            </Text>
+                          </View>
+                        )}
+                        {todayAttendanceRecord.regularization_reason && todayAttendanceRecord.regularization_reason !== (todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
+                          <View style={{ marginTop: 4 }}>
+                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REQUEST REASON:</Text>
+                            <Text style={{ fontSize: 11, color: isDarkMode ? '#cbd5e1' : '#475569', marginTop: 1 }}>
+                              {todayAttendanceRecord.regularization_reason}
+                            </Text>
+                          </View>
+                        )}
                       </View>
-                    )}
-                    {todayAttendanceRecord.regularization_reason && todayAttendanceRecord.regularization_reason !== (todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
-                      <View style={{ marginTop: 4 }}>
-                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REQUEST REASON:</Text>
-                        <Text style={{ fontSize: 11, color: isDarkMode ? '#cbd5e1' : '#475569', marginTop: 1 }}>
-                          {todayAttendanceRecord.regularization_reason}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
+                    );
+                  })()
                 )}
               </View>
             )}
@@ -5890,9 +5920,26 @@ ${letter.content}
                           (a) => a.employee_id === targetEmpId && a.date === dStr
                         );
 
-                        if (punch?.status === 'present' || punch?.check_in_time) {
+                        const isRejected = punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected';
+                        const isPending = !isRejected && (punch?.regularization_status === 'pending' || punch?.approval_status === 'pending_manager_approval' || punch?.status === 'pending');
+                        const isApproved = !isRejected && !isPending && (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved');
+
+                        if (isRejected) {
+                          absent++;
+                        } else if (isPending) {
+                          // Unapproved regularization: strictly not counted in present
+                          absent++;
+                        } else if (isApproved) {
+                          if (punch?.status === 'regularized' || !punch?.check_in_time) {
+                            regularized++;
+                          } else {
+                            present++;
+                          }
+                        } else if (punch?.status === 'present' && punch?.approval_status !== 'pending_manager_approval') {
                           present++;
-                        } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                        } else if (punch?.check_in_time && punch?.approval_status !== 'pending_manager_approval') {
+                          present++;
+                        } else if (punch?.status === 'regularized') {
                           regularized++;
                         } else {
                           absent++;
@@ -5977,19 +6024,39 @@ ${letter.content}
                             status = 'week_off';
                             statusLabel = customOverride?.name ? `🌴 Week Off (${customOverride.name})` : '🌴 Week Off';
                             statusColor = '#64748b';
-                          } else if (punch?.status === 'present' || punch?.check_in_time) {
+                          } else if (punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected') {
+                            status = 'absent';
+                            statusLabel = '❌ Regularization Rejected';
+                            statusColor = '#f43f5e';
+                          } else if (punch?.regularization_status === 'pending' || punch?.approval_status === 'pending_manager_approval') {
+                            status = 'pending';
+                            statusLabel = '⏳ Regularization Pending';
+                            statusColor = '#f59e0b';
+                          } else if (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved') {
+                            if (punch?.status === 'regularized' || !punch?.check_in_time) {
+                              status = 'regularized';
+                              statusLabel = '★ Regularized Approved';
+                              statusColor = '#06b6d4';
+                            } else {
+                              status = 'present';
+                              const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
+                              statusLabel = `✓ Present (${checkInFormatted})`;
+                              statusColor = '#10b981';
+                            }
+                          } else if (punch?.status === 'present' && punch?.approval_status !== 'pending_manager_approval') {
                             status = 'present';
                             const checkInFormatted = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
                             statusLabel = `✓ Present (${checkInFormatted})`;
                             statusColor = '#10b981';
-                          } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                          } else if (punch?.check_in_time && punch?.approval_status !== 'pending_manager_approval') {
+                            status = 'present';
+                            const checkInFormatted = new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            statusLabel = `✓ Present (${checkInFormatted})`;
+                            statusColor = '#10b981';
+                          } else if (punch?.status === 'regularized') {
                             status = 'regularized';
                             statusLabel = '★ Regularized Approved';
                             statusColor = '#06b6d4';
-                          } else if (punch?.regularization_status === 'pending') {
-                            status = 'pending';
-                            statusLabel = '⏳ Regularization Pending';
-                            statusColor = '#f59e0b';
                           } else if (!isFuture) {
                             status = 'absent';
                             statusLabel = '✗ Unmarked / Absent';
@@ -6186,19 +6253,39 @@ ${letter.content}
                           rStatus = 'week_off';
                           rLabel = customOverride?.name ? `🌴 Week Off (${customOverride.name})` : '🌴 Week Off';
                           rColor = '#64748b';
-                        } else if (punch?.status === 'present' || punch?.check_in_time) {
+                        } else if (punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected') {
+                          rStatus = 'absent';
+                          rLabel = '❌ Reg. Rejected';
+                          rColor = '#f43f5e';
+                        } else if (punch?.regularization_status === 'pending' || punch?.approval_status === 'pending_manager_approval') {
+                          rStatus = 'pending';
+                          rLabel = '⏳ Reg. Pending';
+                          rColor = '#f59e0b';
+                        } else if (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved') {
+                          if (punch?.status === 'regularized' || !punch?.check_in_time) {
+                            rStatus = 'regularized';
+                            rLabel = '★ Regularized';
+                            rColor = '#06b6d4';
+                          } else {
+                            rStatus = 'present';
+                            const cin = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
+                            rLabel = `✓ Present (${cin})`;
+                            rColor = '#10b981';
+                          }
+                        } else if (punch?.status === 'present' && punch?.approval_status !== 'pending_manager_approval') {
                           rStatus = 'present';
                           const cin = punch.check_in_time ? new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged';
                           rLabel = `✓ Present (${cin})`;
                           rColor = '#10b981';
-                        } else if (punch?.status === 'regularized' || punch?.regularization_status === 'approved') {
+                        } else if (punch?.check_in_time && punch?.approval_status !== 'pending_manager_approval') {
+                          rStatus = 'present';
+                          const cin = new Date(punch.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                          rLabel = `✓ Present (${cin})`;
+                          rColor = '#10b981';
+                        } else if (punch?.status === 'regularized') {
                           rStatus = 'regularized';
                           rLabel = '★ Regularized';
                           rColor = '#06b6d4';
-                        } else if (punch?.regularization_status === 'pending') {
-                          rStatus = 'pending';
-                          rLabel = '⏳ Reg. Pending';
-                          rColor = '#f59e0b';
                         } else if (!isFuture) {
                           rStatus = 'absent';
                           rLabel = '✗ Absent';
@@ -9011,7 +9098,9 @@ ${letter.content}
               const checkInStr = p?.check_in_time ? formatISTTimeOnly(p.check_in_time) : '--';
               const checkOutStr = p?.check_out_time ? formatISTTimeOnly(p.check_out_time) : (p?.check_in_time ? 'Shift In Progress' : '--');
               const totalHrs = p?.total_hours || (p?.check_in_time ? 'Active' : 0);
-              const isPending = p?.regularization_status === 'pending';
+              const isRejected = p?.regularization_status === 'rejected' || p?.approval_status === 'rejected';
+              const isPending = !isRejected && (p?.regularization_status === 'pending' || p?.approval_status === 'pending_manager_approval');
+              const isApproved = !isRejected && !isPending && (p?.regularization_status === 'approved' || p?.approval_status === 'approved');
               const isAbsent = d.status === 'absent';
 
               return (
@@ -9068,14 +9157,14 @@ ${letter.content}
                         </>
                       );
                     })()}
-                    {(p?.regularization_notes || p?.approval_notes || p?.regularization_reason || p?.regularization_status === 'approved' || p?.approval_status === 'approved') && (
-                      <View style={{ marginTop: 8, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: (p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '#10b98140' : '#f59e0b40' }}>
-                        <Text style={{ fontSize: 10, color: (p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
-                          {(p?.regularization_status === 'approved' || p?.approval_status === 'approved') ? '✅ REGULARIZED & APPROVED' : '⏳ REGULARIZATION PENDING'}
+                    {(p?.regularization_notes || p?.approval_notes || p?.regularization_reason || isRejected || isApproved || isPending) && (
+                      <View style={{ marginTop: 8, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : isRejected ? '#fff1f2' : isApproved ? '#f0fdf4' : '#fffbeb', borderRadius: 8, borderWidth: 1, borderColor: isRejected ? '#f43f5e40' : isApproved ? '#10b98140' : '#f59e0b40' }}>
+                        <Text style={{ fontSize: 10, color: isRejected ? '#f43f5e' : isApproved ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
+                          {isRejected ? '❌ REGULARIZATION REJECTED' : isApproved ? '✅ REGULARIZED & APPROVED' : '⏳ REGULARIZATION PENDING'}
                         </Text>
                         {(p?.regularization_notes || p?.approval_notes) && (
                           <View style={{ marginTop: 4 }}>
-                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>APPROVAL NOTE:</Text>
+                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>{isRejected ? 'REJECTION NOTE:' : 'APPROVAL NOTE:'}</Text>
                             <Text style={{ fontSize: 12, color: isDarkMode ? '#fff' : '#0f172a', marginTop: 1, fontWeight: '600' }}>
                               {p.regularization_notes || p.approval_notes}
                             </Text>
