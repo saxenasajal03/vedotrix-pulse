@@ -356,9 +356,11 @@ export default function App() {
   // Selected Notice for Full Screen Reading Modal
   const [selectedNoticeForView, setSelectedNoticeForView] = useState<any | null>(null);
 
-  // Theme & Auto-Update States
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  // Theme & Auto-Update States (4 Corporate Themes: 'dark' | 'light' | 'navy' | 'emerald')
+  const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'navy' | 'emerald'>('dark');
+  const isDarkMode = themeMode !== 'light';
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [orgLogoFailed, setOrgLogoFailed] = useState<boolean>(false);
 
   // Subtabs within views
   const [calSubTab, setCalSubTab] = useState<'attendance' | 'roster' | 'holidays'>('attendance');
@@ -601,15 +603,17 @@ export default function App() {
   const [orgGeofenceRadius, setOrgGeofenceRadius] = useState('200');
   const [isSavingOrgSettings, setIsSavingOrgSettings] = useState(false);
 
-  // Dynamic Theme-Dependent Styles
-  const styles = useMemo(() => createThemedStyles(isDarkMode), [isDarkMode]);
+  // Dynamic Theme-Dependent Styles (Supporting Dark, Light, Navy, Emerald)
+  const styles = useMemo(() => createThemedStyles(themeMode), [themeMode]);
 
   // Load saved theme & notification read states on mount
   useEffect(() => {
     AsyncStorage.getItem('@vdx_theme_mode')
       .then((savedTheme) => {
-        if (savedTheme === 'light') {
-          setIsDarkMode(false);
+        if (savedTheme && ['dark', 'light', 'navy', 'emerald'].includes(savedTheme)) {
+          setThemeMode(savedTheme as any);
+        } else if (savedTheme === 'light') {
+          setThemeMode('light');
         }
       })
       .catch(() => {});
@@ -648,18 +652,47 @@ export default function App() {
   }, []);
 
   const handleToggleTheme = async () => {
-    const next = !isDarkMode;
-    setIsDarkMode(next);
+    const themeCycle: ('dark' | 'light' | 'navy' | 'emerald')[] = ['dark', 'light', 'navy', 'emerald'];
+    const curIdx = themeCycle.indexOf(themeMode);
+    const nextTheme = themeCycle[(curIdx + 1) % themeCycle.length];
+    setThemeMode(nextTheme);
     try {
-      await AsyncStorage.setItem('@vdx_theme_mode', next ? 'dark' : 'light');
+      await AsyncStorage.setItem('@vdx_theme_mode', nextTheme);
+    } catch {}
+  };
+
+  const handleSelectTheme = async (selected: 'dark' | 'light' | 'navy' | 'emerald') => {
+    setThemeMode(selected);
+    try {
+      await AsyncStorage.setItem('@vdx_theme_mode', selected);
     } catch {}
   };
 
   const handleSetTheme = async (dark: boolean) => {
-    setIsDarkMode(dark);
+    const nextTheme = dark ? 'dark' : 'light';
+    setThemeMode(nextTheme);
     try {
-      await AsyncStorage.setItem('@vdx_theme_mode', dark ? 'dark' : 'light');
+      await AsyncStorage.setItem('@vdx_theme_mode', nextTheme);
     } catch {}
+  };
+
+  // User-Friendly Generic Error Presenter (Suppresses raw Postgres / RLS errors)
+  const showUserFriendlyError = (title: string, rawError?: any, defaultMessage: string = 'Unable to complete this request. Please check your network connection and try again.') => {
+    console.log('[System Error Trace]:', rawError);
+    let friendly = defaultMessage;
+    if (rawError?.message) {
+      const msg = String(rawError.message).toLowerCase();
+      if (msg.includes('network') || msg.includes('fetch') || msg.includes('timeout') || msg.includes('failed to fetch')) {
+        friendly = 'Network connection issue. Please check your internet connection and retry.';
+      } else if (msg.includes('jwt') || msg.includes('expired') || msg.includes('unauthorized') || msg.includes('session')) {
+        friendly = 'Your authentication session has expired. Please log in again to continue.';
+      } else if (msg.includes('row-level security') || msg.includes('policy') || msg.includes('permission') || msg.includes('42501')) {
+        friendly = 'Access restricted: You do not have permission for this action or it is outside your role authorization.';
+      } else if (msg.includes('unique') || msg.includes('duplicate') || msg.includes('23505')) {
+        friendly = 'A record for this date or entry already exists in the system.';
+      }
+    }
+    Alert.alert(title, friendly);
   };
 
   const handleManualCheckUpdates = async () => {
@@ -1926,7 +1959,7 @@ export default function App() {
         }
         refreshAllData(supabaseClient, userProfile.org_id, userProfile.id);
       } else {
-        Alert.alert('Database Error', error.message);
+        showUserFriendlyError('Update Failed', error, 'Could not update employee record. Please verify network connection.');
       }
     } catch (err: any) {
       Alert.alert('Error', err?.message);
@@ -5059,8 +5092,13 @@ ${letter.content}
             <Text style={styles.hamburgerIcon}>☰</Text>
           </TouchableOpacity>
 
-          {currentOrg?.logo_url ? (
-            <Image source={{ uri: currentOrg.logo_url }} style={styles.orgHeaderLogoImg} resizeMode="contain" />
+          {currentOrg?.logo_url && !orgLogoFailed ? (
+            <Image
+              source={{ uri: currentOrg.logo_url }}
+              style={styles.orgHeaderLogoImg}
+              resizeMode="contain"
+              onError={() => setOrgLogoFailed(true)}
+            />
           ) : (
             <View style={styles.brandLogoSquare}>
               <Text style={styles.brandLogoSquareText}>
@@ -5414,6 +5452,135 @@ ${letter.content}
               )}
             </View>
 
+            {/* Daily Corporate Inspiration Quote Card */}
+            {(() => {
+              const quotes = [
+  { text: "Quality means doing it right when no one is looking.", author: "Henry Ford" },
+  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { text: "Excellence is not an act, but a habit.", author: "Aristotle" },
+  { text: "Talent wins games, but teamwork and intelligence win championships.", author: "Michael Jordan" },
+  { text: "Alone we can do so little; together we can do so much.", author: "Helen Keller" },
+  { text: "Great things in business are never done by one person.", author: "Steve Jobs" }
+];
+              const todayQuote = quotes[new Date().getDate() % quotes.length];
+              return (
+                <View style={styles.dashboardQuoteCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Text style={{ fontSize: 14 }}>💡</Text>
+                    <Text style={styles.dashboardQuoteHeading}>DAILY WORKPLACE INSPIRATION</Text>
+                  </View>
+                  <Text style={styles.dashboardQuoteText}>"{todayQuote.text}"</Text>
+                  <Text style={styles.dashboardQuoteAuthor}>— {todayQuote.author}</Text>
+                </View>
+              );
+            })()}
+
+            {/* UPCOMING MEETINGS CARD (Dashboard First Page - Clean Modern UI) */}
+            {(() => {
+              const upcomingMeetings = meetings.filter((m) => m.date >= todayStr);
+              return (
+                <View style={styles.dashboardSectionCard}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 16 }}>📹</Text>
+                      <Text style={styles.dashboardCardTitle}>Upcoming Meetings ({upcomingMeetings.length})</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setActiveTab('more');
+                        setMoreSection('meetings');
+                      }}
+                    >
+                      <Text style={styles.viewAllLinkText}>View All →</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {upcomingMeetings.length === 0 ? (
+                    <View style={styles.emptyCardContainer}>
+                      <Text style={{ fontSize: 20, marginBottom: 2 }}>🗓️</Text>
+                      <Text style={styles.emptyCardHeading}>No upcoming meetings scheduled</Text>
+                      <Text style={styles.emptyCardSubtext}>Your schedule is clear to focus on work</Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 8 }}>
+                      {upcomingMeetings.slice(0, 2).map((m) => {
+                        const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
+                        return (
+                          <View key={m.id} style={styles.compactMeetingItem}>
+                            <View style={{ flex: 1, paddingRight: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                <View style={styles.meetingDeptBadge}>
+                                  <Text style={styles.meetingDeptBadgeText}>{(m.department || 'ALL').toUpperCase()}</Text>
+                                </View>
+                                <Text style={styles.compactMeetingDateText}>• {formatDisplayDate(m.date)}</Text>
+                              </View>
+                              <Text style={styles.compactMeetingTitleText} numberOfLines={1}>{m.title}</Text>
+                              <Text style={styles.compactMeetingTimeText}>⏰ {m.start_time} - {m.end_time || '1 hr'} IST</Text>
+                            </View>
+
+                            <TouchableOpacity
+                              style={styles.compactJoinBtn}
+                              onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Error', 'Could not open meeting link.'))}
+                            >
+                              <Text style={styles.compactJoinBtnText}>🎥 Join</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* COMPANY ANNOUNCEMENTS CARD (Dashboard First Page - Clean Modern UI) */}
+            <View style={styles.dashboardSectionCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 16 }}>📢</Text>
+                  <Text style={styles.dashboardCardTitle}>Company Notices ({notices.length})</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setActiveTab('more');
+                    setMoreSection('notices');
+                  }}
+                >
+                  <Text style={styles.viewAllLinkText}>View All →</Text>
+                </TouchableOpacity>
+              </View>
+
+              {notices.length === 0 ? (
+                <View style={styles.emptyCardContainer}>
+                  <Text style={styles.emptyCardHeading}>No company announcements published yet</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 8 }}>
+                  {notices.slice(0, 2).map((notice) => (
+                    <TouchableOpacity
+                      key={notice.id}
+                      style={styles.compactNoticeItem}
+                      onPress={() => setSelectedNoticeForView(notice)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                        <View style={[
+                          styles.noticePriorityBadge,
+                          notice.priority === 'urgent' ? styles.priorityUrgent :
+                          notice.priority === 'high' ? styles.priorityHigh : styles.priorityNormal
+                        ]}>
+                          <Text style={styles.noticePriorityText}>{(notice.priority || 'NORMAL').toUpperCase()}</Text>
+                        </View>
+                        <Text style={styles.compactNoticeDateText}>{formatNoticeDate(notice)}</Text>
+                      </View>
+                      <Text style={styles.compactNoticeTitleText} numberOfLines={1}>{notice.title}</Text>
+                      <Text style={styles.compactNoticeSnippetText} numberOfLines={2}>{notice.content}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
             {/* Attendance, past 7 days card */}
             <View style={styles.dashboardChartCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -5596,19 +5763,39 @@ ${letter.content}
                         </View>
                       </View>
 
-                      {/* Status badge pill on right */}
-                      <View style={[
-                        styles.empStatusPill,
-                        isPresentToday ? styles.empStatusPillPresent :
-                        isOnLeaveToday ? styles.empStatusPillLeave : styles.empStatusPillAbsent
-                      ]}>
-                        <Text style={[
-                          styles.empStatusPillText,
-                          isPresentToday ? styles.empStatusPillTextPresent :
-                          isOnLeaveToday ? styles.empStatusPillTextLeave : styles.empStatusPillTextAbsent
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        {isPrivileged && (
+                          <TouchableOpacity
+                            style={styles.empCardEditBtn}
+                            onPress={() => {
+                              setInspectedUserProfile(emp);
+                              setEditEmpRole(emp.role || 'employee');
+                              setEditEmpEmail(emp.email || '');
+                              setEditEmpDesig(emp.designation || '');
+                              setEditEmpDept(emp.department || '');
+                              setEditEmpJoining(emp.joining_date || '');
+                              setEditEmpPasswordReset('');
+                              setIsEditEmployeeModal(true);
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Text style={styles.empCardEditBtnText}>✏️ Edit</Text>
+                          </TouchableOpacity>
+                        )}
+                        {/* Status badge pill on right */}
+                        <View style={[
+                          styles.empStatusPill,
+                          isPresentToday ? styles.empStatusPillPresent :
+                          isOnLeaveToday ? styles.empStatusPillLeave : styles.empStatusPillAbsent
                         ]}>
-                          {isPresentToday ? 'Present' : isOnLeaveToday ? 'On leave' : 'Absent'}
-                        </Text>
+                          <Text style={[
+                            styles.empStatusPillText,
+                            isPresentToday ? styles.empStatusPillTextPresent :
+                            isOnLeaveToday ? styles.empStatusPillTextLeave : styles.empStatusPillTextAbsent
+                          ]}>
+                            {isPresentToday ? 'Present' : isOnLeaveToday ? 'On leave' : 'Absent'}
+                          </Text>
+                        </View>
                       </View>
                     </TouchableOpacity>
                   );
@@ -9031,12 +9218,38 @@ ${letter.content}
 
             {/* Drawer Footer */}
             <View style={styles.drawerFooter}>
-              <TouchableOpacity style={styles.drawerThemeToggle} onPress={handleToggleTheme}>
-                <Text style={{ fontSize: 13, color: isDarkMode ? '#f8fafc' : '#0f172a', fontWeight: '600' }}>
-                  {isDarkMode ? '🌙 Dark Obsidian' : '☀️ Clean Light'}
+              <View style={{ marginBottom: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: '800', color: '#94a3b8', letterSpacing: 0.5, marginBottom: 6 }}>
+                  SELECT APP THEME
                 </Text>
-                <Text style={{ fontSize: 11, color: '#38bdf8', fontWeight: 'bold' }}>Toggle ↺</Text>
-              </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {[
+                    { key: 'dark', label: '🌙 Dark', color: '#07090e' },
+                    { key: 'light', label: '☀️ Light', color: '#ffffff' },
+                    { key: 'navy', label: '🌌 Navy', color: '#0a1128' },
+                    { key: 'emerald', label: '🌲 Mint', color: '#061a14' }
+                  ].map((t) => {
+                    const isSelected = themeMode === t.key;
+                    return (
+                      <TouchableOpacity
+                        key={t.key}
+                        style={[
+                          styles.drawerThemeChip,
+                          isSelected && styles.drawerThemeChipSelected
+                        ]}
+                        onPress={() => handleSelectTheme(t.key as any)}
+                      >
+                        <Text style={[
+                          styles.drawerThemeChipText,
+                          isSelected && styles.drawerThemeChipTextSelected
+                        ]}>
+                          {t.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
 
               <TouchableOpacity
                 style={styles.drawerLogoutBtn}
@@ -9511,7 +9724,7 @@ ${letter.content}
                       setIsCalendarPoliciesModal(false);
                       refreshAllData(supabaseClient, currentOrg.id, userProfile?.id);
                     } else {
-                      Alert.alert('Database Error', error?.message || 'Failed to save calendar policies to cloud.');
+                      showUserFriendlyError('Policy Update Failed', error, 'Unable to save calendar policies to cloud. Please try again.');
                     }
                   } catch (e: any) {
                     Alert.alert('Error', e?.message);
@@ -12573,21 +12786,228 @@ ${letter.content}
 // =============================================================================
 // THEMED STYLESHEET GENERATOR (DARK & LIGHT CORPORATE PALETTES)
 // =============================================================================
-function createThemedStyles(isDark: boolean) {
-  const bg = isDark ? '#07090e' : '#f8fafd';
-  const cardBg = isDark ? '#0f172a' : '#ffffff';
-  const cardBorder = isDark ? '#1e293b' : '#e2e8f0';
-  const subtleBorder = isDark ? '#334155' : '#cbd5e1';
-  const textPrimary = isDark ? '#ffffff' : '#0f172a';
-  const textSecondary = isDark ? '#94a3b8' : '#64748b';
-  const textMuted = isDark ? '#64748b' : '#94a3b8';
-  const inputBg = isDark ? '#07090e' : '#f8fafc';
-  const inputBorder = isDark ? '#1e293b' : '#cbd5e1';
-  const subtleBg = isDark ? '#141b2d' : '#f1f5f9';
-  const navBg = isDark ? '#07090e' : '#ffffff';
-  const navBorder = isDark ? '#1e293b' : '#e2e8f0';
+function createThemedStyles(themeOrIsDark: boolean | 'dark' | 'light' | 'navy' | 'emerald') {
+  const theme = typeof themeOrIsDark === 'string' ? themeOrIsDark : (themeOrIsDark ? 'dark' : 'light');
+  const isDark = theme !== 'light';
+
+  let bg = '#07090e';
+  let cardBg = '#0f172a';
+  let cardBorder = '#1e293b';
+  let subtleBorder = '#334155';
+  let textPrimary = '#ffffff';
+  let textSecondary = '#94a3b8';
+  let textMuted = '#64748b';
+  let inputBg = '#07090e';
+  let inputBorder = '#1e293b';
+  let subtleBg = '#141b2d';
+  let navBg = '#07090e';
+  let navBorder = '#1e293b';
+
+  if (theme === 'light') {
+    bg = '#f8fafd';
+    cardBg = '#ffffff';
+    cardBorder = '#e2e8f0';
+    subtleBorder = '#cbd5e1';
+    textPrimary = '#0f172a';
+    textSecondary = '#64748b';
+    textMuted = '#94a3b8';
+    inputBg = '#ffffff';
+    inputBorder = '#cbd5e1';
+    subtleBg = '#f1f5f9';
+    navBg = '#ffffff';
+    navBorder = '#e2e8f0';
+  } else if (theme === 'navy') {
+    bg = '#060d1f';
+    cardBg = '#0c1836';
+    cardBorder = '#1a2e5a';
+    subtleBorder = '#25407d';
+    textPrimary = '#f0f9ff';
+    textSecondary = '#93c5fd';
+    textMuted = '#60a5fa';
+    inputBg = '#060d1f';
+    inputBorder = '#1a2e5a';
+    subtleBg = '#0f224d';
+    navBg = '#060d1f';
+    navBorder = '#1a2e5a';
+  } else if (theme === 'emerald') {
+    bg = '#04140e';
+    cardBg = '#09261b';
+    cardBorder = '#134e3a';
+    subtleBorder = '#1b6b50';
+    textPrimary = '#ecfdf5';
+    textSecondary = '#6ee7b7';
+    textMuted = '#34d399';
+    inputBg = '#04140e';
+    inputBorder = '#134e3a';
+    subtleBg = '#0d3627';
+    navBg = '#04140e';
+    navBorder = '#134e3a';
+  }
 
   return StyleSheet.create({
+    empCardEditBtn: {
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 8,
+      backgroundColor: isDark ? '#1e293b' : '#e2e8f0',
+      borderWidth: 1,
+      borderColor: isDark ? '#334155' : '#cbd5e1'
+    },
+    empCardEditBtnText: {
+      fontSize: 10.5,
+      fontWeight: '700',
+      color: textPrimary
+    },
+
+    // 4-Theme Chip Selectors in Drawer
+    drawerThemeChip: {
+      flex: 1,
+      paddingVertical: 7,
+      borderRadius: 8,
+      backgroundColor: cardBg,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    drawerThemeChipSelected: {
+      borderColor: '#2563eb',
+      backgroundColor: isDark ? 'rgba(37, 99, 235, 0.2)' : '#eff6ff'
+    },
+    drawerThemeChipText: {
+      fontSize: 10.5,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    drawerThemeChipTextSelected: {
+      color: '#2563eb',
+      fontWeight: 'bold'
+    },
+
+    // Dashboard Cards: Quotes, Meetings, Announcements
+    dashboardQuoteCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.03)',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 1,
+      shadowRadius: 3,
+      elevation: 1
+    },
+    dashboardQuoteHeading: {
+      fontSize: 9.5,
+      fontWeight: '800',
+      color: textMuted,
+      letterSpacing: 0.6
+    },
+    dashboardQuoteText: {
+      fontSize: 13,
+      fontStyle: 'italic',
+      color: textPrimary,
+      lineHeight: 18,
+      marginVertical: 4
+    },
+    dashboardQuoteAuthor: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: textSecondary,
+      alignSelf: 'flex-end'
+    },
+    dashboardSectionCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 15,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.04)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 1,
+      shadowRadius: 4,
+      elevation: 1
+    },
+    viewAllLinkText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#2563eb'
+    },
+    emptyCardContainer: {
+      paddingVertical: 14,
+      alignItems: 'center',
+      backgroundColor: isDark ? '#0b1120' : '#f8fafc',
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    emptyCardHeading: {
+      color: textSecondary,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    emptyCardSubtext: {
+      color: textMuted,
+      fontSize: 10.5,
+      marginTop: 2
+    },
+    compactMeetingItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 10,
+      borderRadius: 12,
+      backgroundColor: isDark ? '#0b1120' : '#f8fafc',
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    compactMeetingDateText: {
+      fontSize: 10.5,
+      color: textSecondary
+    },
+    compactMeetingTitleText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: textPrimary,
+      marginBottom: 2
+    },
+    compactMeetingTimeText: {
+      fontSize: 10.5,
+      color: textSecondary
+    },
+    compactJoinBtn: {
+      backgroundColor: '#2563eb',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10
+    },
+    compactJoinBtnText: {
+      color: '#ffffff',
+      fontSize: 11.5,
+      fontWeight: '700'
+    },
+    compactNoticeItem: {
+      padding: 10,
+      borderRadius: 12,
+      backgroundColor: isDark ? '#0b1120' : '#f8fafc',
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    compactNoticeDateText: {
+      fontSize: 10,
+      color: textMuted
+    },
+    compactNoticeTitleText: {
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: textPrimary,
+      marginBottom: 2
+    },
+    compactNoticeSnippetText: {
+      fontSize: 11,
+      color: textSecondary,
+      lineHeight: 15
+    },
     // Modern Hamburger & App / Org Branding
     hamburgerBtn: {
       width: 36,
