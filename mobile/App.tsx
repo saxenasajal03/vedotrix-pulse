@@ -306,6 +306,7 @@ export default function App() {
   const [meetingFilter, setMeetingFilter] = useState<'all' | 'today' | 'upcoming' | 'online'>('all');
   const [moreSection, setMoreSection] = useState<'meetings' | 'standups' | 'leaves' | 'approvals' | 'notices' | 'profile'>('meetings');
   const [isFabMenuOpen, setIsFabMenuOpen] = useState<boolean>(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
 
   // Realtime Live Clock (ticking every second)
   const [liveClockTime, setLiveClockTime] = useState<string>(() => {
@@ -4910,6 +4911,56 @@ ${letter.content}
     });
   }, [meetings, meetingFilter]);
 
+  // Role-Based User Access & Gating
+  const userRole = (userProfile?.role || 'employee').toLowerCase();
+  const isSuperadminRole = userRole === 'superadmin' || isVedotrixSuperadmin;
+  const isPrivilegedRole = isPrivileged || ['superadmin', 'admin', 'hr'].includes(userRole);
+  const isManagerRole = userRole === 'manager';
+
+  // Manager-specific team metrics
+  const myManagedEmployees = useMemo(() => {
+    if (!userProfile?.id) return [];
+    return teamProfiles.filter((p) => p.manager_id === userProfile.id);
+  }, [teamProfiles, userProfile]);
+
+  const myTeamPresentCount = useMemo(() => {
+    const today = getTodayISTDate();
+    const managedIds = new Set(myManagedEmployees.map((e) => e.id));
+    return attendanceRecords.filter((a) => managedIds.has(a.employee_id) && a.date === today && (a.status === 'present' || a.regularization_status === 'approved' || a.approval_status === 'approved')).length;
+  }, [myManagedEmployees, attendanceRecords]);
+
+  const myTeamOnLeaveCount = useMemo(() => {
+    const today = getTodayISTDate();
+    const managedIds = new Set(myManagedEmployees.map((e) => e.id));
+    return leaveRequests.filter((l) => managedIds.has(l.employee_id) && l.status === 'approved' && l.start_date <= today && l.end_date >= today).length;
+  }, [myManagedEmployees, leaveRequests]);
+
+  const myTeamPendingApprovalsCount = useMemo(() => {
+    const managedIds = new Set(myManagedEmployees.map((e) => e.id));
+    const pendingRegs = attendanceRecords.filter((a) => managedIds.has(a.employee_id) && (a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval')).length;
+    const pendingLeaves = leaveRequests.filter((l) => managedIds.has(l.employee_id) && l.status === 'pending').length;
+    return pendingRegs + pendingLeaves;
+  }, [myManagedEmployees, attendanceRecords, leaveRequests]);
+
+  // Employee-specific personal metrics
+  const myPresentDaysThisMonth = useMemo(() => {
+    if (!userProfile?.id) return 0;
+    const currentMonthPrefix = getTodayISTDate().slice(0, 7);
+    return attendanceRecords.filter((a) => a.employee_id === userProfile.id && a.date.startsWith(currentMonthPrefix) && (a.status === 'present' || a.regularization_status === 'approved' || a.approval_status === 'approved')).length;
+  }, [attendanceRecords, userProfile]);
+
+  const myLeaveBalanceDays = useMemo(() => {
+    const approvedLeaveDays = leaveRequests
+      .filter((l) => l.employee_id === userProfile?.id && l.status === 'approved')
+      .reduce((acc, curr) => acc + (curr.days_count || 1), 0);
+    return Math.max(0, 18 - approvedLeaveDays);
+  }, [leaveRequests, userProfile]);
+
+  const todayStandupSubmitted = useMemo(() => {
+    const today = getTodayISTDate();
+    return standups.some((s) => s.employee_id === userProfile?.id && s.date === today);
+  }, [standups, userProfile]);
+
 
   const isInside = distance !== null && distance <= activeOfficeCoords.radiusMeters;
 
@@ -4995,23 +5046,44 @@ ${letter.content}
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={isDarkMode ? '#07090e' : '#f8fafc'} />
 
-{/* Header */}
+{/* Top Header with Hamburger, Vedotrix & Org Branding */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.brandLogoSquare}>
-            <Text style={styles.brandLogoSquareText}>
-              {(currentOrg?.name?.split(' ').map((w: string) => w[0]).join('').slice(0, 3) || 'BNK').toUpperCase()}
-            </Text>
-          </View>
+        {/* Left: Hamburger Menu + Org Logo + Vedotrix Branding */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+          <TouchableOpacity
+            style={styles.hamburgerBtn}
+            onPress={() => setIsDrawerOpen(true)}
+            accessibilityLabel="Open Navigation Drawer"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.hamburgerIcon}>☰</Text>
+          </TouchableOpacity>
+
+          {currentOrg?.logo_url ? (
+            <Image source={{ uri: currentOrg.logo_url }} style={styles.orgHeaderLogoImg} resizeMode="contain" />
+          ) : (
+            <View style={styles.brandLogoSquare}>
+              <Text style={styles.brandLogoSquareText}>
+                {(currentOrg?.name?.split(' ').map((w: string) => w[0]).join('').slice(0, 3) || 'BNK').toUpperCase()}
+              </Text>
+            </View>
+          )}
+
           <View>
-            <Text style={styles.brandTitle} numberOfLines={1}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <View style={styles.vedotrixBadge}>
+                <Text style={styles.vedotrixBadgeText}>VEDOTRIX</Text>
+              </View>
+              <Text style={styles.vedotrixPulseText}>Pulse</Text>
+            </View>
+            <Text style={styles.orgHeaderName} numberOfLines={1}>
               {currentOrg ? currentOrg.name : 'BNK Digital'}
             </Text>
-            <Text style={styles.brandSubtitle}>Vedotrix Pulse</Text>
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {/* Right: Search, Notification, Theme Toggle, Avatar */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
           <TouchableOpacity
             style={styles.headerIconBtn}
             onPress={() => setActiveTab('people')}
@@ -5026,9 +5098,7 @@ ${letter.content}
             accessibilityLabel="In-app Notifications"
           >
             <Text style={{ fontSize: 15 }}>🔔</Text>
-            {unreadNotifCount > 0 && (
-              <View style={styles.headerNotifDot} />
-            )}
+            {unreadNotifCount > 0 && <View style={styles.headerNotifDot} />}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -5038,12 +5108,6 @@ ${letter.content}
           >
             <Text style={{ fontSize: 14 }}>{isDarkMode ? '☀️' : '🌙'}</Text>
           </TouchableOpacity>
-
-          {isVedotrixSuperadmin && (
-            <TouchableOpacity style={styles.switchOrgBtn} onPress={() => setIsOrgModalVisible(true)}>
-              <Text style={styles.switchOrgBtnText}>🏢 Switch</Text>
-            </TouchableOpacity>
-          )}
 
           <TouchableOpacity
             style={styles.avatarHeaderBtn}
@@ -5064,7 +5128,7 @@ ${letter.content}
         </View>
       </View>
 
-            {/* Scrollable Content Body */}
+      {/* Scrollable Content Body */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -5152,7 +5216,7 @@ ${letter.content}
         )}
 
         {/* ========================================================================= */}
-        {/* 1. SCREEN 1: DASHBOARD / HOME TAB (Aligned with Reference Screenshot 1)   */}
+        {/* 1. SCREEN 1: DASHBOARD / HOME TAB (Role-Gated & Non-Repetitive)           */}
         {/* ========================================================================= */}
         {(activeTab === 'home' || activeTab === 'punch') && (
           <View style={{ gap: 14 }}>
@@ -5166,47 +5230,188 @@ ${letter.content}
               </Text>
             </View>
 
-            {/* 2x2 Metric Grid */}
+            {/* Quick Punch Status Widget (Clean, Non-repetitive 1-Tap Punch) */}
+            <View style={styles.dashboardQuickPunchWidget}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <View style={[styles.geofenceDot, { backgroundColor: isInside ? '#10b981' : '#f59e0b' }]} />
+                    <Text style={styles.geofenceLocationText}>
+                      {isInside ? 'In Office Geofence' : 'Remote / GPS Field'}
+                    </Text>
+                  </View>
+                  <Text style={styles.quickPunchStatusText} numberOfLines={1}>
+                    {(isCheckedIn || todayAttendanceRecord)
+                      ? `✓ Punched in at ${todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} IST`
+                      : 'You have not marked attendance today'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.quickPunchBtn,
+                    (todayHoliday || isWeekOffToday)
+                      ? { backgroundColor: '#475569' }
+                      : (isCheckedIn || todayAttendanceRecord)
+                      ? styles.quickPunchBtnDone
+                      : styles.quickPunchBtnActive
+                  ]}
+                  onPress={handlePunchToggle}
+                  disabled={Boolean(todayHoliday || isWeekOffToday)}
+                >
+                  <Text style={styles.quickPunchBtnText}>
+                    {todayHoliday
+                      ? 'Holiday'
+                      : isWeekOffToday
+                      ? 'Off Day'
+                      : (isCheckedIn || todayAttendanceRecord)
+                      ? '✓ Present'
+                      : 'Punch In'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* ROLE-BASED 2x2 METRIC GRID */}
             <View style={styles.dashboardMetricGrid}>
-              {/* Card 1: Total employees */}
-              <View style={styles.dashboardMetricCard}>
-                <Text style={styles.dashboardMetricSubtitle}>Total employees</Text>
-                <Text style={styles.dashboardMetricValue}>{teamProfiles.length || 9}</Text>
-                <View style={styles.dashboardMetricPill}>
-                  <Text style={styles.dashboardMetricPillText}>{teamProfiles.length || 9} active</Text>
-                </View>
-              </View>
+              {/* ADMIN / SUPERADMIN / HR VIEW */}
+              {isPrivilegedRole ? (
+                <>
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>Total employees</Text>
+                    <Text style={styles.dashboardMetricValue}>{teamProfiles.length || 9}</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>{teamProfiles.length || 9} active</Text>
+                    </View>
+                  </View>
 
-              {/* Card 2: Present today */}
-              <View style={styles.dashboardMetricCard}>
-                <Text style={styles.dashboardMetricSubtitle}>Present today</Text>
-                <Text style={styles.dashboardMetricValue}>{todayPresentCount}</Text>
-                <View style={styles.dashboardMetricPill}>
-                  <Text style={styles.dashboardMetricPillText}>
-                    {Math.round((todayPresentCount / (teamProfiles.length || 1)) * 100)}% rate
-                  </Text>
-                </View>
-              </View>
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>Present today</Text>
+                    <Text style={styles.dashboardMetricValue}>{todayPresentCount}</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>
+                        {Math.round((todayPresentCount / (teamProfiles.length || 1)) * 100)}% rate
+                      </Text>
+                    </View>
+                  </View>
 
-              {/* Card 3: On leave today */}
-              <View style={styles.dashboardMetricCard}>
-                <Text style={styles.dashboardMetricSubtitle}>On leave today</Text>
-                <Text style={styles.dashboardMetricValue}>{todayOnLeaveCount}</Text>
-                <View style={styles.dashboardMetricPill}>
-                  <Text style={styles.dashboardMetricPillText}>
-                    {Math.round((todayOnLeaveCount / (teamProfiles.length || 1)) * 100)}% of staff
-                  </Text>
-                </View>
-              </View>
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>On leave today</Text>
+                    <Text style={styles.dashboardMetricValue}>{todayOnLeaveCount}</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>
+                        {Math.round((todayOnLeaveCount / (teamProfiles.length || 1)) * 100)}% of staff
+                      </Text>
+                    </View>
+                  </View>
 
-              {/* Card 4: Pending approvals */}
-              <View style={styles.dashboardMetricCard}>
-                <Text style={styles.dashboardMetricSubtitle}>Pending approvals</Text>
-                <Text style={styles.dashboardMetricValue}>{totalPendingApprovals}</Text>
-                <View style={styles.dashboardMetricPill}>
-                  <Text style={styles.dashboardMetricPillText}>Leave / access</Text>
-                </View>
-              </View>
+                  <TouchableOpacity
+                    style={styles.dashboardMetricCard}
+                    onPress={() => {
+                      setActiveTab('more');
+                      setMoreSection('approvals');
+                    }}
+                  >
+                    <Text style={styles.dashboardMetricSubtitle}>Pending approvals</Text>
+                    <Text style={[styles.dashboardMetricValue, totalPendingApprovals > 0 && { color: '#f59e0b' }]}>
+                      {totalPendingApprovals}
+                    </Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>Leave & access →</Text>
+                    </View>
+                  </TouchableOpacity>
+                </>
+              ) : isManagerRole ? (
+                /* MANAGER VIEW (Focused on managed direct reports) */
+                <>
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>My team members</Text>
+                    <Text style={styles.dashboardMetricValue}>{myManagedEmployees.length || teamProfiles.length}</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>Direct reports</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>Team present</Text>
+                    <Text style={styles.dashboardMetricValue}>{myTeamPresentCount}</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>
+                        {Math.round((myTeamPresentCount / (myManagedEmployees.length || 1)) * 100)}% present
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>Team on leave</Text>
+                    <Text style={styles.dashboardMetricValue}>{myTeamOnLeaveCount}</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>On leave today</Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.dashboardMetricCard}
+                    onPress={() => {
+                      setActiveTab('more');
+                      setMoreSection('approvals');
+                    }}
+                  >
+                    <Text style={styles.dashboardMetricSubtitle}>Team approvals</Text>
+                    <Text style={[styles.dashboardMetricValue, myTeamPendingApprovalsCount > 0 && { color: '#f59e0b' }]}>
+                      {myTeamPendingApprovalsCount}
+                    </Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>Action queue →</Text>
+                    </View>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                /* INDIVIDUAL EMPLOYEE VIEW (Personal Stats) */
+                <>
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>This month present</Text>
+                    <Text style={styles.dashboardMetricValue}>{myPresentDaysThisMonth}d</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>Punches recorded</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>Leave balance</Text>
+                    <Text style={styles.dashboardMetricValue}>{myLeaveBalanceDays}d</Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>Available this year</Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.dashboardMetricCard}
+                    onPress={() => {
+                      setActiveTab('more');
+                      setMoreSection('standups');
+                    }}
+                  >
+                    <Text style={styles.dashboardMetricSubtitle}>Daily standup</Text>
+                    <Text style={[styles.dashboardMetricValue, { fontSize: 20 }]}>
+                      {todayStandupSubmitted ? 'Done ✅' : 'Pending ⏳'}
+                    </Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>{todayStandupSubmitted ? 'Logged today' : 'Tap to submit →'}</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <View style={styles.dashboardMetricCard}>
+                    <Text style={styles.dashboardMetricSubtitle}>Shift timing</Text>
+                    <Text style={[styles.dashboardMetricValue, { fontSize: 16, marginTop: 4 }]}>
+                      {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'}
+                    </Text>
+                    <View style={styles.dashboardMetricPill}>
+                      <Text style={styles.dashboardMetricPillText}>{(isCheckedIn || todayAttendanceRecord) ? 'Present logged' : 'Rest / Ready'}</Text>
+                    </View>
+                  </View>
+                </>
+              )}
             </View>
 
             {/* Attendance, past 7 days card */}
@@ -5286,460 +5491,6 @@ ${letter.content}
                   })}
                 </View>
               )}
-            </View>
-            {/* Realtime Live Clock & Shift Tracker Card */}
-            <View style={styles.clockCard}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <View>
-                  <Text style={styles.liveClockText}>{liveClockTime}</Text>
-                  <Text style={styles.liveClockSub}>
-                    {new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })} IST
-                  </Text>
-                </View>
-                <View style={[
-                  styles.shiftStatusPill,
-                  (todayHoliday || isWeekOffToday)
-                    ? { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#f59e0b' }
-                    : (isCheckedIn || todayAttendanceRecord)
-                    ? styles.shiftStatusPillActive
-                    : styles.shiftStatusPillInactive
-                ]}>
-                  <Text style={[
-                    styles.shiftStatusPillText,
-                    (todayHoliday || isWeekOffToday) && { color: '#f59e0b' }
-                  ]}>
-                    {todayHoliday
-                      ? '🌴 HOLIDAY (LOCKED)'
-                      : isWeekOffToday
-                      ? '☕ WEEK OFF (LOCKED)'
-                      : (isCheckedIn || todayAttendanceRecord)
-                      ? '✓ PRESENT (LOGGED)'
-                      : '⚪ READY TO PUNCH'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Verified Single Punch-In Display (NO ticking running stopwatch) */}
-              {(isCheckedIn || todayAttendanceRecord) && (
-                <View style={[styles.elapsedBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
-                  <Text style={[styles.elapsedLabel, { color: '#10b981' }]}>Single Punch Verified:</Text>
-                  <Text style={[styles.elapsedValue, { color: '#10b981' }]}>
-                    ✓ Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} IST
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {/* Geo-Fenced Smart Punch Card */}
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={styles.cardTitle}>Geo-Fenced Smart Punch</Text>
-                <TouchableOpacity onPress={requestLocationPermission} style={{ padding: 4 }}>
-                  <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>↻ Sync GPS</Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.cardDesc}>
-                Office: {activeOfficeCoords.name} • Shift: {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'} IST
-              </Text>
-
-              <View style={[styles.statusBadge, isInside ? styles.statusBadgeInside : styles.statusBadgeRemote]}>
-                <Text style={[styles.statusText, isInside ? styles.statusTextInside : styles.statusTextRemote]}>
-                  {isInside ? '● INSIDE OFFICE GEOFENCE' : '▲ REMOTE / FIELD LOCATION'}
-                </Text>
-              </View>
-
-              <View style={styles.metricRow}>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Distance to Office</Text>
-                  <Text style={styles.metricValue}>
-                    {distance !== null ? `${distance} m` : '--'}
-                  </Text>
-                </View>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Geofence Radius</Text>
-                  <Text style={styles.metricValue}>
-                    {activeOfficeCoords.radiusMeters} m
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.punchButton,
-                  (todayHoliday || isWeekOffToday)
-                    ? { backgroundColor: '#1e293b', borderColor: '#475569', opacity: 0.85 }
-                    : todayAttendanceRecord?.approval_status === 'pending_manager_approval'
-                    ? { backgroundColor: '#d97706', borderColor: '#f59e0b' }
-                    : (isCheckedIn || todayAttendanceRecord)
-                    ? { backgroundColor: '#059669', borderColor: '#10b981' }
-                    : styles.punchButtonIn
-                ]}
-                onPress={handlePunchToggle}
-                disabled={Boolean(todayHoliday || isWeekOffToday)}
-              >
-                <Text style={styles.punchButtonText}>
-                  {todayHoliday
-                    ? `🔒 ATTENDANCE LOCKED: ${todayHoliday.name.toUpperCase()}`
-                    : isWeekOffToday
-                    ? '🔒 ATTENDANCE LOCKED: WEEKLY OFF'
-                    : todayAttendanceRecord?.approval_status === 'pending_manager_approval'
-                    ? '⏳ ATTENDANCE PENDING APPROVAL'
-                    : (isCheckedIn || todayAttendanceRecord)
-                    ? '✓ ATTENDANCE RECORDED (PRESENT)'
-                    : 'PUNCH IN (MARK PRESENT)'}
-                </Text>
-                {todayHoliday ? (
-                  <Text style={styles.punchTimeText}>Official Holiday • Attendance is locked</Text>
-                ) : isWeekOffToday ? (
-                  <Text style={styles.punchTimeText}>Weekly Rest Day • Attendance is locked</Text>
-                ) : todayAttendanceRecord?.approval_status === 'pending_manager_approval' ? (
-                  <Text style={styles.punchTimeText}>
-                    Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} (Remote) • Awaiting Manager/HR Approval
-                  </Text>
-                ) : (isCheckedIn || todayAttendanceRecord) ? (
-                  <Text style={styles.punchTimeText}>
-                    Punched in at {todayAttendanceRecord?.check_in_time ? formatISTTimeOnly(todayAttendanceRecord.check_in_time) : (checkInTime || 'Recorded')} • Single Punch Active
-                  </Text>
-                ) : checkInTime ? (
-                  <Text style={styles.punchTimeText}>{checkInTime}</Text>
-                ) : null}
-              </TouchableOpacity>
-
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                {/* Don't show regularize when attendance already marked for today or on holidays/weekoffs */}
-                {!(isCheckedIn || todayAttendanceRecord || todayHoliday || isWeekOffToday) && (
-                  <TouchableOpacity
-                    style={[styles.actionBtnSecondary, { flex: 1 }]}
-                    onPress={() => {
-                      setRegTargetDate(getTodayISTDate());
-                      setIsRegModal(true);
-                    }}
-                  >
-                    <Text style={styles.actionBtnSecondaryText}>✍️ Regularize Attendance</Text>
-                  </TouchableOpacity>
-                )}
-
-                <TouchableOpacity
-                  style={[styles.actionBtnSecondary, { flex: 1 }]}
-                  onPress={() => {
-                    setLeaveStartDate(getTodayISTDate());
-                    setLeaveEndDate(getTodayISTDate());
-                    setIsLeaveModal(true);
-                  }}
-                >
-                  <Text style={styles.actionBtnSecondaryText}>🌴 Apply For Leave</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Today's Punch Details if available */}
-            {todayAttendanceRecord && (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Today's Attendance Punch</Text>
-                <Text style={styles.cardDesc}>Cloud attendance log for {todayStr}</Text>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Check-In Time:</Text>
-                  <Text style={styles.detailVal}>
-                    {todayAttendanceRecord.check_in_time
-                      ? formatISTTimeOnly(todayAttendanceRecord.check_in_time)
-                      : '--'}
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Punch Model:</Text>
-                  <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold' }]}>
-                    Single Punch-In (No checkout required)
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Attendance Status:</Text>
-                  <Text style={[styles.detailVal, { color: todayAttendanceRecord.status === 'present' ? '#10b981' : '#f59e0b', fontWeight: 'bold' }]}>
-                    {todayAttendanceRecord.status?.toUpperCase() || 'LOGGED'}
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Geofence Verification:</Text>
-                  <Text style={styles.detailVal}>
-                    {todayAttendanceRecord.is_remote ? 'Remote / Field' : 'In-Office HQ'} ({todayAttendanceRecord.distance_meters || 0}m)
-                  </Text>
-                </View>
-
-                {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes || todayAttendanceRecord.regularization_reason || todayAttendanceRecord.regularization_status || todayAttendanceRecord.approval_status) && (
-                  (() => {
-                    const isRejected = todayAttendanceRecord.regularization_status === 'rejected' || todayAttendanceRecord.approval_status === 'rejected';
-                    const isApproved = !isRejected && (todayAttendanceRecord.regularization_status === 'approved' || todayAttendanceRecord.approval_status === 'approved');
-                    const isPending = !isRejected && !isApproved && (todayAttendanceRecord.regularization_status === 'pending' || todayAttendanceRecord.approval_status === 'pending_manager_approval');
-                    if (!isRejected && !isApproved && !isPending && !todayAttendanceRecord.regularization_notes && !todayAttendanceRecord.approval_notes) return null;
-
-                    const badgeColor = isRejected ? '#f43f5e' : isApproved ? '#10b981' : '#f59e0b';
-                    const badgeTitle = isRejected ? '❌ REGULARIZATION REJECTED' : isApproved ? '✅ REGULARIZATION APPROVED' : '⏳ REGULARIZATION PENDING';
-
-                    return (
-                      <View style={{ marginTop: 10, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : isRejected ? '#fff1f2' : isApproved ? '#f0fdf4' : '#fffbeb', borderRadius: 8, borderWidth: 1, borderColor: badgeColor + '40' }}>
-                        <Text style={{ fontSize: 10, color: badgeColor, fontWeight: 'bold' }}>
-                          {badgeTitle}
-                        </Text>
-                        {(todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
-                          <View style={{ marginTop: 4 }}>
-                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>{isRejected ? 'REJECTION NOTE:' : 'APPROVAL NOTE:'}</Text>
-                            <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#0f172a', marginTop: 1, fontWeight: '600' }}>
-                              {todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes}
-                            </Text>
-                          </View>
-                        )}
-                        {todayAttendanceRecord.regularization_reason && todayAttendanceRecord.regularization_reason !== (todayAttendanceRecord.regularization_notes || todayAttendanceRecord.approval_notes) && (
-                          <View style={{ marginTop: 4 }}>
-                            <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold' }}>REQUEST REASON:</Text>
-                            <Text style={{ fontSize: 11, color: isDarkMode ? '#cbd5e1' : '#475569', marginTop: 1 }}>
-                              {todayAttendanceRecord.regularization_reason}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })()
-                )}
-              </View>
-            )}
-
-            {/* Today's Organization Pulse Overview */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Today's Organization Pulse</Text>
-              <Text style={styles.cardDesc}>Real-time presence metrics across {currentOrg?.name || 'Company'}</Text>
-
-              <View style={styles.pulseStatsGrid}>
-                <View style={styles.pulseStatItem}>
-                  <Text style={styles.pulseStatValue}>{teamProfiles.length}</Text>
-                  <Text style={styles.pulseStatLabel}>👥 Total Team</Text>
-                </View>
-                <View style={styles.pulseStatItem}>
-                  <Text style={[styles.pulseStatValue, { color: '#10b981' }]}>{todayPresentCount}</Text>
-                  <Text style={styles.pulseStatLabel}>✅ Present</Text>
-                </View>
-                <View style={styles.pulseStatItem}>
-                  <Text style={[styles.pulseStatValue, { color: '#f59e0b' }]}>{todayOnLeaveCount}</Text>
-                  <Text style={styles.pulseStatLabel}>🌴 On Leave</Text>
-                </View>
-                <View style={styles.pulseStatItem}>
-                  <Text style={[styles.pulseStatValue, { color: '#38bdf8' }]}>{totalPendingApprovals}</Text>
-                  <Text style={styles.pulseStatLabel}>⏳ Approvals</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* 📹 TODAY'S SCHEDULED MEETINGS (DASHBOARD FIRST PAGE) */}
-            {(() => {
-              const todayMeetings = meetings.filter((m) => m.date === todayStr);
-              return (
-                <View style={styles.card}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={{ fontSize: 16 }}>📹</Text>
-                      <Text style={styles.cardTitle}>Today's Meetings ({todayMeetings.length})</Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      {canApprove && (
-                        <TouchableOpacity
-                          style={styles.smallAddBtn}
-                          onPress={() => setIsMeetingModal(true)}
-                        >
-                          <Text style={styles.smallAddBtnText}>+ Schedule</Text>
-                        </TouchableOpacity>
-                      )}
-                      <TouchableOpacity
-                        onPress={() => {
-                          setActiveTab('notices');
-                          setNoticesSubTab('meetings');
-                        }}
-                      >
-                        <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>All Meetings →</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <Text style={styles.cardDesc}>Video calls, syncs & daily standups scheduled for today</Text>
-
-                  {todayMeetings.length === 0 ? (
-                    <View style={{ paddingVertical: 14, alignItems: 'center', backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc', borderRadius: 12, marginTop: 6, borderWidth: 1, borderColor: isDarkMode ? '#1e293b' : '#e2e8f0' }}>
-                      <Text style={{ fontSize: 20, marginBottom: 4 }}>🗓️</Text>
-                      <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>No meetings scheduled for today</Text>
-                      <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Your calendar is clear to focus on work</Text>
-                    </View>
-                  ) : (
-                    <View style={{ gap: 8, marginTop: 6 }}>
-                      {todayMeetings.map((m) => {
-                        const meetUrl = m.meeting_url || m.meetingUrl || 'https://meet.google.com/new';
-                        return (
-                          <View key={m.id} style={[styles.meetingCard, { marginVertical: 0 }]}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                              <View style={{ flex: 1, paddingRight: 8 }}>
-                                <Text style={styles.meetingTitle}>{m.title}</Text>
-                                <Text style={styles.meetingMeta}>
-                                  ⏰ {m.start_time || m.startTime} - {m.end_time || m.endTime || '1 hr'} IST
-                                </Text>
-                                <Text style={styles.meetingHost}>
-                                  Host: <Text style={{ color: '#38bdf8' }}>{m.organizer_name || 'Organizer'}</Text> • Dept: {m.department || 'All'}
-                                </Text>
-                              </View>
-                              <View style={[styles.meetingStatusBadge, m.status === 'completed' ? styles.statusCompleted : styles.statusScheduled]}>
-                                <Text style={styles.meetingStatusText}>{m.status?.toUpperCase() || 'TODAY'}</Text>
-                              </View>
-                            </View>
-
-                            <View style={[styles.meetingActionsRow, { marginTop: 8 }]}>
-                              <TouchableOpacity
-                                style={styles.joinMeetBtn}
-                                onPress={() => Linking.openURL(meetUrl).catch(() => Alert.alert('Link Error', 'Could not open URL: ' + meetUrl))}
-                              >
-                                <Text style={styles.joinMeetBtnText}>🎥 Join Video Call</Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-                </View>
-              );
-            })()}
-
-            {/* 📢 FEATURED COMPANY NOTICES & BROADCASTS DIRECTLY ON FIRST PAGE */}
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 16 }}>📢</Text>
-                  <Text style={styles.cardTitle}>Company Announcements</Text>
-                </View>
-                {isPrivileged && (
-                  <TouchableOpacity
-                    style={styles.smallAddBtn}
-                    onPress={() => setIsNoticeModal(true)}
-                  >
-                    <Text style={styles.smallAddBtnText}>+ Post</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              <Text style={styles.cardDesc}>Official circulars and announcements from management</Text>
-
-              {notices.length === 0 ? (
-                <View style={{ paddingVertical: 14, alignItems: 'center' }}>
-                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>No company announcements published yet.</Text>
-                </View>
-              ) : (
-                <View style={{ gap: 8, marginTop: 4 }}>
-                  {notices.slice(0, 3).map((notice) => (
-                    <TouchableOpacity
-                      key={notice.id}
-                      style={styles.noticeCardCompact}
-                      onPress={() => setSelectedNoticeForView(notice)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-                          <View style={[
-                            styles.noticePriorityBadge,
-                            notice.priority === 'urgent' ? styles.priorityUrgent :
-                            notice.priority === 'high' ? styles.priorityHigh : styles.priorityNormal
-                          ]}>
-                            <Text style={styles.noticePriorityText}>{(notice.priority || 'NORMAL').toUpperCase()}</Text>
-                          </View>
-                          <Text style={styles.noticeCategoryText}>• {notice.category?.toUpperCase() || 'GENERAL'}</Text>
-                        </View>
-                        <Text style={styles.noticeDateText}>{formatNoticeDate(notice)}</Text>
-                      </View>
-
-                      <Text style={styles.noticeTitleCompact} numberOfLines={1}>
-                        {notice.title}
-                      </Text>
-                      <Text style={styles.noticeSnippet} numberOfLines={2}>
-                        {notice.content}
-                      </Text>
-
-                      <View style={styles.noticeFooterRow}>
-                        <Text style={styles.noticeAuthorText}>By {notice.author_name || 'HR Team'} ({notice.author_role || 'Management'})</Text>
-                        <Text style={styles.noticeTapText}>Read Full Notice →</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </View>
-
-            {/* Upcoming Next Holiday Highlight Card */}
-            {(() => {
-              const upcoming = holidays.find((h) => h.date >= todayStr);
-              if (!upcoming) return null;
-              return (
-                <View style={[styles.card, { borderColor: '#f59e0b' }]}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={[styles.cardTitle, { color: '#fbbf24' }]}>🌴 Next Official Holiday</Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setActiveTab('calendar');
-                        setCalSubTab('holidays');
-                      }}
-                    >
-                      <Text style={{ color: '#fbbf24', fontSize: 11, fontWeight: 'bold' }}>All Holidays →</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: 'bold', marginTop: 6 }}>
-                    {upcoming.name}
-                  </Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
-                    📅 {formatDisplayDate(upcoming.date)} • {upcoming.description}
-                  </Text>
-                </View>
-              );
-            })()}
-
-            {/* Quick Tools & Shortcuts Grid */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Quick Navigation & Shortcuts</Text>
-              <Text style={styles.cardDesc}>Instant access to core company modules</Text>
-
-              <View style={styles.quickToolsGrid}>
-                <TouchableOpacity
-                  style={styles.quickToolBtn}
-                  onPress={() => setActiveTab('chat')}
-                >
-                  <Text style={styles.quickToolIcon}>💬</Text>
-                  <Text style={styles.quickToolLabel}>Team Chat</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.quickToolBtn}
-                  onPress={() => {
-                    setActiveTab('hub');
-                    setHubSubTab('team');
-                  }}
-                >
-                  <Text style={styles.quickToolIcon}>👥</Text>
-                  <Text style={styles.quickToolLabel}>Directory</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.quickToolBtn}
-                  onPress={() => {
-                    setActiveTab('calendar');
-                    setCalSubTab('attendance');
-                  }}
-                >
-                  <Text style={styles.quickToolIcon}>📅</Text>
-                  <Text style={styles.quickToolLabel}>Calendar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.quickToolBtn}
-                  onPress={() => setIsStandupModal(true)}
-                >
-                  <Text style={styles.quickToolIcon}>📝</Text>
-                  <Text style={styles.quickToolLabel}>Standup</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </View>
         )}
@@ -9063,6 +8814,243 @@ ${letter.content}
           </View>
         )}
       </ScrollView>
+
+      {/* ========================================================================= */}
+      {/* MODERN SLIDE-OUT DRAWER / SIDEBAR (Role-Gated & Dynamic)                  */}
+      {/* ========================================================================= */}
+      <Modal visible={isDrawerOpen} animationType="fade" transparent onRequestClose={() => setIsDrawerOpen(false)}>
+        <View style={styles.drawerBackdrop}>
+          <TouchableOpacity style={styles.drawerBackdropDismiss} activeOpacity={1} onPress={() => setIsDrawerOpen(false)} />
+          <View style={styles.drawerContent}>
+            {/* Drawer Header */}
+            <View style={styles.drawerHeader}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <View style={styles.drawerVedotrixPill}>
+                      <Text style={styles.drawerVedotrixPillText}>⚡ VEDOTRIX PULSE</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.drawerOrgName} numberOfLines={1}>{currentOrg ? currentOrg.name : 'BNK Digital'}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setIsDrawerOpen(false)} style={styles.drawerCloseBtn}>
+                  <Text style={{ color: '#94a3b8', fontSize: 18, fontWeight: 'bold' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* User Profile Card in Drawer */}
+              <View style={styles.drawerProfileCard}>
+                <View style={styles.drawerAvatarCircle}>
+                  {userProfile?.avatar_url ? (
+                    <Image source={{ uri: userProfile.avatar_url }} style={{ width: '100%', height: '100%', borderRadius: 20 }} />
+                  ) : (
+                    <Text style={styles.drawerAvatarInitials}>
+                      {(userProfile?.first_name?.[0] || 'U') + (userProfile?.last_name?.[0] || '')}
+                    </Text>
+                  )}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.drawerProfileName} numberOfLines={1}>
+                    {userProfile?.first_name} {userProfile?.last_name}
+                  </Text>
+                  <Text style={styles.drawerProfileEmail} numberOfLines={1}>{userProfile?.email}</Text>
+                  <View style={[
+                    styles.drawerRoleBadge,
+                    isSuperadminRole ? { backgroundColor: 'rgba(168, 85, 247, 0.15)', borderColor: '#a855f7' } :
+                    isPrivilegedRole ? { backgroundColor: 'rgba(37, 99, 235, 0.15)', borderColor: '#2563eb' } :
+                    isManagerRole ? { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#f59e0b' } :
+                    { backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981' }
+                  ]}>
+                    <Text style={[
+                      styles.drawerRoleBadgeText,
+                      isSuperadminRole ? { color: '#c084fc' } :
+                      isPrivilegedRole ? { color: '#38bdf8' } :
+                      isManagerRole ? { color: '#fbbf24' } : { color: '#34d399' }
+                    ]}>
+                      {(userProfile?.role || 'Employee').toUpperCase()}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {/* Drawer Navigation Menu List (Scrollable) */}
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+              <Text style={styles.drawerSectionHeading}>CORE WORKSPACE</Text>
+
+              <TouchableOpacity
+                style={[styles.drawerItem, (activeTab === 'home' || activeTab === 'punch') && styles.drawerItemActive]}
+                onPress={() => {
+                  setActiveTab('home');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>🏠</Text>
+                <Text style={[styles.drawerItemLabel, (activeTab === 'home' || activeTab === 'punch') && styles.drawerItemLabelActive]}>Dashboard</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.drawerItem, activeTab === 'people' && styles.drawerItemActive]}
+                onPress={() => {
+                  setActiveTab('people');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>👥</Text>
+                <Text style={[styles.drawerItemLabel, activeTab === 'people' && styles.drawerItemLabelActive]}>People & Directory</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.drawerItem, (activeTab === 'attendance' || activeTab === 'calendar') && styles.drawerItemActive]}
+                onPress={() => {
+                  setActiveTab('attendance');
+                  setAttendanceSubView('today');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>📅</Text>
+                <Text style={[styles.drawerItemLabel, (activeTab === 'attendance' || activeTab === 'calendar') && styles.drawerItemLabelActive]}>Attendance & Shifts</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.drawerItem, activeTab === 'chat' && styles.drawerItemActive]}
+                onPress={() => {
+                  setActiveTab('chat');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>💬</Text>
+                <Text style={[styles.drawerItemLabel, activeTab === 'chat' && styles.drawerItemLabelActive]}>Team Chat</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.drawerSectionHeading}>COLLABORATION & LOGS</Text>
+
+              <TouchableOpacity
+                style={styles.drawerItem}
+                onPress={() => {
+                  setActiveTab('more');
+                  setMoreSection('meetings');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>📹</Text>
+                <Text style={styles.drawerItemLabel}>Meetings & Sync</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerItem}
+                onPress={() => {
+                  setActiveTab('more');
+                  setMoreSection('standups');
+                  setHubSubTab('standups');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>📝</Text>
+                <Text style={styles.drawerItemLabel}>Daily Standups</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerItem}
+                onPress={() => {
+                  setActiveTab('more');
+                  setMoreSection('leaves');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>🌴</Text>
+                <Text style={styles.drawerItemLabel}>Leave Requests</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerItem}
+                onPress={() => {
+                  setActiveTab('more');
+                  setMoreSection('notices');
+                  setIsDrawerOpen(false);
+                }}
+              >
+                <Text style={styles.drawerItemIcon}>📢</Text>
+                <Text style={styles.drawerItemLabel}>Notices & Circulars</Text>
+              </TouchableOpacity>
+
+              {/* PRIVILEGED MANAGEMENT SECTION (Manager / HR / Admin / Superadmin Only) */}
+              {(isPrivilegedRole || isManagerRole) && (
+                <>
+                  <Text style={styles.drawerSectionHeading}>MANAGEMENT</Text>
+
+                  <TouchableOpacity
+                    style={styles.drawerItem}
+                    onPress={() => {
+                      setActiveTab('more');
+                      setMoreSection('approvals');
+                      setIsDrawerOpen(false);
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <Text style={styles.drawerItemIcon}>⚡</Text>
+                        <Text style={styles.drawerItemLabel}>Approval Center</Text>
+                      </View>
+                      {totalPendingApprovals > 0 && (
+                        <View style={styles.drawerBadge}>
+                          <Text style={styles.drawerBadgeText}>{totalPendingApprovals}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {isPrivilegedRole && (
+                    <TouchableOpacity
+                      style={styles.drawerItem}
+                      onPress={() => {
+                        setIsDrawerOpen(false);
+                        setIsCalendarPoliciesModal(true);
+                      }}
+                    >
+                      <Text style={styles.drawerItemIcon}>⚙️</Text>
+                      <Text style={styles.drawerItemLabel}>Calendar Policies</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {isSuperadminRole && (
+                    <TouchableOpacity
+                      style={styles.drawerItem}
+                      onPress={() => {
+                        setIsDrawerOpen(false);
+                        setIsOrgModalVisible(true);
+                      }}
+                    >
+                      <Text style={styles.drawerItemIcon}>🏢</Text>
+                      <Text style={styles.drawerItemLabel}>Switch Organization</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+            </ScrollView>
+
+            {/* Drawer Footer */}
+            <View style={styles.drawerFooter}>
+              <TouchableOpacity style={styles.drawerThemeToggle} onPress={handleToggleTheme}>
+                <Text style={{ fontSize: 13, color: isDarkMode ? '#f8fafc' : '#0f172a', fontWeight: '600' }}>
+                  {isDarkMode ? '🌙 Dark Obsidian' : '☀️ Clean Light'}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#38bdf8', fontWeight: 'bold' }}>Toggle ↺</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerLogoutBtn}
+                onPress={() => {
+                  setIsDrawerOpen(false);
+                  handleLogout();
+                }}
+              >
+                <Text style={styles.drawerLogoutBtnText}>🚪 Log Out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ========================================================================= */}
       {/* FLOATING ACTION BUTTON (+) & QUICK ACTIONS BOTTOM SHEET MODAL             */}
@@ -12600,6 +12588,280 @@ function createThemedStyles(isDark: boolean) {
   const navBorder = isDark ? '#1e293b' : '#e2e8f0';
 
   return StyleSheet.create({
+    // Modern Hamburger & App / Org Branding
+    hamburgerBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      borderWidth: 1,
+      borderColor: isDark ? '#334155' : '#e2e8f0'
+    },
+    hamburgerIcon: {
+      fontSize: 18,
+      color: textPrimary,
+      fontWeight: 'bold'
+    },
+    orgHeaderLogoImg: {
+      width: 34,
+      height: 34,
+      borderRadius: 8
+    },
+    vedotrixBadge: {
+      backgroundColor: '#2563eb',
+      paddingHorizontal: 6,
+      paddingVertical: 1.5,
+      borderRadius: 4
+    },
+    vedotrixBadgeText: {
+      color: '#ffffff',
+      fontSize: 8.5,
+      fontWeight: '900',
+      letterSpacing: 0.6
+    },
+    vedotrixPulseText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#38bdf8'
+    },
+    orgHeaderName: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textPrimary,
+      maxWidth: 130
+    },
+
+    // Modern Slide-out Drawer Styles
+    drawerBackdrop: {
+      flex: 1,
+      flexDirection: 'row',
+      backgroundColor: 'rgba(0, 0, 0, 0.6)'
+    },
+    drawerBackdropDismiss: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0
+    },
+    drawerContent: {
+      width: '82%',
+      maxWidth: 320,
+      backgroundColor: cardBg,
+      height: '100%',
+      shadowColor: '#000000',
+      shadowOffset: { width: 4, height: 0 },
+      shadowOpacity: 0.4,
+      shadowRadius: 12,
+      elevation: 16,
+      borderRightWidth: 1,
+      borderRightColor: cardBorder
+    },
+    drawerHeader: {
+      paddingHorizontal: 16,
+      paddingTop: 45,
+      paddingBottom: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: cardBorder,
+      backgroundColor: isDark ? '#0b1120' : '#f8fafc'
+    },
+    drawerVedotrixPill: {
+      backgroundColor: '#2563eb',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6
+    },
+    drawerVedotrixPillText: {
+      color: '#ffffff',
+      fontSize: 9.5,
+      fontWeight: '900',
+      letterSpacing: 0.5
+    },
+    drawerOrgName: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: textPrimary,
+      marginTop: 2
+    },
+    drawerCloseBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#1e293b' : '#e2e8f0'
+    },
+    drawerProfileCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginTop: 14,
+      padding: 10,
+      borderRadius: 12,
+      backgroundColor: cardBg,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    drawerAvatarCircle: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: '#2563eb',
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    drawerAvatarInitials: {
+      color: '#ffffff',
+      fontSize: 15,
+      fontWeight: '800'
+    },
+    drawerProfileName: {
+      fontSize: 13.5,
+      fontWeight: '800',
+      color: textPrimary
+    },
+    drawerProfileEmail: {
+      fontSize: 10.5,
+      color: textSecondary,
+      marginTop: 1
+    },
+    drawerRoleBadge: {
+      alignSelf: 'flex-start',
+      marginTop: 4,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 6,
+      borderWidth: 1
+    },
+    drawerRoleBadgeText: {
+      fontSize: 9,
+      fontWeight: '800',
+      letterSpacing: 0.4
+    },
+    drawerSectionHeading: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: textMuted,
+      letterSpacing: 0.8,
+      marginTop: 14,
+      marginBottom: 6,
+      paddingHorizontal: 8
+    },
+    drawerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+      marginVertical: 1
+    },
+    drawerItemActive: {
+      backgroundColor: isDark ? 'rgba(37, 99, 235, 0.18)' : '#eff6ff'
+    },
+    drawerItemIcon: {
+      fontSize: 17
+    },
+    drawerItemLabel: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: textSecondary
+    },
+    drawerItemLabelActive: {
+      color: '#2563eb',
+      fontWeight: '800'
+    },
+    drawerBadge: {
+      backgroundColor: '#f59e0b',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 8
+    },
+    drawerBadgeText: {
+      color: '#ffffff',
+      fontSize: 10,
+      fontWeight: 'bold'
+    },
+    drawerFooter: {
+      padding: 14,
+      borderTopWidth: 1,
+      borderTopColor: cardBorder,
+      gap: 8,
+      backgroundColor: isDark ? '#0b1120' : '#f8fafc'
+    },
+    drawerThemeToggle: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 9,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      backgroundColor: cardBg,
+      borderWidth: 1,
+      borderColor: cardBorder
+    },
+    drawerLogoutBtn: {
+      paddingVertical: 10,
+      borderRadius: 10,
+      alignItems: 'center',
+      backgroundColor: 'rgba(239, 68, 68, 0.12)',
+      borderWidth: 1,
+      borderColor: 'rgba(239, 68, 68, 0.25)'
+    },
+    drawerLogoutBtnText: {
+      color: '#ef4444',
+      fontSize: 12.5,
+      fontWeight: '700'
+    },
+
+    // Dashboard Quick Punch Non-Repetitive Widget
+    dashboardQuickPunchWidget: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      shadowColor: isDark ? '#000000' : 'rgba(0,0,0,0.03)',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 1,
+      shadowRadius: 3,
+      elevation: 1
+    },
+    geofenceDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5
+    },
+    geofenceLocationText: {
+      fontSize: 10.5,
+      fontWeight: '700',
+      color: textSecondary
+    },
+    quickPunchStatusText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: textPrimary
+    },
+    quickPunchBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    quickPunchBtnActive: {
+      backgroundColor: '#2563eb'
+    },
+    quickPunchBtnDone: {
+      backgroundColor: '#16a34a'
+    },
+    quickPunchBtnText: {
+      color: '#ffffff',
+      fontSize: 12.5,
+      fontWeight: '800'
+    },
     // New Corporate Screen 1-4 Styles
     dashboardGreetingText: {
       fontSize: 22,
