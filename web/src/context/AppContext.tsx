@@ -4086,16 +4086,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const client = getSupabaseClient();
-      const { data: existingStandup } = await client
+      let { data: savedData, error: opError } = await client
         .from('daily_standups')
-        .select('id')
-        .eq('employee_id', currentProfile.id)
-        .eq('date', todayStr)
-        .maybeSingle();
+        .upsert({
+          org_id: currentOrg.id,
+          employee_id: currentProfile.id,
+          date: todayStr,
+          completed_today: completedToday,
+          planned_tomorrow: plannedTomorrow,
+          blockers: blockers || null,
+          hours_logged: hours
+        }, { onConflict: 'employee_id,date' })
+        .select();
 
-      let opError: any = null;
-      if (existingStandup?.id) {
-        const { error } = await client
+      // If upsert fails for any reason, fallback to direct update
+      if (opError) {
+        console.warn('Upsert failed, trying direct update fallback:', opError);
+        const { data: updData, error: updErr } = await client
           .from('daily_standups')
           .update({
             org_id: currentOrg.id,
@@ -4104,38 +4111,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             blockers: blockers || null,
             hours_logged: hours
           })
-          .eq('id', existingStandup.id);
-        opError = error;
-      } else {
-        const { error } = await client
-          .from('daily_standups')
-          .insert({
-            id: newId,
-            org_id: currentOrg.id,
-            employee_id: currentProfile.id,
-            date: todayStr,
-            completed_today: completedToday,
-            planned_tomorrow: plannedTomorrow,
-            blockers: blockers || null,
-            hours_logged: hours
-          });
-        opError = error;
-      }
-
-      // Fallback atomic upsert if unique constraint or concurrency
-      if (opError && (opError.code === '23505' || String(opError.message).includes('unique'))) {
-        const { error: upsertErr } = await client
-          .from('daily_standups')
-          .upsert({
-            org_id: currentOrg.id,
-            employee_id: currentProfile.id,
-            date: todayStr,
-            completed_today: completedToday,
-            planned_tomorrow: plannedTomorrow,
-            blockers: blockers || null,
-            hours_logged: hours
-          }, { onConflict: 'employee_id,date' });
-        opError = upsertErr;
+          .eq('employee_id', currentProfile.id)
+          .eq('date', todayStr)
+          .select();
+        if (!updErr && updData && updData.length > 0) {
+          opError = null;
+          savedData = updData;
+        } else if (updErr) {
+          opError = updErr;
+        }
       }
 
       if (opError) {
@@ -4144,6 +4128,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return;
       } else {
         console.log('Daily standup synced to Supabase successfully!');
+        if (savedData && savedData[0]) {
+          const s = savedData[0];
+          setStandups((prev) => [
+            {
+              id: s.id,
+              orgId: s.org_id,
+              employeeId: s.employee_id,
+              date: s.date,
+              completedToday: s.completed_today,
+              plannedTomorrow: s.planned_tomorrow,
+              blockers: s.blockers,
+              hoursLogged: Number(s.hours_logged) || hours,
+              createdAt: s.created_at
+            },
+            ...prev.filter((item) => !(item.employeeId === currentProfile.id && item.date === todayStr))
+          ]);
+        }
       }
     } catch (e: any) {
       console.error('Standup insert error:', e);

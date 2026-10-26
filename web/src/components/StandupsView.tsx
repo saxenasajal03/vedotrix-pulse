@@ -189,7 +189,7 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
   }, [todayStandups]);
 
   // PR Link Extractor: detects GitHub/GitLab PRs or URLs from standup text
-  const extractUrls = (text: string) => {
+  const extractUrls = (text: string): string[] => {
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     return text.match(urlRegex) || [];
   };
@@ -749,7 +749,7 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
 
                     {/* Linked task PRs */}
                     {completedEmpTasks
-                      .filter((t) => t.prLink && !links.includes(t.prLink))
+                      .filter((t) => t.prLink && !links.includes(t.prLink as string))
                       .map((t) => (
                         <a
                           key={t.id}

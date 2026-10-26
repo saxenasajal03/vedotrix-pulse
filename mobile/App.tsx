@@ -660,17 +660,15 @@ export default function App() {
         if (__DEV__) return;
         const update = await Updates.checkForUpdateAsync();
         if (update.isAvailable) {
-          await Updates.fetchUpdateAsync();
-          Alert.alert(
-            'App Update Ready 🚀',
-            'A new version of Vedotrix Pulse was downloaded in the background. Apply update now?',
-            [
-              { text: 'Later', style: 'cancel' },
-              { text: 'Update Now', onPress: () => Updates.reloadAsync() }
-            ]
-          );
+          const fetchRes = await Updates.fetchUpdateAsync();
+          if (fetchRes.isNew) {
+            // Instantly hot-reload bundle so mobile app is always on latest production build
+            await Updates.reloadAsync();
+          }
         }
-      } catch {}
+      } catch (e) {
+        console.log('EAS checkAutoUpdates error:', e);
+      }
     }
     checkAutoUpdates();
   }, []);
@@ -2594,11 +2592,25 @@ export default function App() {
         .eq('date', todayIST)
         .maybeSingle();
 
-      let opError: any = null;
-      let savedStandupId = existingStandup?.id || newId;
+      // Atomic upsert with fallback
+      let { data: savedData, error: opError } = await supabaseClient
+        .from('daily_standups')
+        .upsert({
+          id: existingStandup?.id || newId,
+          employee_id: userProfile.id,
+          org_id: orgId,
+          date: todayIST,
+          completed_today: finalCompleted,
+          planned_tomorrow: standupNext.trim(),
+          blockers: standupBlockers.trim() || null,
+          hours_logged: Number(standupHours) || 8
+        }, { onConflict: 'employee_id,date' })
+        .select();
 
-      if (existingStandup?.id) {
-        const { error: updErr } = await supabaseClient
+      // If upsert threw any error, fallback to direct update
+      if (opError) {
+        console.warn('Upsert failed, falling back to direct update:', opError);
+        const { data: updData, error: updErr } = await supabaseClient
           .from('daily_standups')
           .update({
             org_id: orgId,
@@ -2607,45 +2619,24 @@ export default function App() {
             blockers: standupBlockers.trim() || null,
             hours_logged: Number(standupHours) || 8
           })
-          .eq('id', existingStandup.id);
-        opError = updErr;
-      } else {
-        const { error: insErr } = await supabaseClient
-          .from('daily_standups')
-          .insert({
-            id: newId,
-            employee_id: userProfile.id,
-            org_id: orgId,
-            date: todayIST,
-            completed_today: finalCompleted,
-            planned_tomorrow: standupNext.trim(),
-            blockers: standupBlockers.trim() || null,
-            hours_logged: Number(standupHours) || 8
-          });
-        opError = insErr;
-      }
-
-      // Fallback to upsert if any conflict occurs
-      if (opError && (opError.code === '23505' || String(opError.message).includes('unique'))) {
-        const { error: upsertErr } = await supabaseClient
-          .from('daily_standups')
-          .upsert({
-            employee_id: userProfile.id,
-            org_id: orgId,
-            date: todayIST,
-            completed_today: finalCompleted,
-            planned_tomorrow: standupNext.trim(),
-            blockers: standupBlockers.trim() || null,
-            hours_logged: Number(standupHours) || 8
-          }, { onConflict: 'employee_id,date' });
-        opError = upsertErr;
+          .eq('employee_id', userProfile.id)
+          .eq('date', todayIST)
+          .select();
+        if (!updErr && updData && updData.length > 0) {
+          opError = null;
+          savedData = updData;
+        } else if (updErr) {
+          opError = updErr;
+        }
       }
 
       if (!opError) {
+        const savedRecord = (savedData && savedData[0]) || null;
+        const savedId = savedRecord?.id || newId;
         // Optimistic local update
         setStandups((prev) => [
           {
-            id: savedStandupId,
+            id: savedId,
             employee_id: userProfile.id,
             org_id: orgId,
             date: todayIST,
@@ -2653,7 +2644,7 @@ export default function App() {
             planned_tomorrow: standupNext.trim(),
             blockers: standupBlockers.trim() || null,
             hours_logged: Number(standupHours) || 8,
-            created_at: new Date().toISOString()
+            created_at: savedRecord?.created_at || new Date().toISOString()
           },
           ...prev.filter((s) => !(s.employee_id === userProfile.id && s.date === todayIST))
         ]);
@@ -4961,21 +4952,6 @@ ${letter.content}
     return avg > 0 ? avg : 78;
   }, [past7DaysData]);
 
-  // Today verified attendance punches for Recent Activity feed & today's log
-  const todayVerifiedPunches = useMemo(() => {
-    const today = getTodayISTDate();
-    return attendanceRecords
-      .filter((a) => {
-        if (a.date !== today) return false;
-        const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
-        if (isRejected) return false;
-        const isPending = a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval';
-        if (isPending) return false;
-        return a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
-      })
-      .sort((a, b) => (b.check_in_time || '').localeCompare(a.check_in_time || ''));
-  }, [attendanceRecords]);
-
   // Dynamic Greeting & Date/Location line
   const currentHour = new Date().getHours();
   const todayFormattedHeader = useMemo(() => {
@@ -5038,6 +5014,36 @@ ${letter.content}
     if (!userProfile?.id) return [];
     return teamProfiles.filter((p) => p.manager_id === userProfile.id);
   }, [teamProfiles, userProfile]);
+
+  // Today verified attendance punches for Recent Activity feed & today's log strictly scoped by role & hierarchy:
+  // - Superadmin / HR: see all punches across the organization
+  // - Manager: see their own punches + their managed direct reportees
+  // - Employee: only see their own punches
+  const todayVerifiedPunches = useMemo(() => {
+    const today = getTodayISTDate();
+    const managedIds = new Set(myManagedEmployees.map((e) => e.id));
+
+    return attendanceRecords
+      .filter((a) => {
+        if (a.date !== today) return false;
+        const isRejected = a.regularization_status === 'rejected' || a.approval_status === 'rejected';
+        if (isRejected) return false;
+        const isPending = a.regularization_status === 'pending' || a.approval_status === 'pending_manager_approval';
+        if (isPending) return false;
+        const isVerified = a.status === 'present' || a.status === 'regularized' || a.regularization_status === 'approved' || a.approval_status === 'approved';
+        if (!isVerified) return false;
+
+        // Superadmin & HR: can see all activities
+        if (isSuperadminRole || isPrivilegedRole) return true;
+        // Manager: can see their own punches + their managed direct reportees' punches
+        if (isManagerRole) {
+          return a.employee_id === userProfile?.id || managedIds.has(a.employee_id);
+        }
+        // Employee: only their own punches
+        return a.employee_id === userProfile?.id;
+      })
+      .sort((a, b) => (b.check_in_time || '').localeCompare(a.check_in_time || ''));
+  }, [attendanceRecords, isSuperadminRole, isPrivilegedRole, isManagerRole, myManagedEmployees, userProfile]);
 
   const myTeamPresentCount = useMemo(() => {
     const today = getTodayISTDate();
@@ -5759,7 +5765,13 @@ ${letter.content}
               <Text style={[styles.dashboardCardTitle, { marginBottom: 10 }]}>Recent activity</Text>
               {todayVerifiedPunches.length === 0 ? (
                 <View style={{ paddingVertical: 14, alignItems: 'center' }}>
-                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>No attendance punches logged yet today</Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>
+                    {isSuperadminRole || isPrivilegedRole
+                      ? 'No attendance punches logged yet today'
+                      : isManagerRole
+                      ? 'No punches logged by your team yet today'
+                      : 'No punch recorded yet today'}
+                  </Text>
                 </View>
               ) : (
                 <View style={{ gap: 10 }}>
@@ -6958,7 +6970,13 @@ ${letter.content}
                   <Text style={[styles.dashboardCardTitle, { marginBottom: 12 }]}>Today's log</Text>
                   {todayVerifiedPunches.length === 0 ? (
                     <View style={{ paddingVertical: 14, alignItems: 'center' }}>
-                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>No attendance punches logged yet today</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>
+                        {isSuperadminRole || isPrivilegedRole
+                          ? 'No attendance punches logged yet today'
+                          : isManagerRole
+                          ? 'No punches logged by your team yet today'
+                          : 'No punch recorded yet today'}
+                      </Text>
                     </View>
                   ) : (
                     <View style={{ gap: 10 }}>
