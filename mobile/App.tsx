@@ -544,6 +544,12 @@ export default function App() {
   // Dedicated User Profile Modal State (inspect any colleague or self)
   const [inspectedUserProfile, setInspectedUserProfile] = useState<any | null>(null);
 
+  // Attendance Report PDF Export Modal State (Daily / Weekly / Monthly for HR / Superadmin / Manager)
+  const [isAttReportModal, setIsAttReportModal] = useState<boolean>(false);
+  const [attReportType, setAttReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [attReportDate, setAttReportDate] = useState<string>(getTodayISTDate());
+  const [isExportingAttReport, setIsExportingAttReport] = useState<boolean>(false);
+
   // In-App Notification Center State
   const [isNotifModal, setIsNotifModal] = useState<boolean>(false);
   const [readNotifIds, setReadNotifIds] = useState<string[]>([]);
@@ -3740,6 +3746,710 @@ ${letter.content}
     }
   };
 
+  // Official Attendance Report PDF Engine (Daily / Weekly / Monthly for HR / Superadmin / Manager)
+  const handleExportAttendanceReportPDF = async () => {
+    const isManagerRole = isManager || (teamProfiles && teamProfiles.some((p) => p.manager_id === userProfile?.id));
+    if (!isPrivileged && !isManagerRole) {
+      Alert.alert('Permission Denied', 'Attendance PDF generation is restricted to Managers and HR/Superadmins.');
+      return;
+    }
+
+    const myManagedEmployees = isPrivileged
+      ? teamProfiles.filter((p) => p.is_active !== false)
+      : teamProfiles.filter((p) => p.is_active !== false && p.manager_id === userProfile?.id);
+
+    if (myManagedEmployees.length === 0) {
+      Alert.alert('No Employees Found', 'No managed employee records found to generate attendance report.');
+      return;
+    }
+
+    setIsExportingAttReport(true);
+    try {
+      const orgName = currentOrg?.name || 'VEDOTRIX PULSE HRMS';
+      const orgCode = currentOrg?.code || 'VDTX';
+      const logoUrl = currentOrg?.logo_url || currentOrg?.logoUrl || '';
+      const nowISTString = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+      const signName = `${userProfile?.first_name || ''} ${userProfile?.last_name || ''}`.trim() || 'HR Department';
+      const signRole = (userProfile?.role || 'MANAGER').toUpperCase();
+      const scopeDesc = isPrivileged ? `Organization Directory (${myManagedEmployees.length} Staff)` : `Direct Managed Team (${myManagedEmployees.length} Staff)`;
+
+      let reportTitle = '';
+      let kpiSummaryHtml = '';
+      let tableHeaderHtml = '';
+      let tableRowsHtml = '';
+
+      if (attReportType === 'daily') {
+        reportTitle = `DAILY ATTENDANCE & SHIFT VERIFICATION REPORT &bull; ${formatDisplayDate(attReportDate)}`;
+        let pCount = 0;
+        let rCount = 0;
+        let aCount = 0;
+        let lCount = 0;
+        let pendingCount = 0;
+        let totalHoursLogged = 0;
+
+        tableHeaderHtml = `
+          <tr>
+            <th style="width: 28px; text-align: center;">#</th>
+            <th>Employee Name & Code</th>
+            <th>Department & Role</th>
+            <th style="width: 110px; text-align: center;">Status</th>
+            <th style="width: 65px; text-align: center;">Check-In</th>
+            <th style="width: 65px; text-align: center;">Check-Out</th>
+            <th style="width: 50px; text-align: center;">Hours</th>
+            <th>Location</th>
+            <th>Approver / Remarks</th>
+          </tr>
+        `;
+
+        const rows = myManagedEmployees.map((emp, idx) => {
+          const punch = attendanceRecords.find((a) => a.employee_id === emp.id && a.date === attReportDate);
+          const leave = leaveRequests.find((l) => l.employee_id === emp.id && (l.status === 'approved' || l.status === 'pending') && l.start_date <= attReportDate && l.end_date >= attReportDate);
+          const isBeforeJoining = emp.joining_date && attReportDate < emp.joining_date;
+
+          const customOverride = currentOrg?.settings?.customDayOverrides?.[attReportDate]
+            || currentOrg?.settings?.customDayOverrides?.[`${attReportDate}_${emp.id}`]
+            || currentOrg?.settings?.customDayOverrides?.[`${emp.id}_${attReportDate}`];
+          const isOverrideWorking = customOverride?.type === 'working';
+          const isOverrideWeekOff = customOverride?.type === 'week_off';
+          const isOverrideHol = customOverride?.type === 'holiday';
+
+          const [rY, rM, rD] = attReportDate.split('-').map(Number);
+          const dayOfWeek = new Date(rY, rM - 1, rD).getDay();
+          const empWeekOffs: number[] = currentOrg?.settings?.employeeWeekOffs?.[emp.id] || currentOrg?.settings?.weekOffDays || [0];
+          const isWeeklyOff = empWeekOffs.includes(dayOfWeek);
+          const isEffectiveWeekOff = (isWeeklyOff || isOverrideWeekOff) && !isOverrideWorking;
+          const matchingHol = holidays.find((h) => h.date === attReportDate);
+          const isEffectiveHol = (matchingHol || isOverrideHol) && !isOverrideWorking;
+
+          const isRejected = punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected';
+          const isPending = !isRejected && (punch?.regularization_status === 'pending' || punch?.approval_status === 'pending_manager_approval' || punch?.status === 'pending');
+          const isApproved = !isRejected && !isPending && (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved');
+
+          let statusBadge = '';
+          let cinStr = '&mdash;';
+          let coutStr = '&mdash;';
+          let hours = 0;
+          let notes = '&mdash;';
+
+          if (isBeforeJoining) {
+            statusBadge = '<span class="badge badge-gray">PRE-JOINING</span>';
+          } else if (isEffectiveHol) {
+            statusBadge = `<span class="badge badge-amber">HOLIDAY (${matchingHol?.name || customOverride?.name || 'Declared'})</span>`;
+          } else if (isEffectiveWeekOff) {
+            statusBadge = '<span class="badge badge-gray">WEEK-OFF</span>';
+          } else if (leave) {
+            lCount++;
+            statusBadge = `<span class="badge badge-blue">LEAVE (${String(leave.leave_type || 'Leave').toUpperCase()})</span>`;
+          } else if (isRejected) {
+            aCount++;
+            statusBadge = '<span class="badge badge-rose">REJECTED &bull; ABSENT</span>';
+            const approver = punch?.approved_by ? teamProfiles.find((p) => p.id === punch.approved_by) : null;
+            notes = `Rej by ${approver?.first_name || 'Manager'}${punch?.approval_notes ? `: ${punch.approval_notes}` : ''}`;
+          } else if (isPending) {
+            pendingCount++;
+            statusBadge = '<span class="badge badge-amber">PENDING APPROVAL</span>';
+            notes = punch?.regularization_reason ? `Req: ${punch.regularization_reason}` : 'Pending Review';
+          } else if (isApproved) {
+            if (punch?.status === 'regularized' || !punch?.check_in_time) {
+              rCount++;
+              statusBadge = '<span class="badge badge-cyan">REGULARIZED &#9733;</span>';
+            } else {
+              pCount++;
+              statusBadge = '<span class="badge badge-green">PRESENT &#10003;</span>';
+            }
+            hours = punch?.total_hours || 8;
+            totalHoursLogged += hours;
+            const approver = (punch?.approved_by || punch?.regularized_by) ? teamProfiles.find((p) => p.id === (punch.approved_by || punch.regularized_by)) : null;
+            notes = `Approved by ${approver?.first_name || 'Manager'}${punch?.approval_notes ? `: ${punch.approval_notes}` : ''}`;
+          } else if (punch?.status === 'present' && punch?.approval_status !== 'pending_manager_approval') {
+            pCount++;
+            hours = punch?.total_hours || 8;
+            totalHoursLogged += hours;
+            statusBadge = '<span class="badge badge-green">PRESENT &#10003;</span>';
+            notes = punch.is_remote ? 'Remote (WFH)' : 'Office Biometric';
+          } else {
+            aCount++;
+            statusBadge = '<span class="badge badge-rose">ABSENT</span>';
+            notes = 'Unmarked Shift';
+          }
+
+          if (punch?.check_in_time) {
+            try {
+              cinStr = new Date(punch.check_in_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+            } catch {}
+          }
+          if (punch?.check_out_time) {
+            try {
+              coutStr = new Date(punch.check_out_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+            } catch {}
+          }
+
+          const locStr = punch?.office_address || (punch?.is_remote ? 'Remote / Field' : 'HQ Office');
+
+          return `
+            <tr>
+              <td style="text-align: center; color: #64748b; font-weight: bold;">${idx + 1}</td>
+              <td>
+                <div style="font-weight: 700; color: #0f172a;">${emp.first_name} ${emp.last_name}</div>
+                <div style="font-size: 8px; color: #64748b;">${emp.employee_code || emp.id.slice(0, 6)}</div>
+              </td>
+              <td>
+                <div style="color: #334155; font-weight: 600;">${emp.designation || 'Staff'}</div>
+                <div style="font-size: 8px; color: #64748b;">${emp.department || 'Operations'}</div>
+              </td>
+              <td style="text-align: center;">${statusBadge}</td>
+              <td style="text-align: center; font-family: monospace;">${cinStr}</td>
+              <td style="text-align: center; font-family: monospace;">${coutStr}</td>
+              <td style="text-align: center; font-weight: bold;">${hours}h</td>
+              <td style="font-size: 8.5px; color: #475569;">${locStr}</td>
+              <td style="font-size: 8.5px; color: #475569;">${notes}</td>
+            </tr>
+          `;
+        });
+        tableRowsHtml = rows.join('');
+
+        const workingCount = pCount + rCount + aCount + pendingCount;
+        const totalEffectivePresent = pCount + rCount + lCount * 0.5;
+        const presencePct = workingCount > 0 ? Math.min(100, Math.round((totalEffectivePresent / workingCount) * 100)) : 100;
+
+        kpiSummaryHtml = `
+          <div class="kpi-grid">
+            <div class="kpi-box"><div class="kpi-val">${myManagedEmployees.length}</div><div class="kpi-lbl">Total Team</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #059669;">${pCount}</div><div class="kpi-lbl">Verified Present</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #0284c7;">${rCount}</div><div class="kpi-lbl">Regularized</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #d97706;">${pendingCount}</div><div class="kpi-lbl">Pending Review</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #e11d48;">${aCount}</div><div class="kpi-lbl">Absent</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #4f46e5;">${lCount}</div><div class="kpi-lbl">Leaves</div></div>
+            <div class="kpi-box"><div class="kpi-val">${totalHoursLogged}h</div><div class="kpi-lbl">Hours Logged</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: ${presencePct >= 85 ? '#059669' : '#e11d48'};">${presencePct}%</div><div class="kpi-lbl">Presence %</div></div>
+          </div>
+        `;
+      } else if (attReportType === 'weekly') {
+        const dates: string[] = [];
+        const baseDate = new Date(attReportDate);
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() - i);
+          dates.push(d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+        }
+
+        reportTitle = `WEEKLY ATTENDANCE REGISTER & WORK HOURS AUDIT &bull; ${formatDisplayDate(dates[0])} to ${formatDisplayDate(dates[6])}`;
+
+        const dateHeaderCols = dates.map((d) => {
+          const dateObj = new Date(d);
+          const dayShort = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+          const parts = d.split('-');
+          return `<th style="text-align: center; width: 48px;">${dayShort}<br/><span style="font-size: 7.5px; opacity: 0.8;">${parts[2]}/${parts[1]}</span></th>`;
+        }).join('');
+
+        tableHeaderHtml = `
+          <tr>
+            <th style="width: 28px; text-align: center;">#</th>
+            <th>Employee Name</th>
+            <th>Department</th>
+            ${dateHeaderCols}
+            <th style="width: 50px; text-align: center;">Present</th>
+            <th style="width: 50px; text-align: center;">Absent</th>
+            <th style="width: 50px; text-align: center;">Hours</th>
+            <th style="width: 60px; text-align: center;">Presence %</th>
+          </tr>
+        `;
+
+        let totalPresentShifts = 0;
+        let totalRegularizedShifts = 0;
+        let totalAbsentShifts = 0;
+        let grandTotalHours = 0;
+
+        const rows = myManagedEmployees.map((emp, idx) => {
+          let empPresent = 0;
+          let empReg = 0;
+          let empAbsent = 0;
+          let empLeave = 0;
+          let empHours = 0;
+
+          const dayCols = dates.map((dStr) => {
+            const punch = attendanceRecords.find((a) => a.employee_id === emp.id && a.date === dStr);
+            const leave = leaveRequests.find((l) => l.employee_id === emp.id && (l.status === 'approved' || l.status === 'pending') && l.start_date <= dStr && l.end_date >= dStr);
+            const isBeforeJoining = emp.joining_date && dStr < emp.joining_date;
+
+            const [y, m, d] = dStr.split('-').map(Number);
+            const dow = new Date(y, m - 1, d).getDay();
+            const empWeekOffs: number[] = currentOrg?.settings?.employeeWeekOffs?.[emp.id] || currentOrg?.settings?.weekOffDays || [0];
+            const isWeekOff = empWeekOffs.includes(dow);
+            const isHol = holidays.some((h) => h.date === dStr);
+
+            const isRejected = punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected';
+            const isPending = !isRejected && (punch?.regularization_status === 'pending' || punch?.approval_status === 'pending_manager_approval' || punch?.status === 'pending');
+            const isApproved = !isRejected && !isPending && (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved');
+
+            if (isBeforeJoining) return '<td style="text-align: center; color: #94a3b8;">&mdash;</td>';
+            if (isHol) return '<td style="text-align: center; color: #d97706; font-weight: bold; background: #fffbeb;">HOL</td>';
+            if (isWeekOff) return '<td style="text-align: center; color: #64748b; background: #f8fafc;">WO</td>';
+            if (leave) {
+              empLeave++;
+              return '<td style="text-align: center; color: #2563eb; font-weight: bold; background: #eff6ff;">LEAVE</td>';
+            }
+            if (isRejected) {
+              empAbsent++;
+              return '<td style="text-align: center; color: #e11d48; font-weight: bold; background: #fff1f2;">REJ</td>';
+            }
+            if (isPending) {
+              return '<td style="text-align: center; color: #d97706; font-weight: bold; background: #fffbeb;">PEND</td>';
+            }
+            if (isApproved) {
+              const h = punch?.total_hours || 8;
+              empHours += h;
+              if (punch?.status === 'regularized' || !punch?.check_in_time) {
+                empReg++;
+                return `<td style="text-align: center; color: #0284c7; font-weight: bold; background: #f0f9ff;">REG<br/><span style="font-size: 7.5px;">(${h}h)</span></td>`;
+              } else {
+                empPresent++;
+                return `<td style="text-align: center; color: #059669; font-weight: bold; background: #f0fdf4;">P<br/><span style="font-size: 7.5px;">(${h}h)</span></td>`;
+              }
+            }
+            if (punch?.status === 'present' && punch?.approval_status !== 'pending_manager_approval') {
+              const h = punch?.total_hours || 8;
+              empHours += h;
+              empPresent++;
+              return `<td style="text-align: center; color: #059669; font-weight: bold; background: #f0fdf4;">P<br/><span style="font-size: 7.5px;">(${h}h)</span></td>`;
+            }
+            if (dStr <= getTodayISTDate()) {
+              empAbsent++;
+              return '<td style="text-align: center; color: #e11d48; font-weight: bold; background: #fff1f2;">ABS</td>';
+            }
+            return '<td style="text-align: center; color: #94a3b8;">&mdash;</td>';
+          }).join('');
+
+          totalPresentShifts += empPresent;
+          totalRegularizedShifts += empReg;
+          totalAbsentShifts += empAbsent;
+          grandTotalHours += empHours;
+
+          const totalWorkDays = empPresent + empReg + empAbsent;
+          const presenceRate = totalWorkDays > 0 ? Math.round(((empPresent + empReg) / totalWorkDays) * 100) : 100;
+
+          return `
+            <tr>
+              <td style="text-align: center; color: #64748b; font-weight: bold;">${idx + 1}</td>
+              <td style="font-weight: 700; color: #0f172a;">${emp.first_name} ${emp.last_name}</td>
+              <td style="color: #475569;">${emp.department || 'Operations'}</td>
+              ${dayCols}
+              <td style="text-align: center; font-weight: bold; color: #059669;">${empPresent + empReg}</td>
+              <td style="text-align: center; font-weight: bold; color: #e11d48;">${empAbsent}</td>
+              <td style="text-align: center; font-weight: bold;">${empHours}h</td>
+              <td style="text-align: center; font-weight: bold; color: ${presenceRate >= 85 ? '#059669' : '#e11d48'};">${presenceRate}%</td>
+            </tr>
+          `;
+        });
+        tableRowsHtml = rows.join('');
+
+        kpiSummaryHtml = `
+          <div class="kpi-grid">
+            <div class="kpi-box"><div class="kpi-val">${myManagedEmployees.length}</div><div class="kpi-lbl">Team Members</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #059669;">${totalPresentShifts}</div><div class="kpi-lbl">Present Shifts</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #0284c7;">${totalRegularizedShifts}</div><div class="kpi-lbl">Regularized Shifts</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #e11d48;">${totalAbsentShifts}</div><div class="kpi-lbl">Absent Shifts</div></div>
+            <div class="kpi-box"><div class="kpi-val">${grandTotalHours}h</div><div class="kpi-lbl">Total Hours</div></div>
+          </div>
+        `;
+      } else if (attReportType === 'monthly') {
+        const parts = attReportDate.split('-');
+        const targetYear = Number(parts[0]);
+        const targetMonthNum = Number(parts[1]);
+        const daysInMonth = new Date(targetYear, targetMonthNum, 0).getDate();
+        const monthPrefix = `${targetYear}-${String(targetMonthNum).padStart(2, '0')}`;
+        const todayISTStr = getTodayISTDate();
+
+        const monthName = new Date(targetYear, targetMonthNum - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+        reportTitle = `MONTHLY ATTENDANCE REGISTER & STATUTORY AUDIT &bull; ${monthName}`;
+
+        tableHeaderHtml = `
+          <tr>
+            <th style="width: 28px; text-align: center;">#</th>
+            <th>Employee Name & Code</th>
+            <th>Department</th>
+            <th style="width: 50px; text-align: center;">Working Days</th>
+            <th style="width: 50px; text-align: center;">Verified Present</th>
+            <th style="width: 50px; text-align: center;">Regularized</th>
+            <th style="width: 50px; text-align: center;">Total Present</th>
+            <th style="width: 45px; text-align: center;">Leaves</th>
+            <th style="width: 50px; text-align: center;">Absent / LOP</th>
+            <th style="width: 50px; text-align: center;">Hours</th>
+            <th style="width: 55px; text-align: center;">Presence %</th>
+            <th style="width: 80px; text-align: center;">Audit Status</th>
+          </tr>
+        `;
+
+        let grandPresent = 0;
+        let grandReg = 0;
+        let grandLeaves = 0;
+        let grandAbsent = 0;
+        let grandHours = 0;
+
+        const rows = myManagedEmployees.map((emp, idx) => {
+          let workingDays = 0;
+          let presentCount = 0;
+          let regCount = 0;
+          let leavesCount = 0;
+          let absentCount = 0;
+          let totalHours = 0;
+
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dateStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+            if (emp.joining_date && dateStr < emp.joining_date) continue;
+
+            const dayOfWeek = new Date(targetYear, targetMonthNum - 1, d).getDay();
+            const empWeekOffs: number[] = currentOrg?.settings?.employeeWeekOffs?.[emp.id] || currentOrg?.settings?.weekOffDays || [0];
+            const isWeekOff = empWeekOffs.includes(dayOfWeek);
+            const isHol = holidays.some((h) => h.date === dateStr);
+            const leave = leaveRequests.find((l) => l.employee_id === emp.id && (l.status === 'approved' || l.status === 'pending') && l.start_date <= dateStr && l.end_date >= dateStr);
+
+            if (isHol || isWeekOff) continue;
+            workingDays++;
+
+            const punch = attendanceRecords.find((a) => a.employee_id === emp.id && a.date === dateStr);
+            const isRejected = punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected';
+            const isPending = !isRejected && (punch?.regularization_status === 'pending' || punch?.approval_status === 'pending_manager_approval' || punch?.status === 'pending');
+            const isApproved = !isRejected && !isPending && (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved');
+
+            if (leave) {
+              leavesCount++;
+            } else if (isRejected) {
+              absentCount++;
+            } else if (isPending) {
+              absentCount++;
+            } else if (isApproved) {
+              const h = punch?.total_hours || 8;
+              totalHours += h;
+              if (punch?.status === 'regularized' || !punch?.check_in_time) {
+                regCount++;
+              } else {
+                presentCount++;
+              }
+            } else if (punch?.status === 'present' && punch?.approval_status !== 'pending_manager_approval') {
+              const h = punch?.total_hours || 8;
+              totalHours += h;
+              presentCount++;
+            } else if (dateStr <= todayISTStr) {
+              absentCount++;
+            }
+          }
+
+          grandPresent += presentCount;
+          grandReg += regCount;
+          grandLeaves += leavesCount;
+          grandAbsent += absentCount;
+          grandHours += totalHours;
+
+          const totalEffective = presentCount + regCount + leavesCount * 0.5;
+          const pct = workingDays > 0 ? Math.min(100, Math.round((totalEffective / workingDays) * 100)) : 100;
+          const auditStatus = pct >= 85 ? 'COMPLIANT' : 'ATTENTION REQUIRED';
+
+          return `
+            <tr>
+              <td style="text-align: center; color: #64748b; font-weight: bold;">${idx + 1}</td>
+              <td>
+                <div style="font-weight: 700; color: #0f172a;">${emp.first_name} ${emp.last_name}</div>
+                <div style="font-size: 8px; color: #64748b;">${emp.employee_code || emp.id.slice(0, 6)}</div>
+              </td>
+              <td style="color: #475569;">${emp.department || 'Operations'}</td>
+              <td style="text-align: center; font-weight: 600;">${workingDays}</td>
+              <td style="text-align: center; color: #059669; font-weight: bold;">${presentCount}</td>
+              <td style="text-align: center; color: #0284c7; font-weight: bold;">${regCount}</td>
+              <td style="text-align: center; font-weight: bold; background: #f8fafc;">${presentCount + regCount}</td>
+              <td style="text-align: center; color: #4f46e5;">${leavesCount}</td>
+              <td style="text-align: center; color: #e11d48; font-weight: bold;">${absentCount}</td>
+              <td style="text-align: center; font-weight: bold;">${totalHours}h</td>
+              <td style="text-align: center; font-weight: bold; color: ${pct >= 85 ? '#059669' : '#e11d48'};">${pct}%</td>
+              <td style="text-align: center;">
+                <span class="badge ${auditStatus === 'COMPLIANT' ? 'badge-green' : 'badge-rose'}">${auditStatus}</span>
+              </td>
+            </tr>
+          `;
+        });
+        tableRowsHtml = rows.join('');
+
+        const grandWorking = grandPresent + grandReg + grandAbsent;
+        const grandPct = grandWorking > 0 ? Math.round(((grandPresent + grandReg) / grandWorking) * 100) : 100;
+
+        kpiSummaryHtml = `
+          <div class="kpi-grid">
+            <div class="kpi-box"><div class="kpi-val">${myManagedEmployees.length}</div><div class="kpi-lbl">Team Size</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #059669;">${grandPresent}</div><div class="kpi-lbl">Verified Present</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #0284c7;">${grandReg}</div><div class="kpi-lbl">Regularized</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #4f46e5;">${grandLeaves}</div><div class="kpi-lbl">Leaves</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: #e11d48;">${grandAbsent}</div><div class="kpi-lbl">Absent / LOP</div></div>
+            <div class="kpi-box"><div class="kpi-val">${grandHours}h</div><div class="kpi-lbl">Logged Hours</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color: ${grandPct >= 85 ? '#059669' : '#e11d48'};">${grandPct}%</div><div class="kpi-lbl">Presence %</div></div>
+          </div>
+        `;
+      }
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>${reportTitle}</title>
+          <style>
+            @page {
+              size: A4 landscape;
+              margin: 12mm 10mm 12mm 10mm;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              color: #0f172a;
+              margin: 0;
+              padding: 0;
+              font-size: 9px;
+              line-height: 1.3;
+              position: relative;
+            }
+            .top-stripe {
+              height: 4px;
+              background: linear-gradient(90deg, #0f172a 0%, #2563eb 100%);
+              margin-bottom: 10px;
+            }
+            .header-wrap {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 1.5px solid #e2e8f0;
+              padding-bottom: 8px;
+              margin-bottom: 10px;
+            }
+            .org-title {
+              font-size: 15px;
+              font-weight: 800;
+              color: #0f172a;
+              letter-spacing: 0.5px;
+            }
+            .report-title {
+              font-size: 10.5px;
+              font-weight: 700;
+              color: #2563eb;
+              margin-top: 2px;
+              letter-spacing: 0.2px;
+            }
+            .meta-block {
+              text-align: right;
+              font-size: 8px;
+              color: #64748b;
+              line-height: 1.45;
+            }
+            .meta-block b {
+              color: #334155;
+            }
+            .kpi-grid {
+              display: flex;
+              gap: 6px;
+              margin-bottom: 10px;
+              flex-wrap: wrap;
+            }
+            .kpi-box {
+              flex: 1;
+              min-width: 70px;
+              background: #f8fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 5px 6px;
+              text-align: center;
+            }
+            .kpi-val {
+              font-size: 12px;
+              font-weight: 800;
+              color: #0f172a;
+            }
+            .kpi-lbl {
+              font-size: 7.5px;
+              font-weight: 600;
+              color: #64748b;
+              text-transform: uppercase;
+              margin-top: 1px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 12px;
+              font-size: 8.5px;
+            }
+            th {
+              background: #0f172a;
+              color: #ffffff;
+              padding: 5px 4px;
+              text-align: left;
+              font-weight: 700;
+              font-size: 8px;
+              border: 1px solid #1e293b;
+            }
+            td {
+              padding: 4px;
+              border: 1px solid #e2e8f0;
+              vertical-align: middle;
+            }
+            tr:nth-child(even) td {
+              background: #fcfcfd;
+            }
+            .badge {
+              display: inline-block;
+              padding: 2px 4px;
+              border-radius: 4px;
+              font-size: 7px;
+              font-weight: 700;
+              letter-spacing: 0.3px;
+            }
+            .badge-green { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+            .badge-cyan { background: #f0f9ff; color: #0284c7; border: 1px solid #bae6fd; }
+            .badge-rose { background: #fff1f2; color: #e11d48; border: 1px solid #fecdd3; }
+            .badge-amber { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+            .badge-blue { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+            .badge-gray { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+
+            .closing-section {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-end;
+              margin-top: 12px;
+              padding-top: 10px;
+              border-top: 1px dashed #cbd5e1;
+            }
+            .stamp-box {
+              display: flex;
+              align-items: center;
+              gap: 10px;
+            }
+            .seal-circle {
+              width: 60px;
+              height: 60px;
+              border: 2px dashed #0284c7;
+              border-radius: 50%;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              text-align: center;
+              color: #0284c7;
+              padding: 3px;
+              box-sizing: border-box;
+            }
+            .seal-star { font-size: 5.5px; letter-spacing: 1px; }
+            .seal-title { font-size: 6.5px; font-weight: 900; letter-spacing: 0.5px; }
+            .seal-sub { font-size: 5px; opacity: 0.8; font-weight: bold; }
+            .footer-legal {
+              margin-top: 10px;
+              border-top: 1px solid #e2e8f0;
+              padding-top: 5px;
+              display: flex;
+              justify-content: space-between;
+              font-size: 7px;
+              color: #94a3b8;
+            }
+            ${logoUrl ? `
+            .watermark {
+              position: fixed;
+              top: 50%;
+              left: 50%;
+              transform: translate(-50%, -50%);
+              opacity: 0.04;
+              width: 260px;
+              height: 260px;
+              z-index: -1;
+              pointer-events: none;
+            }
+            ` : ''}
+          </style>
+        </head>
+        <body>
+          ${logoUrl ? `<img src="${logoUrl}" class="watermark" />` : ''}
+          <div class="top-stripe"></div>
+
+          <div class="header-wrap">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              ${logoUrl ? `<img src="${logoUrl}" style="height: 34px; width: 34px; object-fit: contain; border-radius: 6px;" />` : ''}
+              <div>
+                <div class="org-title">${orgName}</div>
+                <div class="report-title">${reportTitle}</div>
+              </div>
+            </div>
+            <div class="meta-block">
+              <div><b>Generated:</b> ${nowISTString} IST</div>
+              <div><b>Scope:</b> ${scopeDesc}</div>
+              <div><b>Authorized Signatory:</b> ${signName} (${signRole})</div>
+            </div>
+          </div>
+
+          ${kpiSummaryHtml}
+
+          <table>
+            <thead>
+              ${tableHeaderHtml}
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+          </table>
+
+          <div class="closing-section">
+            <div class="stamp-box">
+              <div class="seal-circle">
+                <div class="seal-star">&#9733; ${orgCode} &#9733;</div>
+                <div class="seal-title">HRMS AUDIT</div>
+                <div class="seal-sub">VERIFIED</div>
+                <div class="seal-sub">${attReportDate}</div>
+              </div>
+              <div style="font-size: 8px; color: #475569; line-height: 1.4;">
+                <div style="font-weight: bold; color: #0f172a;">Digital Statutory Audit Stamping</div>
+                <div>Authorized Signatory: <b>${signName}</b> (${signRole})</div>
+                <div>System Hash: <b>${orgCode}-${attReportType.toUpperCase()}-${attReportDate.replace(/-/g, '')}</b></div>
+                <div style="color: #64748b;">Authenticated via Vedotrix Pulse HRMS Cloud Database</div>
+              </div>
+            </div>
+
+            <div style="text-align: right;">
+              <div style="font-size: 13px; font-family: cursive; color: #1e3a8a; font-weight: bold;">${signName}</div>
+              <div style="font-weight: 700; font-size: 9px; color: #0f172a;">${signName}</div>
+              <div style="font-size: 8px; color: #64748b;">${signRole} &bull; ${orgName}</div>
+            </div>
+          </div>
+
+          <div class="footer-legal">
+            <div>This is an official computer-generated corporate attendance register authenticated by Vedotrix Pulse HRMS. Digitally stamped & statutory compliant.</div>
+            <div style="font-weight: bold; white-space: nowrap;">${orgCode} &bull; ${attReportType.toUpperCase()} REPORT</div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      if (SafePrint && SafePrint.printToFileAsync) {
+        const file = await SafePrint.printToFileAsync({ html });
+        if (SafeSharing && SafeSharing.shareAsync) {
+          await SafeSharing.shareAsync(file.uri, {
+            UTI: '.pdf',
+            mimeType: 'application/pdf',
+            dialogTitle: `${orgCode} Attendance Report - ${attReportType.toUpperCase()}`
+          });
+        } else {
+          await Share.share({
+            title: `${orgCode} Attendance Report`,
+            message: `Official Attendance Report generated for ${orgName} (${attReportType.toUpperCase()}) on ${attReportDate}.`
+          });
+        }
+      } else {
+        await Share.share({
+          title: `${orgCode} Attendance Report`,
+          message: `Official Attendance Report generated for ${orgName} (${attReportType.toUpperCase()}) on ${attReportDate}.`
+        });
+      }
+      setIsAttReportModal(false);
+    } catch (e: any) {
+      console.log('Attendance Report PDF error:', e);
+      Alert.alert('PDF Export Error', e?.message || 'Could not generate attendance report PDF.');
+    } finally {
+      setIsExportingAttReport(false);
+    }
+  };
+
   // Filter pending approvals (both manual regularizations & remote out-of-office punches)
   const pendingRegularizations = useMemo(() => {
     if (!canApprove) return [];
@@ -5756,6 +6466,48 @@ ${letter.content}
                 </TouchableOpacity>
               </View>
 
+              {/* Manager & HR/Superadmin Attendance PDF Export Banner */}
+              {(isPrivileged || isManager || (teamProfiles && teamProfiles.some((p) => p.manager_id === userProfile?.id))) && (
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    backgroundColor: isDarkMode ? '#1e293b' : '#f0f9ff',
+                    borderWidth: 1,
+                    borderColor: '#0284c7',
+                    paddingVertical: 9,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    marginTop: 4
+                  }}
+                  onPress={() => {
+                    const defaultDate = calSubTab === 'roster' ? (rosterDate || todayStr) : `${selectedCalYear}-${String(selectedCalMonth).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+                    setAttReportDate(defaultDate);
+                    setAttReportType(calSubTab === 'attendance' ? 'monthly' : 'daily');
+                    setIsAttReportModal(true);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={{ fontSize: 16 }}>📄</Text>
+                    <View>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#f8fafc' : '#0369a1' }}>
+                        Export Attendance Report PDF
+                      </Text>
+                      <Text style={{ fontSize: 9.5, color: '#64748b' }}>
+                        Daily, Weekly & Monthly registers with digital stamp
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{ backgroundColor: '#0284c7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}>
+                    <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>
+                      {isPrivileged ? 'HR Export' : 'Team Export'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
               {/* VIEW A: ATTENDANCE CALENDAR (SELF OR INSPECTED TEAM MEMBER) */}
               {calSubTab === 'attendance' && (() => {
                 const inspectedCalendarEmp = teamProfiles.find((p) => p.id === (selectedCalendarEmpId || userProfile?.id)) || userProfile;
@@ -6313,11 +7065,24 @@ ${letter.content}
                                 <Text style={styles.teamDesig}>
                                   {emp.designation || 'Staff'} • {emp.department || 'Operations'}
                                 </Text>
-                                {approverProfile && (
-                                  <Text style={{ fontSize: 9.5, color: '#38bdf8', fontWeight: 'bold', marginTop: 2 }}>
-                                    ✓ Approved By: {approverProfile.first_name} {approverProfile.last_name}
-                                  </Text>
-                                )}
+                                {(() => {
+                                  if (!approverProfile) return null;
+                                  if (punch?.regularization_status === 'rejected' || punch?.approval_status === 'rejected') {
+                                    return (
+                                      <Text style={{ fontSize: 9.5, color: '#f43f5e', fontWeight: 'bold', marginTop: 2 }}>
+                                        ❌ Rejected By: {approverProfile.first_name} {approverProfile.last_name}
+                                      </Text>
+                                    );
+                                  }
+                                  if (punch?.regularization_status === 'approved' || punch?.approval_status === 'approved') {
+                                    return (
+                                      <Text style={{ fontSize: 9.5, color: '#10b981', fontWeight: 'bold', marginTop: 2 }}>
+                                        ✓ Approved By: {approverProfile.first_name} {approverProfile.last_name}
+                                      </Text>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </View>
 
                               <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -9144,18 +9909,31 @@ ${letter.content}
                     {(() => {
                       const approverUuid = p?.approved_by || p?.regularized_by;
                       const approverProfile = approverUuid ? teamProfiles.find((x) => x.id === approverUuid) : null;
-                      return (
-                        <>
-                          {approverProfile && (
-                            <View style={{ marginTop: 6, padding: 8, backgroundColor: isDarkMode ? '#1e293b' : '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#10b98130' }}>
-                              <Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>✓ ATTENDANCE APPROVED BY:</Text>
-                              <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#065f46', fontWeight: '700', marginTop: 1 }}>
-                                {approverProfile.first_name} {approverProfile.last_name} ({approverProfile.role?.toUpperCase()})
-                              </Text>
-                            </View>
-                          )}
-                        </>
-                      );
+                      if (!approverProfile) return null;
+
+                      if (isRejected) {
+                        return (
+                          <View style={{ marginTop: 6, padding: 8, backgroundColor: isDarkMode ? '#1e293b' : '#fff1f2', borderRadius: 6, borderWidth: 1, borderColor: '#f43f5e30' }}>
+                            <Text style={{ fontSize: 10, color: '#e11d48', fontWeight: 'bold' }}>❌ REGULARIZATION REJECTED BY:</Text>
+                            <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#9f1239', fontWeight: '700', marginTop: 1 }}>
+                              {approverProfile.first_name} {approverProfile.last_name} ({approverProfile.role?.toUpperCase()})
+                            </Text>
+                          </View>
+                        );
+                      }
+
+                      if (isApproved) {
+                        return (
+                          <View style={{ marginTop: 6, padding: 8, backgroundColor: isDarkMode ? '#1e293b' : '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#10b98130' }}>
+                            <Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>✓ ATTENDANCE APPROVED BY:</Text>
+                            <Text style={{ fontSize: 12, color: isDarkMode ? '#f8fafc' : '#065f46', fontWeight: '700', marginTop: 1 }}>
+                              {approverProfile.first_name} {approverProfile.last_name} ({approverProfile.role?.toUpperCase()})
+                            </Text>
+                          </View>
+                        );
+                      }
+
+                      return null;
                     })()}
                     {(p?.regularization_notes || p?.approval_notes || p?.regularization_reason || isRejected || isApproved || isPending) && (
                       <View style={{ marginTop: 8, padding: 10, backgroundColor: isDarkMode ? '#1e293b' : isRejected ? '#fff1f2' : isApproved ? '#f0fdf4' : '#fffbeb', borderRadius: 8, borderWidth: 1, borderColor: isRejected ? '#f43f5e40' : isApproved ? '#10b98140' : '#f59e0b40' }}>
@@ -9272,6 +10050,106 @@ ${letter.content}
                 </>
               );
             })()}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL: OFFICIAL ATTENDANCE REPORT PDF (DAILY / WEEKLY / MONTHLY) */}
+      {/* ========================================================================= */}
+      <Modal visible={isAttReportModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxWidth: 440, padding: 20 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <View>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                  📄 Export Attendance Report PDF
+                </Text>
+                <Text style={{ fontSize: 11, color: '#0284c7', marginTop: 2, fontWeight: '700' }}>
+                  {isPrivileged ? 'Organization Directory Scope' : 'Direct Managed Team Scope'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsAttReportModal(false)} style={{ padding: 4 }}>
+                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Scope badge banner */}
+            <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#eff6ff', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#3b82f630', marginBottom: 14 }}>
+              <Text style={{ fontSize: 11, color: isDarkMode ? '#93c5fd' : '#1e40af', fontWeight: '600' }}>
+                {isPrivileged
+                  ? `🏢 HR/Admin Scope: Generating for all ${teamProfiles.filter((p) => p.is_active !== false).length} active employees.`
+                  : `👥 Manager Scope: Strictly generating for your ${teamProfiles.filter((p) => p.is_active !== false && p.manager_id === userProfile?.id).length} direct reportees.`}
+              </Text>
+            </View>
+
+            {/* Cadence Selection Tabs */}
+            <Text style={{ fontSize: 11, fontWeight: '700', color: isDarkMode ? '#cbd5e1' : '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+              Select Report Format
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>
+              {(['daily', 'weekly', 'monthly'] as const).map((type) => {
+                const isActive = attReportType === type;
+                return (
+                  <TouchableOpacity
+                    key={type}
+                    onPress={() => setAttReportType(type)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      backgroundColor: isActive ? '#0284c7' : isDarkMode ? '#1e293b' : '#f1f5f9',
+                      borderWidth: 1,
+                      borderColor: isActive ? '#0284c7' : isDarkMode ? '#334155' : '#cbd5e1',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: isActive ? '#ffffff' : isDarkMode ? '#e2e8f0' : '#334155', textTransform: 'capitalize' }}>
+                      {type}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Date / Month Picker */}
+            <Text style={{ fontSize: 11, fontWeight: '700', color: isDarkMode ? '#cbd5e1' : '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+              {attReportType === 'daily' ? 'Target Shift Date (YYYY-MM-DD)' : attReportType === 'weekly' ? 'Week Ending Date (YYYY-MM-DD)' : 'Target Month (YYYY-MM)'}
+            </Text>
+            <TextInput
+              style={[styles.textInput, { marginBottom: 14 }]}
+              value={attReportDate}
+              onChangeText={setAttReportDate}
+              placeholder={attReportType === 'monthly' ? 'YYYY-MM (e.g. 2026-10)' : 'YYYY-MM-DD'}
+              placeholderTextColor="#64748b"
+            />
+
+            <View style={{ backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: isDarkMode ? '#334155' : '#e2e8f0', marginBottom: 16 }}>
+              <Text style={{ fontSize: 10.5, color: '#64748b', lineHeight: 16 }}>
+                {attReportType === 'daily' && '• Includes check-in/out stamps, duration, office/remote location, status, and dynamic manager/HR approval remarks.'}
+                {attReportType === 'weekly' && '• Includes 7-day attendance register matrix, daily work hours, presence %, total shifts and grand hours.'}
+                {attReportType === 'monthly' && '• Includes full monthly statutory audit register, working days, punch vs regularized days, leaves, LOP, and compliance grade.'}
+              </Text>
+            </View>
+
+            {/* Buttons */}
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => setIsAttReportModal(false)}
+                style={[styles.modalCloseBtn, { flex: 1, marginTop: 0 }]}
+              >
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleExportAttendanceReportPDF}
+                disabled={isExportingAttReport}
+                style={[styles.loginBtn, { flex: 2, marginTop: 0, backgroundColor: '#0284c7', opacity: isExportingAttReport ? 0.6 : 1 }]}
+              >
+                <Text style={styles.loginBtnText}>
+                  {isExportingAttReport ? 'Generating Official PDF...' : 'Download Official PDF'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

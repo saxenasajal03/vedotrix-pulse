@@ -37,8 +37,12 @@ import {
   X,
   FileEdit,
   Edit3,
-  Send
+  Send,
+  Printer,
+  FileSpreadsheet
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { getTodayISTDateString, formatISTTime, formatISTDate } from '../lib/serialUtils';
 import { AttendanceRecord, Profile, TaskItem, DailyStandup, Holiday, LeaveRequest } from '../types';
 
@@ -175,6 +179,13 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   const [regInTime, setRegInTime] = useState(currentOrg.settings?.shiftStartTime || '09:30');
   const [regOutTime, setRegOutTime] = useState(currentOrg.settings?.shiftEndTime || '18:30');
   const [isSubmittingReg, setIsSubmittingReg] = useState(false);
+
+  // Attendance Report PDF Export State (HR / Superadmin / Managers only)
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [reportDate, setReportDate] = useState(selectedRosterDate || getTodayISTDateString());
+  const [reportMonthYear, setReportMonthYear] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   const handleSaveShiftSettings = async () => {
     setIsSavingShift(true);
@@ -763,11 +774,20 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   }, [rosterEmployeeData, rosterFilterTab, rosterDept, rosterSearch]);
 
   const handleExportCSV = () => {
-    const headers = ['Employee Name', 'Email', 'Role', 'Department', 'Date', 'Status', 'Check-In Time', 'Location / Office', 'Distance (m)', 'Leave Type', 'Approved By'];
+    const headers = ['Employee Name', 'Email', 'Role', 'Department', 'Date', 'Status', 'Check-In Time', 'Location / Office', 'Distance (m)', 'Leave Type', 'Reviewer / Approver'];
     const rows = filteredRosterData.map(({ employee, record, leave, status }) => {
+      const isRejected = record?.approvalStatus === 'rejected' || record?.regularizationStatus === 'rejected';
+      const isPending = !isRejected && (record?.approvalStatus === 'pending_manager_approval' || record?.regularizationStatus === 'pending');
       const approverId = record?.approvedBy || record?.regularizedBy;
       const approverProfile = approverId ? orgProfiles.find((p) => p.id === approverId) : null;
-      const approverText = approverProfile ? `${approverProfile.firstName} ${approverProfile.lastName} (${approverProfile.role.toUpperCase()})` : 'N/A';
+      let approverText = '—';
+      if (isRejected) {
+        approverText = approverProfile ? `Rejected by ${approverProfile.firstName} ${approverProfile.lastName}` : 'Rejected';
+      } else if (isPending) {
+        approverText = 'Awaiting Approval';
+      } else if (approverProfile) {
+        approverText = `Approved by ${approverProfile.firstName} ${approverProfile.lastName}`;
+      }
       return [
         `"${employee.firstName} ${employee.lastName}"`,
         employee.email,
@@ -792,6 +812,618 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
     link.click();
     document.body.removeChild(link);
     addToast('Report Exported 📄', `Exported attendance sheet for ${filteredRosterData.length} team members.`, 'info');
+  };
+
+  // Helper to load logo as Base64 for vector PDF embed and watermark
+  const loadBase64Image = (url?: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      if (!url) return resolve(null);
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(null);
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  };
+
+  // Corporate Attendance Report PDF Generator (Daily / Weekly / Monthly for HR / Superadmin / Managers)
+  const handleGenerateAttendancePDF = async () => {
+    if (!isHrOrSuperadmin && !isManager) {
+      addToast('Permission Denied', 'Attendance PDF generation is restricted to Managers and HR/Superadmins.', 'error');
+      return;
+    }
+
+    const targetEmployees = managedTeam.length > 0 ? managedTeam : [currentProfile];
+    if (targetEmployees.length === 0) {
+      addToast('No Employees Found', 'No managed employee records found to generate attendance report.', 'warning');
+      return;
+    }
+
+    setIsGeneratingPdf(true);
+    addToast('Generating PDF Report...', 'Processing attendance data, digital verification stamp & corporate branding...', 'info');
+
+    try {
+      const logoBase64 = await loadBase64Image(currentOrg.logoUrl);
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'pt',
+        format: 'a4'
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth(); // 842 pt
+      const pageHeight = doc.internal.pageSize.getHeight(); // 595 pt
+      const margin = 36;
+      const contentWidth = pageWidth - margin * 2;
+
+      // Function to render light organization watermark on any page
+      const drawWatermark = () => {
+        try {
+          if (logoBase64) {
+            if ((doc as any).GState) {
+              doc.setGState(new (doc as any).GState({ opacity: 0.055 }));
+            }
+            const wmSize = 220;
+            doc.addImage(logoBase64, 'PNG', (pageWidth - wmSize) / 2, (pageHeight - wmSize) / 2, wmSize, wmSize);
+            if ((doc as any).GState) {
+              doc.setGState(new (doc as any).GState({ opacity: 1.0 }));
+            }
+          }
+        } catch {}
+      };
+
+      // Header Branding Bar
+      doc.setFillColor(15, 23, 42); // slate-900
+      doc.rect(0, 0, pageWidth, 8, 'F');
+      doc.setFillColor(37, 99, 235); // blue-600
+      doc.rect(0, 8, pageWidth, 3, 'F');
+
+      let currentY = 30;
+
+      // Logo + Company Name
+      if (logoBase64) {
+        try {
+          doc.addImage(logoBase64, 'PNG', margin, currentY, 34, 34);
+        } catch {}
+      }
+      const titleX = logoBase64 ? margin + 44 : margin;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42);
+      doc.text(currentOrg.name?.toUpperCase() || 'VEDOTRIX PULSE HRMS', titleX, currentY + 12);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      const reportTitle =
+        reportType === 'daily'
+          ? `DAILY ATTENDANCE & SHIFT VERIFICATION REPORT • Date: ${formatISTDate(reportDate)}`
+          : reportType === 'weekly'
+          ? `WEEKLY ATTENDANCE REGISTER & WORK HOURS AUDIT • Week Ending: ${formatISTDate(reportDate)}`
+          : `MONTHLY ATTENDANCE REGISTER & STATUTORY AUDIT • Month: ${reportMonthYear}`;
+      doc.text(reportTitle, titleX, currentY + 24);
+
+      // Meta Info on Top Right
+      const nowISTString = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Generated: ${nowISTString} IST`, pageWidth - margin, currentY + 10, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Scope: ${isManager ? 'Direct Managed Team' : 'Organization Directory'} (${targetEmployees.length} Staff)`, pageWidth - margin, currentY + 22, { align: 'right' });
+      doc.text(`Signatory: ${currentProfile.firstName} ${currentProfile.lastName} (${currentProfile.role.toUpperCase()})`, pageWidth - margin, currentY + 34, { align: 'right' });
+
+      currentY += 44;
+
+      // ==========================================
+      // 1. DAILY ATTENDANCE REPORT
+      // ==========================================
+      if (reportType === 'daily') {
+        const rows: any[] = [];
+        let pCount = 0;
+        let rCount = 0;
+        let aCount = 0;
+        let lCount = 0;
+        let pendingCount = 0;
+        let totalHoursLogged = 0;
+
+        targetEmployees.forEach((emp, idx) => {
+          const punch = attendanceRecords.find((a) => a.employeeId === emp.id && a.date === reportDate);
+          const leave = leaveRequests.find((l) => l.employeeId === emp.id && (l.status === 'approved' || l.status === 'pending') && l.startDate <= reportDate && l.endDate >= reportDate);
+          const isBeforeJoining = emp.joiningDate && reportDate < emp.joiningDate;
+
+          const customOverride = currentOrg.settings?.customDayOverrides?.[reportDate] || currentOrg.settings?.customDayOverrides?.[`${reportDate}_${emp.id}`];
+          const isOverrideWorking = customOverride?.type === 'working';
+          const isOverrideWeekOff = customOverride?.type === 'week_off';
+          const isOverrideHol = customOverride?.type === 'holiday';
+
+          const [rY, rM, rD] = reportDate.split('-').map(Number);
+          const dayOfWeek = new Date(rY, rM - 1, rD).getDay();
+          const empWeekOffs: number[] = currentOrg.settings?.employeeWeekOffs?.[emp.id] || currentOrg.settings?.weekOffDays || [0];
+          const isWeeklyOff = empWeekOffs.includes(dayOfWeek);
+          const isEffectiveWeekOff = (isWeeklyOff || isOverrideWeekOff) && !isOverrideWorking;
+          const matchingHol = orgHolidays.find((h) => h.date === reportDate);
+          const isEffectiveHol = (matchingHol || isOverrideHol) && !isOverrideWorking;
+
+          const isRejected = punch?.regularizationStatus === 'rejected' || punch?.approvalStatus === 'rejected';
+          const isPending = !isRejected && (punch?.regularizationStatus === 'pending' || punch?.approvalStatus === 'pending_manager_approval' || punch?.status === 'pending');
+          const isApproved = !isRejected && !isPending && (punch?.regularizationStatus === 'approved' || punch?.approvalStatus === 'approved');
+
+          let statusStr = 'ABSENT';
+          let cinStr = '—';
+          let coutStr = '—';
+          let hours = 0;
+          let notes = '—';
+
+          if (isBeforeJoining) {
+            statusStr = 'PRE-JOINING';
+          } else if (isEffectiveHol) {
+            statusStr = `HOLIDAY (${matchingHol?.name || customOverride?.name || 'Declared'})`;
+          } else if (isEffectiveWeekOff) {
+            statusStr = 'WEEK-OFF';
+          } else if (leave) {
+            statusStr = `LEAVE (${leave.leaveType.toUpperCase()})`;
+            lCount++;
+          } else if (isRejected) {
+            statusStr = 'REJECTED • ABSENT';
+            aCount++;
+            const approver = punch?.approvedBy ? orgProfiles.find((p) => p.id === punch.approvedBy) : null;
+            notes = `Rej by ${approver?.firstName || 'Manager'}${punch?.approvalNotes ? `: ${punch.approvalNotes}` : ''}`;
+          } else if (isPending) {
+            statusStr = 'PENDING APPROVAL';
+            pendingCount++;
+            notes = punch?.regularizationReason ? `Req: ${punch.regularizationReason}` : 'Pending Manager Review';
+          } else if (isApproved) {
+            if (punch?.status === 'regularized' || !punch?.checkInTime) {
+              statusStr = 'REGULARIZED ★';
+              rCount++;
+            } else {
+              statusStr = 'PRESENT ✓';
+              pCount++;
+            }
+            hours = punch?.totalHours || 8;
+            totalHoursLogged += hours;
+            const approver = (punch?.approvedBy || punch?.regularizedBy) ? orgProfiles.find((p) => p.id === (punch.approvedBy || punch.regularizedBy)) : null;
+            notes = `Approved by ${approver?.firstName || 'Manager'}${punch?.approvalNotes ? `: ${punch.approvalNotes}` : ''}`;
+          } else if (punch?.status === 'present' && punch?.approvalStatus !== 'pending_manager_approval') {
+            statusStr = 'PRESENT ✓';
+            pCount++;
+            hours = punch?.totalHours || 8;
+            totalHoursLogged += hours;
+            notes = punch.isRemote ? 'Remote (WFH)' : 'Office Biometric';
+          } else {
+            statusStr = 'ABSENT';
+            aCount++;
+            notes = 'Unmarked Shift';
+          }
+
+          if (punch?.checkInTime) {
+            cinStr = formatISTTime(punch.checkInTime);
+          }
+          if (punch?.checkOutTime) {
+            coutStr = formatISTTime(punch.checkOutTime);
+          }
+
+          rows.push([
+            idx + 1,
+            `${emp.firstName} ${emp.lastName}\n(${emp.employeeCode || emp.id.slice(0, 6)})`,
+            `${emp.department || 'Operations'}\n${emp.designation || 'Staff'}`,
+            statusStr,
+            cinStr,
+            coutStr,
+            `${hours}h`,
+            punch?.officeAddress || (punch?.isRemote ? 'Remote / Field' : 'HQ Office'),
+            notes
+          ]);
+        });
+
+        const workingCount = pCount + rCount + aCount + pendingCount;
+        const totalEffectivePresent = pCount + rCount + lCount * 0.5;
+        const presencePct = workingCount > 0 ? Math.min(100, Math.round((totalEffectivePresent / workingCount) * 100)) : 100;
+
+        doc.setFillColor(241, 245, 249); // slate-100
+        doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'F');
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'S');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(30, 41, 59);
+
+        const summaryText = `Managed Team: ${targetEmployees.length}   |   Present (Punch): ${pCount}   |   Regularized (Approved): ${rCount}   |   Pending Review: ${pendingCount}   |   Absent: ${aCount}   |   Leaves: ${lCount}   |   Total Hours: ${totalHoursLogged}h   |   Presence: ${presencePct}%`;
+        doc.text(summaryText, margin + 10, currentY + 16);
+
+        currentY += 34;
+
+        autoTable(doc, {
+          head: [['#', 'Employee Name & Code', 'Department & Role', 'Status', 'Check-In', 'Check-Out', 'Hours', 'Location', 'Approver / Remarks']],
+          body: rows,
+          startY: currentY,
+          margin: { left: margin, right: margin, bottom: 35 },
+          theme: 'grid',
+          styles: { fontSize: 7.5, cellPadding: 4, overflow: 'linebreak' },
+          headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+          columnStyles: {
+            0: { halign: 'center', cellWidth: 24 },
+            1: { cellWidth: 105, fontStyle: 'bold' },
+            2: { cellWidth: 95 },
+            3: { halign: 'center', cellWidth: 85, fontStyle: 'bold' },
+            4: { halign: 'center', cellWidth: 50 },
+            5: { halign: 'center', cellWidth: 50 },
+            6: { halign: 'center', cellWidth: 40, fontStyle: 'bold' },
+            7: { cellWidth: 90 },
+            8: { cellWidth: 'auto' }
+          },
+          didParseCell: (data) => {
+            if (data.section === 'body' && data.column.index === 3) {
+              const val = String(data.cell.raw || '');
+              if (val.includes('PRESENT')) {
+                data.cell.styles.textColor = [16, 185, 129];
+              } else if (val.includes('REGULARIZED')) {
+                data.cell.styles.textColor = [6, 182, 212];
+              } else if (val.includes('REJECTED') || val === 'ABSENT') {
+                data.cell.styles.textColor = [225, 29, 72];
+              } else if (val.includes('PENDING')) {
+                data.cell.styles.textColor = [245, 158, 11];
+              } else if (val.includes('LEAVE')) {
+                data.cell.styles.textColor = [59, 130, 246];
+              } else {
+                data.cell.styles.textColor = [100, 116, 139];
+              }
+            }
+          }
+        });
+      }
+
+      // ==========================================
+      // 2. WEEKLY ATTENDANCE REGISTER
+      // ==========================================
+      else if (reportType === 'weekly') {
+        const dates: string[] = [];
+        const baseDate = new Date(reportDate);
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() - i);
+          dates.push(d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+        }
+
+        const dateLabels = dates.map((d) => {
+          const dateObj = new Date(d);
+          const dayShort = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+          const [yy, mm, dd] = d.split('-');
+          return `${dayShort}\n${dd}/${mm}`;
+        });
+
+        const rows: any[] = [];
+        let totalPresentShifts = 0;
+        let totalRegularizedShifts = 0;
+        let totalAbsentShifts = 0;
+        let grandTotalHours = 0;
+
+        targetEmployees.forEach((emp, idx) => {
+          let empPresent = 0;
+          let empReg = 0;
+          let empAbsent = 0;
+          let empLeave = 0;
+          let empHours = 0;
+
+          const dayCols = dates.map((dStr) => {
+            const punch = attendanceRecords.find((a) => a.employeeId === emp.id && a.date === dStr);
+            const leave = leaveRequests.find((l) => l.employeeId === emp.id && (l.status === 'approved' || l.status === 'pending') && l.startDate <= dStr && l.endDate >= dStr);
+            const isBeforeJoining = emp.joiningDate && dStr < emp.joiningDate;
+
+            const [y, m, d] = dStr.split('-').map(Number);
+            const dow = new Date(y, m - 1, d).getDay();
+            const empWeekOffs: number[] = currentOrg.settings?.employeeWeekOffs?.[emp.id] || currentOrg.settings?.weekOffDays || [0];
+            const isWeekOff = empWeekOffs.includes(dow);
+            const isHol = orgHolidays.some((h) => h.date === dStr);
+
+            const isRejected = punch?.regularizationStatus === 'rejected' || punch?.approvalStatus === 'rejected';
+            const isPending = !isRejected && (punch?.regularizationStatus === 'pending' || punch?.approvalStatus === 'pending_manager_approval' || punch?.status === 'pending');
+            const isApproved = !isRejected && !isPending && (punch?.regularizationStatus === 'approved' || punch?.approvalStatus === 'approved');
+
+            if (isBeforeJoining) return '—';
+            if (isHol) return 'HOL';
+            if (isWeekOff) return 'WO';
+            if (leave) {
+              empLeave++;
+              return 'LEAVE';
+            }
+            if (isRejected) {
+              empAbsent++;
+              return 'REJ';
+            }
+            if (isPending) {
+              return 'PEND';
+            }
+            if (isApproved) {
+              const h = punch?.totalHours || 8;
+              empHours += h;
+              if (punch?.status === 'regularized' || !punch?.checkInTime) {
+                empReg++;
+                return `REG\n(${h}h)`;
+              } else {
+                empPresent++;
+                return `P\n(${h}h)`;
+              }
+            }
+            if (punch?.status === 'present' && punch?.approvalStatus !== 'pending_manager_approval') {
+              const h = punch?.totalHours || 8;
+              empHours += h;
+              empPresent++;
+              return `P\n(${h}h)`;
+            }
+            if (dStr <= getTodayISTDateString()) {
+              empAbsent++;
+              return 'ABS';
+            }
+            return '—';
+          });
+
+          totalPresentShifts += empPresent;
+          totalRegularizedShifts += empReg;
+          totalAbsentShifts += empAbsent;
+          grandTotalHours += empHours;
+
+          const totalWorkDays = empPresent + empReg + empAbsent;
+          const presenceRate = totalWorkDays > 0 ? Math.round(((empPresent + empReg) / totalWorkDays) * 100) : 100;
+
+          rows.push([
+            idx + 1,
+            `${emp.firstName} ${emp.lastName}`,
+            emp.department || 'Operations',
+            ...dayCols,
+            empPresent + empReg,
+            empAbsent,
+            `${empHours}h`,
+            `${presenceRate}%`
+          ]);
+        });
+
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'F');
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'S');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(30, 41, 59);
+        const weeklySummary = `Week: ${formatISTDate(dates[0])} to ${formatISTDate(dates[6])}   |   Team: ${targetEmployees.length}   |   Present Shifts: ${totalPresentShifts}   |   Regularized Shifts: ${totalRegularizedShifts}   |   Absent Shifts: ${totalAbsentShifts}   |   Total Hours: ${grandTotalHours}h`;
+        doc.text(weeklySummary, margin + 10, currentY + 16);
+
+        currentY += 34;
+
+        autoTable(doc, {
+          head: [['#', 'Employee Name', 'Dept', ...dateLabels, 'Present', 'Absent', 'Total Hours', 'Presence %']],
+          body: rows,
+          startY: currentY,
+          margin: { left: margin, right: margin, bottom: 35 },
+          theme: 'grid',
+          styles: { fontSize: 7, cellPadding: 3, halign: 'center' },
+          headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+          columnStyles: {
+            0: { cellWidth: 20 },
+            1: { cellWidth: 100, halign: 'left', fontStyle: 'bold' },
+            2: { cellWidth: 70, halign: 'left' }
+          }
+        });
+      }
+
+      // ==========================================
+      // 3. MONTHLY ATTENDANCE REGISTER
+      // ==========================================
+      else if (reportType === 'monthly') {
+        const [targetYear, targetMonthNum] = reportMonthYear.split('-').map(Number);
+        const daysInMonth = new Date(targetYear, targetMonthNum, 0).getDate();
+        const monthPrefix = `${targetYear}-${String(targetMonthNum).padStart(2, '0')}`;
+        const todayISTStr = getTodayISTDateString();
+
+        const rows: any[] = [];
+        let grandPresent = 0;
+        let grandReg = 0;
+        let grandLeaves = 0;
+        let grandAbsent = 0;
+        let grandHours = 0;
+
+        targetEmployees.forEach((emp, idx) => {
+          let workingDays = 0;
+          let presentCount = 0;
+          let regCount = 0;
+          let leavesCount = 0;
+          let absentCount = 0;
+          let totalHours = 0;
+
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dateStr = `${monthPrefix}-${String(d).padStart(2, '0')}`;
+            if (emp.joiningDate && dateStr < emp.joiningDate) continue;
+
+            const dayOfWeek = new Date(targetYear, targetMonthNum - 1, d).getDay();
+            const empWeekOffs: number[] = currentOrg.settings?.employeeWeekOffs?.[emp.id] || currentOrg.settings?.weekOffDays || [0];
+            const isWeekOff = empWeekOffs.includes(dayOfWeek);
+            const isHol = orgHolidays.some((h) => h.date === dateStr);
+            const leave = leaveRequests.find((l) => l.employeeId === emp.id && (l.status === 'approved' || l.status === 'pending') && l.startDate <= dateStr && l.endDate >= dateStr);
+
+            if (isHol || isWeekOff) continue;
+            workingDays++;
+
+            const punch = attendanceRecords.find((a) => a.employeeId === emp.id && a.date === dateStr);
+            const isRejected = punch?.regularizationStatus === 'rejected' || punch?.approvalStatus === 'rejected';
+            const isPending = !isRejected && (punch?.regularizationStatus === 'pending' || punch?.approvalStatus === 'pending_manager_approval' || punch?.status === 'pending');
+            const isApproved = !isRejected && !isPending && (punch?.regularizationStatus === 'approved' || punch?.approvalStatus === 'approved');
+
+            if (leave) {
+              leavesCount++;
+            } else if (isRejected) {
+              absentCount++;
+            } else if (isPending) {
+              absentCount++;
+            } else if (isApproved) {
+              const h = punch?.totalHours || 8;
+              totalHours += h;
+              if (punch?.status === 'regularized' || !punch?.checkInTime) {
+                regCount++;
+              } else {
+                presentCount++;
+              }
+            } else if (punch?.status === 'present' && punch?.approvalStatus !== 'pending_manager_approval') {
+              const h = punch?.totalHours || 8;
+              totalHours += h;
+              presentCount++;
+            } else if (dateStr <= todayISTStr) {
+              absentCount++;
+            }
+          }
+
+          grandPresent += presentCount;
+          grandReg += regCount;
+          grandLeaves += leavesCount;
+          grandAbsent += absentCount;
+          grandHours += totalHours;
+
+          const totalEffective = presentCount + regCount + leavesCount * 0.5;
+          const pct = workingDays > 0 ? Math.min(100, Math.round((totalEffective / workingDays) * 100)) : 100;
+          const auditStatus = pct >= 85 ? 'COMPLIANT' : 'ATTENTION REQUIRED';
+
+          rows.push([
+            idx + 1,
+            `${emp.firstName} ${emp.lastName}\n(${emp.employeeCode || emp.id.slice(0, 6)})`,
+            emp.department || 'Operations',
+            workingDays,
+            presentCount,
+            regCount,
+            presentCount + regCount,
+            leavesCount,
+            absentCount,
+            `${totalHours}h`,
+            `${pct}%`,
+            auditStatus
+          ]);
+        });
+
+        const grandWorking = grandPresent + grandReg + grandAbsent;
+        const grandPct = grandWorking > 0 ? Math.round(((grandPresent + grandReg) / grandWorking) * 100) : 100;
+
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'F');
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(margin, currentY, contentWidth, 26, 4, 4, 'S');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(30, 41, 59);
+        const monthlySummary = `Month: ${reportMonthYear}   |   Team Size: ${targetEmployees.length}   |   Present Days: ${grandPresent}   |   Regularized: ${grandReg}   |   Leaves: ${grandLeaves}   |   Absent / LOP: ${grandAbsent}   |   Total Hours: ${grandHours}h   |   Team Presence: ${grandPct}%`;
+        doc.text(monthlySummary, margin + 10, currentY + 16);
+
+        currentY += 34;
+
+        autoTable(doc, {
+          head: [['#', 'Employee Name & Code', 'Department', 'Working Days', 'Verified Present', 'Regularized (Approved)', 'Total Present', 'Leaves', 'Absent / LOP', 'Logged Hours', 'Presence %', 'Audit Status']],
+          body: rows,
+          startY: currentY,
+          margin: { left: margin, right: margin, bottom: 35 },
+          theme: 'grid',
+          styles: { fontSize: 7.5, cellPadding: 3.5, halign: 'center' },
+          headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+          columnStyles: {
+            0: { cellWidth: 20 },
+            1: { cellWidth: 120, halign: 'left', fontStyle: 'bold' },
+            2: { cellWidth: 90, halign: 'left' },
+            11: { fontStyle: 'bold' }
+          },
+          didParseCell: (data) => {
+            if (data.section === 'body' && data.column.index === 11) {
+              const val = String(data.cell.raw || '');
+              if (val === 'COMPLIANT') {
+                data.cell.styles.textColor = [16, 185, 129];
+              } else {
+                data.cell.styles.textColor = [225, 29, 72];
+              }
+            }
+          }
+        });
+      }
+
+      // ==========================================
+      // DIGITAL SEAL & FOOTER ON ALL PAGES
+      // ==========================================
+      const totalPages = (doc.internal as any).getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        drawWatermark();
+
+        // If last page, render Official Digital Stamp
+        if (i === totalPages) {
+          const finalY = (doc as any).lastAutoTable?.finalY || 420;
+          if (finalY + 70 < pageHeight - 30) {
+            const stampX = pageWidth - margin - 220;
+            const stampY = finalY + 12;
+
+            // Stamp Border Box
+            doc.setFillColor(248, 250, 252);
+            doc.roundedRect(stampX, stampY, 220, 56, 4, 4, 'F');
+            doc.setDrawColor(37, 99, 235);
+            doc.setLineWidth(1.2);
+            doc.roundedRect(stampX, stampY, 220, 56, 4, 4, 'S');
+
+            // Stamp Circle
+            doc.setDrawColor(37, 99, 235);
+            doc.circle(stampX + 26, stampY + 28, 18, 'S');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(5);
+            doc.setTextColor(37, 99, 235);
+            doc.text('HRMS AUDIT', stampX + 26, stampY + 26, { align: 'center' });
+            doc.text('VERIFIED', stampX + 26, stampY + 32, { align: 'center' });
+
+            // Stamp Text
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7.5);
+            doc.setTextColor(15, 23, 42);
+            doc.text('OFFICIALLY AUTHENTICATED', stampX + 52, stampY + 15);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(6.5);
+            doc.setTextColor(71, 85, 105);
+            doc.text(`Signatory: ${currentProfile.firstName} ${currentProfile.lastName} (${currentProfile.role.toUpperCase()})`, stampX + 52, stampY + 26);
+            doc.text(`Org: ${currentOrg.name} (${currentOrg.orgCode})`, stampX + 52, stampY + 36);
+            doc.text(`Timestamp: ${nowISTString} IST`, stampX + 52, stampY + 48);
+          }
+        }
+
+        // Bottom Footer
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          `Official Corporate Document • Generated via Vedotrix Pulse HRMS Cloud • Page ${i} of ${totalPages} • Strictly Confidential`,
+          pageWidth / 2,
+          pageHeight - 14,
+          { align: 'center' }
+        );
+      }
+
+      const safeDateStr = reportType === 'monthly' ? reportMonthYear : reportDate;
+      const filename = `Attendance_${reportType.toUpperCase()}_${currentOrg.orgCode}_${safeDateStr}.pdf`;
+      doc.save(filename);
+
+      addToast('PDF Report Exported 📄', `Successfully generated ${reportType.toUpperCase()} attendance report.`, 'success');
+      setIsReportModalOpen(false);
+    } catch (err: any) {
+      console.error('Attendance report PDF generation error:', err);
+      addToast('Export Failed', err?.message || 'Could not generate attendance PDF report.', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const departments = useMemo(() => {
@@ -3162,6 +3794,173 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ATTENDANCE REPORT PDF EXPORT MODAL (FOR HR / SUPERADMIN / MANAGERS)       */}
+      {/* ========================================================================= */}
+      {isReportModalOpen && (isHrOrSuperadmin || isManager) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div
+            className="fixed inset-0"
+            onClick={() => !isGeneratingPdf && setIsReportModalOpen(false)}
+          />
+          <div className="relative w-full max-w-lg bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl shadow-2xl p-5 sm:p-6 z-10 space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                    Generate Attendance Audit PDF Report
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Official corporate attendance register with digital authentication
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isGeneratingPdf && setIsReportModalOpen(false)}
+                className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-color)] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Managed Scope Indicator */}
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>
+                  <strong>Authorized Scope:</strong> {isManager ? `Your Managed Direct Reports (${managedTeam.length} Staff)` : `Organization Roster (${managedTeam.length} Active Staff)`}
+                </span>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold uppercase">
+                {currentProfile.role}
+              </span>
+            </div>
+
+            {/* Report Type Selector Tabs */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider block">
+                Select Report Cadence *
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { key: 'daily', label: 'Daily Report', sub: 'Single shift audit', icon: Calendar },
+                  { key: 'weekly', label: 'Weekly Summary', sub: '7-day register', icon: CalendarDays },
+                  { key: 'monthly', label: 'Monthly Register', sub: 'Full month audit', icon: FileSpreadsheet }
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setReportType(item.key as any)}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      reportType === item.key
+                        ? 'bg-blue-600/15 border-blue-500 text-blue-400 font-bold shadow-xs'
+                        : 'bg-[var(--bg-card-subtle)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold">{item.label}</span>
+                      <item.icon className="w-3.5 h-3.5 opacity-70" />
+                    </div>
+                    <span className="text-[10px] opacity-75 font-normal">{item.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Date / Month Controls */}
+            {reportType === 'daily' && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-[var(--text-muted)] block">
+                  Report Date (IST) *
+                </label>
+                <input
+                  type="date"
+                  value={reportDate}
+                  onChange={(e) => setReportDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-xs font-mono font-bold text-[var(--text-primary)] focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-[10px] text-[var(--text-muted)] block">
+                  Captures check-in, check-out, geofence verification, punch status, and approver/rejection notes for {formatISTDate(reportDate)}.
+                </span>
+              </div>
+            )}
+
+            {reportType === 'weekly' && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-[var(--text-muted)] block">
+                  Week Ending Date (IST) *
+                </label>
+                <input
+                  type="date"
+                  value={reportDate}
+                  onChange={(e) => setReportDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-xs font-mono font-bold text-[var(--text-primary)] focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-[10px] text-[var(--text-muted)] block">
+                  Generates 7-day attendance matrix ending on {formatISTDate(reportDate)} with day-wise hours and presence metrics.
+                </span>
+              </div>
+            )}
+
+            {reportType === 'monthly' && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-[var(--text-muted)] block">
+                  Select Month & Year *
+                </label>
+                <input
+                  type="month"
+                  value={reportMonthYear}
+                  onChange={(e) => setReportMonthYear(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--bg-card-subtle)] border border-[var(--border-color)] rounded-xl text-xs font-mono font-bold text-[var(--text-primary)] focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-[10px] text-[var(--text-muted)] block">
+                  Full statutory register for {reportMonthYear} including working days, verified punch, regularized, leaves, absent, and presence %.
+                </span>
+              </div>
+            )}
+
+            {/* Corporate Digital Stamping Notice */}
+            <div className="p-3 rounded-xl bg-slate-800/40 border border-slate-700/60 text-[11px] text-slate-300 space-y-1">
+              <div className="flex items-center space-x-1.5 font-bold text-slate-200">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Certified Corporate PDF Export Features</span>
+              </div>
+              <ul className="list-disc list-inside text-[10px] text-slate-400 space-y-0.5">
+                <li>Official {currentOrg.name} logo & letterhead branding</li>
+                <li>Digital security stamp with timestamp & signatory authentication</li>
+                <li>Light background watermark with company seal</li>
+                <li>Detailed audit status (Compliant vs Attention Required)</li>
+              </ul>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-2 flex items-center justify-end space-x-2.5">
+              <button
+                type="button"
+                disabled={isGeneratingPdf}
+                onClick={() => setIsReportModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-muted)] hover:bg-[var(--border-color)] transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isGeneratingPdf}
+                onClick={handleGenerateAttendancePDF}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center space-x-1.5 shadow-md disabled:opacity-50 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download Official PDF'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
