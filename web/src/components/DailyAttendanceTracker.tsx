@@ -183,7 +183,7 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
   // Attendance Report PDF Export State (HR / Superadmin / Managers only)
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily');
-  const [reportDate, setReportDate] = useState(selectedRosterDate || getTodayISTDateString());
+  const [reportDate, setReportDate] = useState(() => getTodayISTDateString());
   const [reportMonthYear, setReportMonthYear] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -1574,6 +1574,22 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
               <span className="sm:hidden">Shift</span>
             </button>
           )}
+
+          {/* Attendance Report PDF Button for HR / Superadmin / Managers */}
+          {(isHrOrSuperadmin || isManager) && (
+            <button
+              onClick={() => {
+                setReportDate(selectedRosterDate || getTodayISTDateString());
+                setIsReportModalOpen(true);
+              }}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+              title="Generate Official Attendance Report PDF (Daily / Weekly / Monthly)"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Export PDF Report</span>
+              <span className="sm:hidden">PDF Report</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -2102,6 +2118,19 @@ export const DailyAttendanceTracker: React.FC<DailyAttendanceTrackerProps> = ({
                 <Download className="w-3.5 h-3.5" />
                 <span>Export CSV</span>
               </button>
+
+              {(isHrOrSuperadmin || isManager) && (
+                <button
+                  onClick={() => {
+                    setReportDate(selectedRosterDate || getTodayISTDateString());
+                    setIsReportModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Export PDF</span>
+                </button>
+              )}
             </div>
           </div>
 
