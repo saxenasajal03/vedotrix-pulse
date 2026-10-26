@@ -2560,21 +2560,79 @@ export default function App() {
         finalCompleted += `\nPR / Deliverable: ${standupPrLink.trim()}`;
       }
 
-      const { error } = await supabaseClient.from('daily_standups').upsert(
-        {
-          id: newId,
-          employee_id: userProfile.id,
-          org_id: currentOrg?.id || userProfile.org_id,
-          date: todayIST,
-          completed_today: finalCompleted,
-          planned_tomorrow: standupNext.trim(),
-          blockers: standupBlockers.trim() || null,
-          hours_logged: Number(standupHours) || 8
-        },
-        { onConflict: 'employee_id,date' }
-      );
+      const orgId = currentOrg?.id || userProfile.org_id;
 
-      if (!error) {
+      // Check if a standup already exists for today
+      const { data: existingStandup } = await supabaseClient
+        .from('daily_standups')
+        .select('id')
+        .eq('employee_id', userProfile.id)
+        .eq('date', todayIST)
+        .maybeSingle();
+
+      let opError: any = null;
+      let savedStandupId = existingStandup?.id || newId;
+
+      if (existingStandup?.id) {
+        const { error: updErr } = await supabaseClient
+          .from('daily_standups')
+          .update({
+            completed_today: finalCompleted,
+            planned_tomorrow: standupNext.trim(),
+            blockers: standupBlockers.trim() || null,
+            hours_logged: Number(standupHours) || 8
+          })
+          .eq('id', existingStandup.id);
+        opError = updErr;
+      } else {
+        const { error: insErr } = await supabaseClient
+          .from('daily_standups')
+          .insert({
+            id: newId,
+            employee_id: userProfile.id,
+            org_id: orgId,
+            date: todayIST,
+            completed_today: finalCompleted,
+            planned_tomorrow: standupNext.trim(),
+            blockers: standupBlockers.trim() || null,
+            hours_logged: Number(standupHours) || 8
+          });
+        opError = insErr;
+      }
+
+      // Fallback to upsert if any conflict occurs
+      if (opError && (opError.code === '23505' || String(opError.message).includes('unique'))) {
+        const { error: upsertErr } = await supabaseClient
+          .from('daily_standups')
+          .upsert({
+            employee_id: userProfile.id,
+            org_id: orgId,
+            date: todayIST,
+            completed_today: finalCompleted,
+            planned_tomorrow: standupNext.trim(),
+            blockers: standupBlockers.trim() || null,
+            hours_logged: Number(standupHours) || 8
+          }, { onConflict: 'employee_id,date' });
+        opError = upsertErr;
+      }
+
+      if (!opError) {
+        // Optimistic local update
+        setStandups((prev) => [
+          {
+            id: savedStandupId,
+            employee_id: userProfile.id,
+            org_id: orgId,
+            date: todayIST,
+            completed_today: finalCompleted,
+            planned_tomorrow: standupNext.trim(),
+            blockers: standupBlockers.trim() || null,
+            hours_logged: Number(standupHours) || 8,
+            created_at: new Date().toISOString()
+          },
+          ...prev.filter((s) => !(s.employee_id === userProfile.id && s.date === todayIST))
+        ]);
+
         // Send device notification
         sendDeviceNotification(
           'EOD Standup Saved 🚀',
@@ -2588,12 +2646,12 @@ export default function App() {
         setStandupNext('');
         setStandupBlockers('');
         setStandupPrLink('');
-        refreshAllData(supabaseClient, currentOrg?.id, userProfile.id);
+        refreshAllData(supabaseClient, orgId, userProfile.id);
       } else {
-        Alert.alert('Error', error.message);
+        showUserFriendlyError('Standup Save Failed', opError, 'Could not save your daily standup. Please try again.');
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message);
+      showUserFriendlyError('Standup Error', e, 'Could not submit standup.');
     } finally {
       setIsSavingStandup(false);
     }
