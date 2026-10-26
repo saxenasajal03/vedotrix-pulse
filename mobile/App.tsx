@@ -579,13 +579,37 @@ export default function App() {
 
   // HR / Superadmin Employee Record Management Modal
   const [isEditEmployeeModal, setIsEditEmployeeModal] = useState(false);
+  const [editEmpFirstName, setEditEmpFirstName] = useState('');
+  const [editEmpLastName, setEditEmpLastName] = useState('');
   const [editEmpRole, setEditEmpRole] = useState('employee');
   const [editEmpEmail, setEditEmpEmail] = useState('');
+  const [editEmpPhone, setEditEmpPhone] = useState('');
   const [editEmpDesig, setEditEmpDesig] = useState('');
   const [editEmpDept, setEditEmpDept] = useState('');
   const [editEmpJoining, setEditEmpJoining] = useState('');
+  const [editEmpSalary, setEditEmpSalary] = useState('0');
+  const [editEmpManagerId, setEditEmpManagerId] = useState('');
+  const [editEmpIsActive, setEditEmpIsActive] = useState(true);
   const [editEmpPasswordReset, setEditEmpPasswordReset] = useState('');
   const [isSavingEmpRecord, setIsSavingEmpRecord] = useState(false);
+
+  const handleOpenEditEmployee = (emp: any) => {
+    if (!emp) return;
+    setInspectedUserProfile(emp);
+    setEditEmpFirstName(emp.first_name || '');
+    setEditEmpLastName(emp.last_name || '');
+    setEditEmpRole(emp.role || 'employee');
+    setEditEmpEmail(emp.email || '');
+    setEditEmpPhone(emp.phone || '');
+    setEditEmpDesig(emp.designation || '');
+    setEditEmpDept(emp.department || '');
+    setEditEmpJoining(emp.joining_date || '');
+    setEditEmpSalary(emp.base_salary ? String(emp.base_salary) : '0');
+    setEditEmpManagerId(emp.manager_id || '');
+    setEditEmpIsActive(emp.is_active !== false);
+    setEditEmpPasswordReset('');
+    setIsEditEmployeeModal(true);
+  };
   const [isExportingStandupPdf, setIsExportingStandupPdf] = useState(false);
 
   // User Self Password Management Modal
@@ -1285,13 +1309,13 @@ export default function App() {
         if (nots) setNotices(nots);
       }
 
-      // 9. Daily Standups
+      // 9. Daily Standups (Fetch tenant standups and guarantee user's own standups)
       if (targetOrgId) {
-        const { data: st } = await client
-          .from('daily_standups')
-          .select('*')
-          .eq('org_id', targetOrgId)
-          .order('date', { ascending: false });
+        const standupUserId = profileId || userProfile?.id;
+        const query = client.from('daily_standups').select('*');
+        const { data: st } = standupUserId
+          ? await query.or('org_id.eq.' + targetOrgId + ',employee_id.eq.' + standupUserId).order('date', { ascending: false })
+          : await query.eq('org_id', targetOrgId).order('date', { ascending: false });
         if (st) setStandups(st);
       }
 
@@ -2577,6 +2601,7 @@ export default function App() {
         const { error: updErr } = await supabaseClient
           .from('daily_standups')
           .update({
+            org_id: orgId,
             completed_today: finalCompleted,
             planned_tomorrow: standupNext.trim(),
             blockers: standupBlockers.trim() || null,
@@ -5510,6 +5535,51 @@ ${letter.content}
               )}
             </View>
 
+            {/* Daily Standup Action Card (All Roles: Superadmin, Manager, Employee) */}
+            <View style={styles.dashboardSectionCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, paddingRight: 6 }}>
+                  <View style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 12,
+                    backgroundColor: todayStandupSubmitted ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 1,
+                    borderColor: todayStandupSubmitted ? '#10b981' : '#f59e0b'
+                  }}>
+                    <Text style={{ fontSize: 18 }}>{todayStandupSubmitted ? '✅' : '🚀'}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.dashboardCardTitle, { marginBottom: 2 }]}>
+                      {todayStandupSubmitted ? "Today's EOD Standup Logged" : "Daily EOD Standup Pending"}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                      {todayStandupSubmitted
+                        ? "Your accomplishments and shift hours are synced with Supabase"
+                        : "Log what you accomplished today and planned next shift"}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.compactJoinBtn,
+                    { backgroundColor: todayStandupSubmitted ? (isDarkMode ? '#1e293b' : '#f1f5f9') : '#2563eb' }
+                  ]}
+                  onPress={() => setIsStandupModal(true)}
+                >
+                  <Text style={[
+                    styles.compactJoinBtnText,
+                    todayStandupSubmitted && { color: isDarkMode ? '#38bdf8' : '#2563eb' }
+                  ]}>
+                    {todayStandupSubmitted ? '✏️ Edit' : '+ Submit'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {/* Daily Corporate Inspiration Quote Card */}
             {(() => {
               const quotes = [
@@ -5825,16 +5895,7 @@ ${letter.content}
                         {isPrivileged && (
                           <TouchableOpacity
                             style={styles.empCardEditBtn}
-                            onPress={() => {
-                              setInspectedUserProfile(emp);
-                              setEditEmpRole(emp.role || 'employee');
-                              setEditEmpEmail(emp.email || '');
-                              setEditEmpDesig(emp.designation || '');
-                              setEditEmpDept(emp.department || '');
-                              setEditEmpJoining(emp.joining_date || '');
-                              setEditEmpPasswordReset('');
-                              setIsEditEmployeeModal(true);
-                            }}
+                            onPress={() => handleOpenEditEmployee(emp)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           >
                             <Text style={styles.empCardEditBtnText}>✏️ Edit</Text>
@@ -8456,9 +8517,10 @@ ${letter.content}
               </TouchableOpacity>
             </View>
 
-            {/* SUBTAB 1: USER PROFILE */}
+            {/* SUBTAB 1: USER PROFILE (Executive Multi-Card Layout) */}
             {hubSubTab === 'profile' && (
               <View style={{ gap: 14 }}>
+                {/* 1. Executive Banner & Avatar Card */}
                 <View style={styles.card}>
                   <View style={styles.profileHeaderBox}>
                     <TouchableOpacity
@@ -8480,15 +8542,15 @@ ${letter.content}
                         bottom: 0,
                         right: 0,
                         backgroundColor: '#2563eb',
-                        width: 26,
-                        height: 26,
-                        borderRadius: 13,
+                        width: 28,
+                        height: 28,
+                        borderRadius: 14,
                         alignItems: 'center',
                         justifyContent: 'center',
                         borderWidth: 2,
                         borderColor: isDarkMode ? '#0d121d' : '#ffffff'
                       }}>
-                        <Text style={{ fontSize: 12 }}>📷</Text>
+                        <Text style={{ fontSize: 13 }}>📷</Text>
                       </View>
                     </TouchableOpacity>
                     <View style={{ flex: 1 }}>
@@ -8496,13 +8558,27 @@ ${letter.content}
                         {userProfile?.first_name} {userProfile?.last_name}
                       </Text>
                       <Text style={styles.profileDesig}>{userProfile?.designation || 'Team Member'}</Text>
-                      <View style={styles.profileRoleBadge}>
-                        <Text style={styles.profileRoleBadgeText}>{userProfile?.role?.toUpperCase() || 'EMPLOYEE'}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                        <View style={[
+                          styles.profileRoleBadge,
+                          {
+                            backgroundColor: userProfile?.role === 'superadmin' ? '#4f46e5' :
+                                             userProfile?.role === 'hr' ? '#10b981' :
+                                             userProfile?.role === 'manager' ? '#0284c7' : '#475569'
+                          }
+                        ]}>
+                          <Text style={styles.profileRoleBadgeText}>{(userProfile?.role || 'EMPLOYEE').toUpperCase()}</Text>
+                        </View>
+                        <View style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                            {userProfile?.department || 'Operations'}
+                          </Text>
+                        </View>
                       </View>
                     </View>
                   </View>
 
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
                     <TouchableOpacity
                       style={[styles.editProfileBtn, { flex: 1, backgroundColor: '#2563eb', borderColor: '#3b82f6' }]}
                       onPress={promptChangeProfilePhoto}
@@ -8518,7 +8594,7 @@ ${letter.content}
                         setIsEditProfileModal(true);
                       }}
                     >
-                      <Text style={styles.editProfileBtnText}>✏️ Edit</Text>
+                      <Text style={styles.editProfileBtnText}>✏️ Edit Contact</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -8535,24 +8611,16 @@ ${letter.content}
                   </View>
                 </View>
 
-                {/* Details Card */}
+                {/* 2. Official Employment & Hierarchy Card */}
                 <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Work Profile & Organization</Text>
-                  <Text style={styles.cardDesc}>Verified employee record in Supabase cluster</Text>
+                  <Text style={styles.cardTitle}>🏢 Employment & Hierarchy</Text>
+                  <Text style={styles.cardDesc}>Official tenant assignment & reporting chain</Text>
 
                   <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Work Email:</Text>
-                    <Text style={styles.detailVal}>{userProfile?.email}</Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Contact Phone:</Text>
-                    <Text style={styles.detailVal}>{userProfile?.phone || 'Not Provided'}</Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Department:</Text>
-                    <Text style={styles.detailVal}>{userProfile?.department || 'Operations'}</Text>
+                    <Text style={styles.detailLabel}>Employee ID:</Text>
+                    <Text style={[styles.detailVal, { fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11 }]}>
+                      {userProfile?.id ? userProfile.id.slice(0, 13) + '...' : 'N/A'}
+                    </Text>
                   </View>
 
                   <View style={styles.detailRow}>
@@ -8564,71 +8632,118 @@ ${letter.content}
 
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Reporting Manager:</Text>
-                    <Text style={styles.detailVal}>
+                    <Text style={[styles.detailVal, { fontWeight: '700' }]}>
                       {(() => {
                         const mgr = teamProfiles.find((p) => p.id === userProfile?.manager_id);
-                        return mgr ? `${mgr.first_name} ${mgr.last_name} (${mgr.designation || 'Lead'})` : isSuperadmin ? 'Superadmin Master' : 'Executive Head';
+                        return mgr ? (mgr.first_name + ' ' + (mgr.last_name || '') + ' (' + (mgr.designation || 'Lead') + ')') : (userProfile?.role === 'superadmin' ? 'Root Platform Superadmin' : 'Executive Head');
                       })()}
                     </Text>
                   </View>
 
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Active Tenant:</Text>
-                    <Text style={styles.detailVal}>{currentOrg?.name} ({currentOrg?.org_code})</Text>
+                    <Text style={[styles.detailVal, { fontWeight: 'bold', color: '#10b981' }]}>
+                      {currentOrg ? currentOrg.name : 'BNK Digital'} ({currentOrg?.org_code || 'BNK'})
+                    </Text>
                   </View>
 
                   <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Push Channel Status:</Text>
-                    <Text style={[styles.detailVal, { color: notifPermission ? '#10b981' : '#f59e0b', fontWeight: 'bold' }]}>
-                      {notifPermission ? 'CONNECTED (MAX)' : 'ACTIVE'}
+                    <Text style={styles.detailLabel}>Employment Status:</Text>
+                    <Text style={[styles.detailVal, { color: userProfile?.is_active !== false ? '#10b981' : '#ef4444', fontWeight: 'bold' }]}>
+                      {userProfile?.is_active !== false ? '● ACTIVE & VERIFIED' : '○ INACTIVE'}
                     </Text>
                   </View>
                 </View>
 
-                {/* Appearance & Theme Setting Card */}
+                {/* 3. Payroll & Compensation Card */}
                 <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Appearance & Theme</Text>
-                  <Text style={styles.cardDesc}>Switch between deep dark cyber theme and clean corporate light theme</Text>
+                  <Text style={styles.cardTitle}>💰 Compensation & Payroll</Text>
+                  <Text style={styles.cardDesc}>Disbursal package & official monthly compensation</Text>
 
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-                    <TouchableOpacity
-                      style={[styles.themeOptionBtn, isDarkMode && styles.themeOptionBtnActive]}
-                      onPress={() => handleSetTheme(true)}
-                    >
-                      <Text style={{ fontSize: 16 }}>🌙</Text>
-                      <Text style={[styles.themeOptionText, isDarkMode && styles.themeOptionTextActive]}>
-                        Dark Mode
-                      </Text>
-                    </TouchableOpacity>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Base Compensation:</Text>
+                    <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold', fontSize: 14 }]}>
+                      ₹{(Number(userProfile?.base_salary) || 0).toLocaleString('en-IN')} / month
+                    </Text>
+                  </View>
 
-                    <TouchableOpacity
-                      style={[styles.themeOptionBtn, !isDarkMode && styles.themeOptionBtnActive]}
-                      onPress={() => handleSetTheme(false)}
-                    >
-                      <Text style={{ fontSize: 16 }}>☀️</Text>
-                      <Text style={[styles.themeOptionText, !isDarkMode && styles.themeOptionTextActive]}>
-                        Light Mode
-                      </Text>
-                    </TouchableOpacity>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Payout Schedule:</Text>
+                    <Text style={styles.detailVal}>Monthly Disbursal (IST)</Text>
                   </View>
                 </View>
 
-                {/* Over-The-Air Automatic App Updates Card */}
+                {/* 4. Contact Information Card */}
                 <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Instant App Updates (EAS OTA)</Text>
-                  <Text style={styles.cardDesc}>Employees receive new features automatically without re-downloading APKs</Text>
+                  <Text style={styles.cardTitle}>📞 Contact Information</Text>
+                  <Text style={styles.cardDesc}>Primary communication channels</Text>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Work Email:</Text>
+                    <Text style={styles.detailVal}>{userProfile?.email}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Contact Phone:</Text>
+                    <Text style={styles.detailVal}>{userProfile?.phone || 'Not Provided'}</Text>
+                  </View>
+                </View>
+
+                {/* 5. 4 Corporate Themes Card */}
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>🎨 Appearance & Theme Palette</Text>
+                  <Text style={styles.cardDesc}>Choose your enterprise executive color palette</Text>
+
+                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 10 }}>
+                    {[
+                      { key: 'dark', label: '🌙 Dark', desc: 'Obsidian' },
+                      { key: 'light', label: '☀️ Light', desc: 'Daylight' },
+                      { key: 'navy', label: '🌌 Navy', desc: 'Midnight' },
+                      { key: 'emerald', label: '🌲 Mint', desc: 'Emerald' }
+                    ].map((t) => {
+                      const isSelected = themeMode === t.key;
+                      return (
+                        <TouchableOpacity
+                          key={t.key}
+                          style={[
+                            styles.drawerThemeChip,
+                            isSelected && styles.drawerThemeChipSelected,
+                            { paddingVertical: 10 }
+                          ]}
+                          onPress={() => handleSelectTheme(t.key as any)}
+                        >
+                          <Text style={[
+                            styles.drawerThemeChipText,
+                            isSelected && styles.drawerThemeChipTextSelected,
+                            { fontSize: 11 }
+                          ]}>
+                            {t.label}
+                          </Text>
+                          <Text style={{ fontSize: 9, color: isSelected ? '#2563eb' : '#64748b', marginTop: 1 }}>
+                            {t.desc}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* 6. EAS Over-The-Air Instant Updates Card */}
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>🚀 Instant App Updates (EAS OTA)</Text>
+                  <Text style={styles.cardDesc}>App automatically updates Over-The-Air without downloading APKs</Text>
 
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Update Channel:</Text>
-                    <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold' }]}>preview (Live OTA)</Text>
+                    <Text style={[styles.detailVal, { color: '#10b981', fontWeight: 'bold' }]}>production / preview</Text>
                   </View>
                   <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Auto Background Check:</Text>
-                    <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>ENABLED (On Launch)</Text>
+                    <Text style={styles.detailLabel}>Auto Background Sync:</Text>
+                    <Text style={[styles.detailVal, { color: '#38bdf8', fontWeight: 'bold' }]}>ENABLED (On Startup)</Text>
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.loginBtn, { marginTop: 12, backgroundColor: isDarkMode ? '#0284c7' : '#2563eb' }]}
+                    style={[styles.loginBtn, { marginTop: 12, backgroundColor: '#2563eb' }]}
                     onPress={handleManualCheckUpdates}
                     disabled={isCheckingUpdate}
                   >
@@ -8638,7 +8753,7 @@ ${letter.content}
                   </TouchableOpacity>
                 </View>
 
-                {/* Organization Settings Card (HR / Superadmin / Owner) */}
+                {/* 7. Organization Shift & Geofence (Superadmin / HR) */}
                 {isPrivileged && (
                   <View style={[styles.card, { borderColor: '#6366f1' }]}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -8648,38 +8763,17 @@ ${letter.content}
                         onPress={() => {
                           setOrgShiftStart(currentOrg?.settings?.shiftStartTime || '09:30');
                           setOrgShiftEnd(currentOrg?.settings?.shiftEndTime || '18:30');
-                          setOrgGracePeriod(String(currentOrg?.settings?.gracePeriodMins ?? 15));
-                          setOrgGeofenceRadius(String(activeOfficeCoords.radiusMeters || 200));
+                          setOrgGracePeriod(String(currentOrg?.settings?.gracePeriodMins || 15));
+                          setOrgGeofenceRadius(String(currentOrg?.settings?.geofenceRadiusMeters || 200));
                           setIsOrgSettingsModal(true);
                         }}
                       >
-                        <Text style={styles.smallAddBtnText}>⚙️ Configure</Text>
+                        <Text style={styles.smallAddBtnText}>⚙️ Manage</Text>
                       </TouchableOpacity>
                     </View>
-                    <Text style={styles.cardDesc}>Configure shifts, grace period & GPS geofence for {currentOrg?.name}</Text>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Shift Timing:</Text>
-                      <Text style={styles.detailVal}>
-                        {currentOrg?.settings?.shiftStartTime || '09:30'} - {currentOrg?.settings?.shiftEndTime || '18:30'} IST
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Grace Period:</Text>
-                      <Text style={styles.detailVal}>{currentOrg?.settings?.gracePeriodMins ?? 15} minutes</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Office Geofence:</Text>
-                      <Text style={styles.detailVal}>{activeOfficeCoords.radiusMeters}m radius ({activeOfficeCoords.name})</Text>
-                    </View>
+                    <Text style={styles.cardDesc}>Configure working hours, grace period, and GPS geofence threshold.</Text>
                   </View>
                 )}
-
-                <TouchableOpacity style={styles.profileLogoutBtn} onPress={handleLogout}>
-                  <Text style={styles.profileLogoutBtnText}>Log Out from Device</Text>
-                </TouchableOpacity>
               </View>
             )}
 
@@ -8940,7 +9034,7 @@ ${letter.content}
                         </View>
                       ) : (
                         filteredList.map((st) => {
-                          const emp = teamProfiles.find((p) => p.id === st.employee_id);
+                          const emp = teamProfiles.find((p) => p.id === st.employee_id) || (st.employee_id === userProfile?.id ? userProfile : null);
                           const isGithubPR = st.completed_today?.includes('github.com') && st.completed_today?.includes('/pull/');
                           return (
                             <View key={st.id} style={styles.standupFeedItem}>
@@ -11254,15 +11348,7 @@ ${letter.content}
                     {isPrivileged && !isSelf && (
                       <TouchableOpacity
                         style={[styles.loginBtn, { backgroundColor: '#4f46e5' }]}
-                        onPress={() => {
-                          setEditEmpRole(inspectedUserProfile.role || 'employee');
-                          setEditEmpEmail(inspectedUserProfile.email || '');
-                          setEditEmpDesig(inspectedUserProfile.designation || '');
-                          setEditEmpDept(inspectedUserProfile.department || '');
-                          setEditEmpJoining(inspectedUserProfile.joining_date || '');
-                          setEditEmpPasswordReset('');
-                          setIsEditEmployeeModal(true);
-                        }}
+                        onPress={() => handleOpenEditEmployee(inspectedUserProfile)}
                       >
                         <Text style={styles.loginBtnText}>✏️ Manage Employee Record (HR/Admin)</Text>
                       </TouchableOpacity>
@@ -11746,42 +11832,104 @@ ${letter.content}
       {/* ========================================================================= */}
       <Modal visible={isEditEmployeeModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxHeight: '90%', paddingBottom: 14 }]}>
+          <View style={[styles.modalCard, { maxHeight: '92%', paddingBottom: 14 }]}>
             {/* Sticky Header */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 6 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: isDarkMode ? '#1e293b' : '#e2e8f0' }}>
               <View style={{ flex: 1, paddingRight: 6 }}>
-                <Text style={styles.modalTitle}>Manage Employee Record</Text>
+                <Text style={styles.modalTitle}>Edit Employee Record</Text>
                 <Text style={styles.modalSub}>
-                  {inspectedUserProfile ? `${inspectedUserProfile.first_name} ${inspectedUserProfile.last_name}` : 'Edit Profile'} &bull; Supabase Live Sync
+                  {inspectedUserProfile ? (inspectedUserProfile.first_name + ' ' + (inspectedUserProfile.last_name || '')) : 'Edit Profile'} • Live Supabase Sync
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setIsEditEmployeeModal(false)} style={{ padding: 4 }}>
-                <Text style={{ fontSize: 18, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
+              <TouchableOpacity onPress={() => setIsEditEmployeeModal(false)} style={{ padding: 6, borderRadius: 8, backgroundColor: isDarkMode ? '#1e293b' : '#f1f5f9' }}>
+                <Text style={{ fontSize: 16, color: '#94a3b8', fontWeight: 'bold' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Scrollable Body */}
-            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', flex: 1, marginVertical: 4 }}>
-              <Text style={styles.inputLabel}>Corporate Role</Text>
-              <View style={{ flexDirection: 'row', gap: 6, marginVertical: 6 }}>
-                {['employee', 'manager', 'hr'].map((r) => (
-                  <TouchableOpacity
-                    key={r}
-                    style={[
-                      styles.filterTab,
-                      editEmpRole === r && styles.filterTabActive,
-                      { flex: 1, paddingVertical: 8 }
-                    ]}
-                    onPress={() => setEditEmpRole(r)}
-                  >
-                    <Text style={[styles.filterTabText, editEmpRole === r && styles.filterTabTextActive, { textAlign: 'center' }]}>
-                      {r.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+            {/* Scrollable Form Body */}
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%', flex: 1 }}>
+              {/* Names */}
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>First Name *</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editEmpFirstName}
+                    onChangeText={setEditEmpFirstName}
+                    placeholder="First Name"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Last Name</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editEmpLastName}
+                    onChangeText={setEditEmpLastName}
+                    placeholder="Last Name"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
               </View>
 
-              <Text style={styles.inputLabel}>Official Work Email * (HR / Admin)</Text>
+              {/* Role Selection (All 4 Corporate Roles) */}
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Corporate Role</Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginVertical: 4 }}>
+                {['employee', 'manager', 'hr', 'superadmin'].map((r) => {
+                  const isSelected = editEmpRole === r;
+                  return (
+                    <TouchableOpacity
+                      key={r}
+                      style={[
+                        styles.filterTab,
+                        isSelected && styles.filterTabActive,
+                        { flex: 1, paddingVertical: 8, alignItems: 'center' }
+                      ]}
+                      onPress={() => setEditEmpRole(r)}
+                    >
+                      <Text style={[
+                        styles.filterTabText,
+                        isSelected && styles.filterTabTextActive,
+                        { fontSize: 10.5, fontWeight: '700' }
+                      ]}>
+                        {r.toUpperCase()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Status Toggle */}
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Employment Status</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginVertical: 4 }}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterTab,
+                    editEmpIsActive && { backgroundColor: '#10b981', borderColor: '#059669' },
+                    { flex: 1, paddingVertical: 8, alignItems: 'center' }
+                  ]}
+                  onPress={() => setEditEmpIsActive(true)}
+                >
+                  <Text style={[styles.filterTabText, editEmpIsActive && { color: '#ffffff', fontWeight: 'bold' }]}>
+                    ✓ ACTIVE
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.filterTab,
+                    !editEmpIsActive && { backgroundColor: '#ef4444', borderColor: '#dc2626' },
+                    { flex: 1, paddingVertical: 8, alignItems: 'center' }
+                  ]}
+                  onPress={() => setEditEmpIsActive(false)}
+                >
+                  <Text style={[styles.filterTabText, !editEmpIsActive && { color: '#ffffff', fontWeight: 'bold' }]}>
+                    ✕ INACTIVE
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Work Email & Phone */}
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Official Work Email *</Text>
               <TextInput
                 style={styles.textInput}
                 value={editEmpEmail}
@@ -11792,47 +11940,122 @@ ${letter.content}
                 keyboardType="email-address"
               />
 
-              <Text style={styles.inputLabel}>Official Designation</Text>
+              <Text style={[styles.inputLabel, { marginTop: 8 }]}>Contact Phone</Text>
               <TextInput
                 style={styles.textInput}
-                value={editEmpDesig}
-                onChangeText={setEditEmpDesig}
-                placeholder="e.g. Senior Software Engineer"
+                value={editEmpPhone}
+                onChangeText={setEditEmpPhone}
+                placeholder="+91 9876543210"
                 placeholderTextColor="#64748b"
+                keyboardType="phone-pad"
               />
 
-              <Text style={styles.inputLabel}>Department</Text>
-              <TextInput
-                style={styles.textInput}
-                value={editEmpDept}
-                onChangeText={setEditEmpDept}
-                placeholder="e.g. Engineering, Sales, Operations"
-                placeholderTextColor="#64748b"
-              />
+              {/* Designation & Department */}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Designation</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editEmpDesig}
+                    onChangeText={setEditEmpDesig}
+                    placeholder="e.g. Lead Designer"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Department</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editEmpDept}
+                    onChangeText={setEditEmpDept}
+                    placeholder="Operations"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
 
-              <Text style={styles.inputLabel}>Date of Joining (YYYY-MM-DD)</Text>
-              <TextInput
-                style={styles.textInput}
-                value={editEmpJoining}
-                onChangeText={setEditEmpJoining}
-                placeholder="e.g. 2026-01-15"
-                placeholderTextColor="#64748b"
-              />
+              {/* Joining Date & Monthly Salary */}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Joining Date (YYYY-MM-DD)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editEmpJoining}
+                    onChangeText={setEditEmpJoining}
+                    placeholder="2026-01-01"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Base Salary (₹ / mo)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editEmpSalary}
+                    onChangeText={setEditEmpSalary}
+                    placeholder="50000"
+                    placeholderTextColor="#64748b"
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
 
-              <Text style={styles.inputLabel}>Reset Password (Superadmin / HR)</Text>
+              {/* Reporting Manager Selector */}
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Direct Reporting Manager</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 4 }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.filterTab,
+                      !editEmpManagerId && styles.filterTabActive,
+                      { paddingHorizontal: 10, paddingVertical: 6 }
+                    ]}
+                    onPress={() => setEditEmpManagerId('')}
+                  >
+                    <Text style={[styles.filterTabText, !editEmpManagerId && styles.filterTabTextActive]}>
+                      -- None / Exec Head --
+                    </Text>
+                  </TouchableOpacity>
+                  {teamProfiles
+                    .filter((p) => p.id !== inspectedUserProfile?.id)
+                    .map((m) => {
+                      const isSelected = editEmpManagerId === m.id;
+                      return (
+                        <TouchableOpacity
+                          key={m.id}
+                          style={[
+                            styles.filterTab,
+                            isSelected && styles.filterTabActive,
+                            { paddingHorizontal: 10, paddingVertical: 6 }
+                          ]}
+                          onPress={() => setEditEmpManagerId(m.id)}
+                        >
+                          <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive]}>
+                            {m.first_name} {m.last_name || ''} ({m.role?.toUpperCase()})
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                </View>
+              </ScrollView>
+
+              {/* Password Reset */}
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Reset Security Password (Optional)</Text>
               <TextInput
                 style={styles.textInput}
                 value={editEmpPasswordReset}
                 onChangeText={setEditEmpPasswordReset}
-                placeholder="Leave blank to keep existing password"
+                placeholder="Leave blank to preserve existing password"
                 placeholderTextColor="#64748b"
                 secureTextEntry
               />
             </ScrollView>
 
             {/* Pinned Sticky Footer */}
-            <View style={{ flexDirection: 'row', gap: 10, width: '100%', paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#334155' : '#e2e8f0' }}>
-              <TouchableOpacity style={[styles.modalCloseBtn, { flex: 1, marginTop: 0 }]} onPress={() => setIsEditEmployeeModal(false)}>
+            <View style={{ flexDirection: 'row', gap: 10, width: '100%', paddingTop: 10, borderTopWidth: 1, borderTopColor: isDarkMode ? '#1e293b' : '#e2e8f0' }}>
+              <TouchableOpacity
+                style={[styles.modalCloseBtn, { flex: 1, marginTop: 0 }]}
+                onPress={() => setIsEditEmployeeModal(false)}
+              >
                 <Text style={styles.modalCloseBtnText}>Cancel</Text>
               </TouchableOpacity>
 
@@ -11849,18 +12072,26 @@ ${letter.content}
                     Alert.alert('Too Short', 'New password must be at least 6 characters long.');
                     return;
                   }
+
                   setIsSavingEmpRecord(true);
                   try {
                     const updates: any = {
+                      first_name: editEmpFirstName.trim() || inspectedUserProfile.first_name,
+                      last_name: editEmpLastName.trim(),
                       role: editEmpRole,
                       email: editEmpEmail.trim().toLowerCase(),
+                      phone: editEmpPhone.trim(),
                       designation: editEmpDesig.trim() || 'Staff',
-                      department: editEmpDept.trim() || 'Operations'
+                      department: editEmpDept.trim() || 'Operations',
+                      base_salary: Number(editEmpSalary) || 0,
+                      manager_id: editEmpManagerId || null,
+                      is_active: editEmpIsActive,
+                      updated_at: new Date().toISOString()
                     };
                     if (editEmpJoining.trim()) {
                       updates.joining_date = editEmpJoining.trim();
                     }
-                    if (editEmpPasswordReset.trim()) {
+                    if (editEmpPasswordReset.trim().length >= 6) {
                       let hash = bcrypt.hashSync(editEmpPasswordReset.trim(), 10);
                       if (hash.startsWith('$2b$')) hash = '$2a$' + hash.slice(4);
                       updates.password_hash = hash;
@@ -11875,26 +12106,29 @@ ${letter.content}
                       const updatedEmp = { ...inspectedUserProfile, ...updates };
                       setInspectedUserProfile(updatedEmp);
                       setTeamProfiles((prev) => prev.map((p) => p.id === inspectedUserProfile.id ? { ...p, ...updates } : p));
-                      Alert.alert('Employee Updated ✓', `${inspectedUserProfile.first_name}'s official record and email have been synced.`);
+                      if (userProfile?.id === inspectedUserProfile.id) {
+                        setUserProfile((prev: any) => ({ ...prev, ...updates }));
+                      }
+                      Alert.alert('Record Updated 🚀', updates.first_name + "'s official record has been synced to Supabase.");
                       setIsEditEmployeeModal(false);
+                      refreshAllData(supabaseClient, currentOrg?.id, userProfile?.id);
                     } else {
-                      Alert.alert('Database Error', error.message);
+                      showUserFriendlyError('Update Failed', error, 'Could not update employee record.');
                     }
                   } catch (e: any) {
-                    Alert.alert('Error', e?.message);
+                    showUserFriendlyError('Update Error', e, 'Failed to update employee.');
                   } finally {
                     setIsSavingEmpRecord(false);
                   }
                 }}
               >
-                <Text style={styles.loginBtnText}>{isSavingEmpRecord ? 'Saving...' : 'Save Changes'}</Text>
+                <Text style={styles.loginBtnText}>{isSavingEmpRecord ? 'Saving...' : '✓ Save Changes'}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* ========================================================================= */}
       {/* MODAL 19: ORGANIZATION SETTINGS (HR / SUPERADMIN) */}
       {/* ========================================================================= */}
       <Modal visible={isOrgSettingsModal} animationType="slide" transparent>

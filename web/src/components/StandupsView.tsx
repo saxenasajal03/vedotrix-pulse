@@ -72,18 +72,26 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
 
   // Accessible employees based on role hierarchy
   const selectableEmployees = useMemo(() => {
+    let list: any[] = [];
     if (isHrOrSuperadmin) {
-      return orgProfiles.filter((p) => p.isActive);
+      list = [...orgProfiles.filter((p) => p.isActive)];
+    } else if (isManager) {
+      list = [currentProfile, ...directReports.filter((p) => p.isActive)];
+    } else {
+      list = [currentProfile];
     }
-    if (isManager) {
-      return [currentProfile, ...directReports.filter((p) => p.isActive)];
+    // Guarantee logged in user is never excluded from selectable employees
+    if (currentProfile && !list.some((p) => p.id === currentProfile.id)) {
+      list.unshift(currentProfile);
     }
-    return [currentProfile];
+    return list;
   }, [isHrOrSuperadmin, isManager, orgProfiles, directReports, currentProfile]);
 
   const allowedEmpIds = useMemo(() => {
-    return new Set(selectableEmployees.map((p) => p.id));
-  }, [selectableEmployees]);
+    const s = new Set(selectableEmployees.map((p) => p.id));
+    if (currentProfile?.id) s.add(currentProfile.id);
+    return s;
+  }, [selectableEmployees, currentProfile]);
 
   // Unique departments
   const departments = useMemo(() => {
@@ -109,7 +117,7 @@ export const StandupsView: React.FC<StandupsViewProps> = ({ onOpenSubmitModal })
     return standups
       .filter((s) => {
         // Scope to allowed employees (hierarchy)
-        if (!allowedEmpIds.has(s.employeeId)) return false;
+        if (!allowedEmpIds.has(s.employeeId) && s.employeeId !== currentProfile?.id && !isHrOrSuperadmin) return false;
 
         // Specific employee filter
         if (selectedEmpFilter !== 'all' && s.employeeId !== selectedEmpFilter) return false;

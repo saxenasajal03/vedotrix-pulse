@@ -4098,6 +4098,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const { error } = await client
           .from('daily_standups')
           .update({
+            org_id: currentOrg.id,
             completed_today: completedToday,
             planned_tomorrow: plannedTomorrow,
             blockers: blockers || null,
@@ -4120,10 +4121,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         opError = error;
       }
-      if (opError) console.error('Supabase standup save error:', opError);
-      else console.log('Daily standup synced to Supabase successfully!');
-    } catch (e) {
+
+      // Fallback atomic upsert if unique constraint or concurrency
+      if (opError && (opError.code === '23505' || String(opError.message).includes('unique'))) {
+        const { error: upsertErr } = await client
+          .from('daily_standups')
+          .upsert({
+            org_id: currentOrg.id,
+            employee_id: currentProfile.id,
+            date: todayStr,
+            completed_today: completedToday,
+            planned_tomorrow: plannedTomorrow,
+            blockers: blockers || null,
+            hours_logged: hours
+          }, { onConflict: 'employee_id,date' });
+        opError = upsertErr;
+      }
+
+      if (opError) {
+        console.error('Supabase standup save error:', opError);
+        addToast('Standup Submission Failed', opError.message || 'Could not sync with Supabase cloud.', 'error');
+        return;
+      } else {
+        console.log('Daily standup synced to Supabase successfully!');
+      }
+    } catch (e: any) {
       console.error('Standup insert error:', e);
+      addToast('Standup Error', e?.message || 'Network error while submitting.', 'error');
+      return;
     }
 
     addToast('EOD Standup Submitted 🚀', 'Daily work log synced with attendance and team dashboard.', 'success');
